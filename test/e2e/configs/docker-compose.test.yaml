@@ -1,0 +1,187 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_DB=go_chat
+      - POSTGRES_HOST_AUTH_METHOD=trust
+      - TZ=Asia/Seoul
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - go-chat-net
+
+  mongo:
+    image: mongo:8.0
+    environment:
+      - TZ=Asia/Seoul
+    healthcheck:
+      test: [ "CMD", "mongosh", "--eval", "db.adminCommand('ping')" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - go-chat-net
+
+  mongo-migrate:
+    image: migrate/migrate:v4.19.1
+    volumes:
+      - ../../../db/migrations/mongo:/migrations:ro
+    command: [ "-path", "/migrations", "-database", "mongodb://mongo:27017/chat_service", "up" ]
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks:
+      - go-chat-net
+
+  postgres-migrate:
+    image: migrate/migrate:v4.19.1
+    volumes:
+      - ../../../db/migrations/postgres:/migrations:ro
+    command: [ "-path", "/migrations", "-database", "postgres://postgres@postgres:5432/go_chat?sslmode=disable", "up" ]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - go-chat-net
+
+  user-service:
+    image: go-chat-msa/user-service:test
+    build:
+      context: ../../../
+      dockerfile: Dockerfile
+      args:
+        SERVICE_NAME: user-service
+    environment:
+      - APP_ENV=test
+    volumes:
+      - ../../../configs/base.yaml:/app/configs/base.yaml:ro
+      - ./test.yaml:/app/configs/test.yaml:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      postgres-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [ "CMD-SHELL", "/bin/grpc_health_probe -addr=127.0.0.1:50051 || exit 1" ]
+      interval: 5s
+    networks:
+      - go-chat-net
+
+  chat-service:
+    image: go-chat-msa/chat-service:test
+    build:
+      context: ../../../
+      dockerfile: Dockerfile
+      args:
+        SERVICE_NAME: chat-service
+    environment:
+      - APP_ENV=test
+    volumes:
+      - ../../../configs/base.yaml:/app/configs/base.yaml:ro
+      - ./test.yaml:/app/configs/test.yaml:ro
+    depends_on:
+      mongo:
+        condition: service_healthy
+      mongo-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [ "CMD-SHELL", "/bin/grpc_health_probe -addr=127.0.0.1:50052 || exit 1" ]
+      interval: 5s
+    networks:
+      - go-chat-net
+
+  api-gateway:
+    image: go-chat-msa/api-gateway:test
+    build:
+      context: ../../../
+      dockerfile: Dockerfile
+      args:
+        SERVICE_NAME: api-gateway
+    environment:
+      - APP_ENV=test
+    volumes:
+      - ../../../configs/base.yaml:/app/configs/base.yaml:ro
+      - ./test.yaml:/app/configs/test.yaml:ro
+    depends_on:
+      user-service:
+        condition: service_healthy
+      chat-service:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/health || exit 1" ]
+      interval: 5s
+    networks:
+      - go-chat-net
+
+  ws-gateway:
+    image: go-chat-msa/ws-gateway:test
+    build:
+      context: ../../../
+      dockerfile: Dockerfile
+      args:
+        SERVICE_NAME: ws-gateway
+    environment:
+      - APP_ENV=test
+    volumes:
+      - ../../../configs/base.yaml:/app/configs/base.yaml:ro
+      - ./test.yaml:/app/configs/test.yaml:ro
+    depends_on:
+      websocket-service-1:
+        condition: service_started
+      websocket-service-2:
+        condition: service_started
+    healthcheck:
+      test: [ "CMD-SHELL", "wget -q -O /dev/null http://localhost:8088/health || exit 1" ]
+      interval: 5s
+    networks:
+      - go-chat-net
+
+  websocket-service-1:
+    image: go-chat-msa/websocket-service:test
+    build:
+      context: ../../../
+      dockerfile: Dockerfile
+      args:
+        SERVICE_NAME: websocket-service
+    environment:
+      - APP_ENV=test
+    volumes:
+      - ../../../configs/base.yaml:/app/configs/base.yaml:ro
+      - ./test.yaml:/app/configs/test.yaml:ro
+    depends_on:
+      chat-service:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD-SHELL", "wget -q -O /dev/null http://localhost:8081/health || exit 1" ]
+      interval: 5s
+    networks:
+      - go-chat-net
+
+  websocket-service-2:
+    image: go-chat-msa/websocket-service:test
+    build:
+      context: ../../../
+      dockerfile: Dockerfile
+      args:
+        SERVICE_NAME: websocket-service
+    environment:
+      - APP_ENV=test
+    volumes:
+      - ../../../configs/base.yaml:/app/configs/base.yaml:ro
+      - ./test.yaml:/app/configs/test.yaml:ro
+    depends_on:
+      chat-service:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD-SHELL", "wget -q -O /dev/null http://localhost:8081/health || exit 1" ]
+      interval: 5s
+    networks:
+      - go-chat-net
+
+networks:
+  go-chat-net:
+    driver: bridge

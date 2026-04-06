@@ -1,0 +1,7 @@
+storage:
+  backend: filesystem
+  filesystem:
+    dir: /data
+
+limits:
+  compactor_blocks_retention_period: 168h

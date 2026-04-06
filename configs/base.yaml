@@ -1,0 +1,154 @@
+# Global
+ENV: "" # 오버라이드 필수
+SHUTDOWN_TIMEOUT: "10s"
+
+# Observability
+TELEMETRY:
+  OTEL_ENDPOINT: "" # 오버라이드 필수
+  PYROSCOPE_ENDPOINT: "" # 오버라이드 필수
+
+# Ports
+PORT:
+  API_GATEWAY: "8080"
+  WS_GATEWAY: "8088"
+  WEBSOCKET: "8081"
+  USER_GRPC: "50051"
+  CHAT_GRPC: "50052"
+
+# Service Registry
+REGISTRY:
+  USER_SERVICE:
+    HOST: "" # 오버라이드 필수
+  CHAT_SERVICE:
+    HOST: "" # 오버라이드 필수
+  WS_GATEWAY:
+    HOST: "" # 오버라이드 필수
+  WEBSOCKET_ENDPOINTS: [] # 오버라이드 필수
+
+# Security
+JWT:
+  SECRET: "" # 오버라이드 필수
+
+INTERNAL:
+  SECRET: "" # 오버라이드 필수
+
+# Databases
+DB:
+  POSTGRES_URL: "" # 오버라이드 필수
+  MONGO_URI: "" # 오버라이드 필수
+
+# API Gateway
+API_GATEWAY:
+  SERVER:
+    READ_TIMEOUT: "10s"
+    WRITE_TIMEOUT: "15s"
+    IDLE_TIMEOUT: "120s"
+  HTTP_CLIENT:
+    TIMEOUT: "3s"
+    MAX_IDLE_CONNS: 100
+    MAX_IDLE_CONNS_PER_HOST: 100
+  GRPC_CLIENT:
+    TIMEOUT: "5s"
+    KEEPALIVE:
+      TIME: "20s"
+      TIMEOUT: "5s"
+  CORS:
+    ALLOWED_ORIGINS: [] # 오버라이드 필수
+  RATE_LIMIT:
+    PUBLIC:
+      RPS: 5
+      BURST: 10
+      TTL: "10m"
+    AUTHENTICATED:
+      RPS: 10
+      BURST: 20
+      TTL: "1h"
+
+# WebSocket Gateway
+WS_GATEWAY:
+  SERVER:
+    READ_HEADER_TIMEOUT: "10s"
+  HTTP_CLIENT:
+    TIMEOUT: "3s"
+    MAX_IDLE_CONNS: 10000
+    MAX_IDLE_CONNS_PER_HOST: 10000
+  CORS:
+    ALLOWED_ORIGINS: [] # 오버라이드 필수
+  TICKET_TTL: "30s"
+  RATE_LIMIT:
+    PUBLIC:
+      RPS: 5
+      BURST: 10
+      TTL: "10m"
+    WS_ESTABLISH:
+      RPS: 2
+      BURST: 5
+      TTL: "1h"
+
+# WebSocket Service
+WEBSOCKET:
+  SERVER:
+    READ_HEADER_TIMEOUT: "10s"
+  MANAGER:
+    WRITE_WAIT: "30s"
+    PONG_WAIT: "75s"
+    PING_PERIOD: "60s"
+    IDLE_TIMEOUT: "5m"
+    MAX_LENGTH: 10000
+  GRPC_CLIENT:
+    TIMEOUT: "5s"
+    KEEPALIVE:
+      TIME: "20s"
+      TIMEOUT: "5s"
+  RATE_LIMIT:
+    WS_MESSAGE:
+      RPS: 2
+      BURST: 5
+      TTL: "1h"
+
+# User Service
+USER_SERVICE:
+  VALIDATION:
+    MIN_USERNAME_LENGTH: 2
+    MAX_USERNAME_LENGTH: 12
+    MIN_PASSWORD_LENGTH: 10
+    MAX_PASSWORD_LENGTH: 64
+  TOKEN:
+    ACCESS_TOKEN_EXPIRATION_MINUTES: 30
+    REFRESH_TOKEN_EXPIRATION_DAYS: 7
+    TOKEN_PURGE_INTERVAL: "1h"
+  ROOM:
+    MAX_CAPACITY: 1000
+    MAX_NAME_LENGTH: 50
+  SEARCH:
+    DEFAULT_LIMIT: 20
+    MAX_LIMIT: 100
+  GRPC_SERVER:
+    TIMEOUT: "4s"
+    KEEPALIVE:
+      TIME: "30s"
+      TIMEOUT: "5s"
+      MIN_TIME: "5s"
+
+# Retention Worker
+RETENTION_WORKER:
+  SCHEDULE: "0 3 * * *"
+  RETENTION_DAYS: 30
+  JOB_TIMEOUT: "60s"
+
+# Chat Service
+CHAT_SERVICE:
+  MESSAGE:
+    MAX_LENGTH: 10000
+  HISTORY:
+    DEFAULT_LIMIT: 100
+    MAX_LIMIT: 1000
+  SYNC:
+    DEFAULT_LIMIT: 50
+    MAX_LIMIT: 1000
+  GRPC_SERVER:
+    TIMEOUT: "4s"
+    KEEPALIVE:
+      TIME: "30s"
+      TIMEOUT: "5s"
+      MIN_TIME: "5s"

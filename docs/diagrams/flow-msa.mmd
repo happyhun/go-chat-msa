@@ -1,0 +1,70 @@
+flowchart TB
+    subgraph External ["External Layer"]
+        direction LR
+        Client["Web Browser"]
+    end
+
+    subgraph Services ["Services"]
+        subgraph Edge ["Edge Layer"]
+            direction LR
+            WSGW["WS Gateway"]
+            AGW["API Gateway"]
+
+            AGW -- "Internal HTTP" --> WSGW
+        end
+
+        subgraph Core ["Core Layer"]
+            direction LR
+            subgraph WS_Cluster ["WebSocket Service Cluster"]
+                direction LR
+                WSS1["WebSocket Service 1"]
+                WSS2["WebSocket Service 2"]
+            end
+            US["User Service"]
+            CS["Chat Service"]
+        end
+
+        subgraph Workers ["Workers Layer"]
+            RW["retention-worker"]
+        end
+    end
+
+    subgraph Data ["Data Layer"]
+        direction LR
+        PG[("PostgreSQL")]
+        MG[("MongoDB")]
+    end
+
+    subgraph Observability ["Observability Layer"]
+        direction LR
+        Alloy["Alloy"]
+        Prometheus[("Prometheus")]
+        Loki[("Loki")]
+        Tempo[("Tempo")]
+        Pyroscope[("Pyroscope")]
+        Grafana["Grafana"]
+
+        Alloy -- "metrics" --> Prometheus
+        Alloy -- "logs" --> Loki
+        Alloy -- "traces" --> Tempo
+        Prometheus & Loki & Tempo & Pyroscope --> Grafana
+    end
+
+    Client == "WebSocket" ==> WSGW
+    Client == "REST" ==> AGW
+
+    WSGW -- "L7 Proxy" --> WS_Cluster
+
+    AGW -- "gRPC" --> US
+    AGW -- "gRPC" --> CS
+
+    WS_Cluster -- "gRPC" --> US
+    WS_Cluster -- "gRPC" --> CS
+
+    US --> PG
+    CS --> MG
+    RW -- "Purge Cron" --> PG
+
+    Alloy -. "pull: logs" .-> Services
+    Services -. "push: traces, metrics" .-> Alloy
+    Services -. "push: profiles" .-> Pyroscope

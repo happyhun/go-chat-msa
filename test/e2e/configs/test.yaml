@@ -1,0 +1,28 @@
+ENV: "test"
+
+REGISTRY:
+  USER_SERVICE:
+    HOST: "user-service"
+  CHAT_SERVICE:
+    HOST: "chat-service"
+  WS_GATEWAY:
+    HOST: "ws-gateway"
+  WEBSOCKET_ENDPOINTS: ["websocket-service-1:8081", "websocket-service-2:8081"]
+
+JWT:
+  SECRET: "e2e_secret"
+
+INTERNAL:
+  SECRET: "e2e_internal_secret"
+
+DB:
+  POSTGRES_URL: "postgres://postgres@postgres:5432/go_chat?sslmode=disable"
+  MONGO_URI: "mongodb://mongo:27017"
+
+API_GATEWAY:
+  CORS:
+    ALLOWED_ORIGINS: ["*"]
+
+WS_GATEWAY:
+  CORS:
+    ALLOWED_ORIGINS: ["*"]

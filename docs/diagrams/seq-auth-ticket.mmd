@@ -1,0 +1,35 @@
+sequenceDiagram
+    autonumber
+
+    participant Client as Client
+    participant AGW as API Gateway
+    participant UserSvc as User Service
+    participant DB as PostgreSQL
+    participant WSGW as WS Gateway
+    participant WSSvc as WebSocket Service
+
+    Note over Client, DB: 1. 로그인 및 토큰 발급
+    Client->>AGW: 로그인 요청
+    AGW->>UserSvc: 인증 요청
+    UserSvc->>DB: 사용자 정보 검증
+    DB-->>UserSvc: 검증 완료
+    UserSvc-->>AGW: Access Token + Refresh Token 발급
+    AGW-->>Client: Access Token 반환 + Refresh Token 쿠키 설정
+
+    Note over Client, WSGW: 2. 웹소켓 접속용 일회성 티켓 발급
+    Client->>WSGW: 티켓 발급 요청
+    WSGW->>WSGW: Access Token 검증 및 User ID 추출
+    WSGW->>WSGW: 티켓 생성 및 인메모리 저장 (TTL 30s)
+    WSGW-->>Client: 티켓 반환
+
+    Note over Client, WSSvc: 3. 웹소켓 연결 수립
+    Client->>WSGW: 웹소켓 연결 요청
+    WSGW->>WSGW: 티켓 검증 및 파기
+    WSGW->>WSGW: X-User-ID 헤더 주입
+    WSGW->>WSGW: Room ID 기반 컨시스턴트 해싱 (타겟 노드 선정)
+    WSGW->>WSSvc: 웹소켓 연결 프록시
+    WSSvc->>UserSvc: 멤버십 검증
+    UserSvc-->>WSSvc: 멤버십 확인
+    WSSvc->>WSSvc: WebSocket 업그레이드
+    WSSvc-->>WSGW: 101 Switching Protocols
+    WSGW-->>Client: 연결 완료

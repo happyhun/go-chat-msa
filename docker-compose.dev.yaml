@@ -1,0 +1,439 @@
+# k6 worker
+x-k6-common: &k6-common
+  image: grafana/k6:1.5.0
+  profiles:
+    - load-test
+  depends_on:
+    api-gateway:
+      condition: service_healthy
+  command: run /scripts/c10k-test.js
+  volumes:
+    - ./test/load:/scripts:ro
+  networks:
+    - go-chat-net
+  sysctls:
+    - net.ipv4.ip_local_port_range=10240 65535
+  ulimits:
+    nofile:
+      soft: 65535
+      hard: 65535
+
+services:
+  # Databases
+  postgres:
+    image: postgres:17
+    container_name: postgres
+    command: [ "postgres", "-c", "log_line_prefix=%m [%p] %q%u@%d " ]
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_DB=go_chat
+      - POSTGRES_HOST_AUTH_METHOD=trust
+      - TZ=Asia/Seoul
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - go-chat-net
+
+  mongo:
+    image: mongo:8.0
+    container_name: mongo
+    environment:
+      - TZ=Asia/Seoul
+    ports:
+      - "27017:27017"
+    healthcheck:
+      test: [ "CMD", "mongosh", "--eval", "db.adminCommand('ping')" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - go-chat-net
+
+  postgres-migrate:
+    image: migrate/migrate:v4.19.1
+    container_name: postgres-migrate
+    volumes:
+      - ./db/migrations/postgres:/migrations:ro
+    command: [ "-path", "/migrations", "-database", "postgres://postgres@postgres:5432/go_chat?sslmode=disable", "up" ]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - go-chat-net
+
+  mongo-migrate:
+    image: migrate/migrate:v4.19.1
+    container_name: mongo-migrate
+    volumes:
+      - ./db/migrations/mongo:/migrations:ro
+    command: [ "-path", "/migrations", "-database", "mongodb://mongo:27017/chat_service", "up" ]
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks:
+      - go-chat-net
+
+  # Application
+  user-service:
+    image: go-chat-msa/user-service:dev
+    container_name: user-service
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_NAME: user-service
+    depends_on:
+      postgres:
+        condition: service_healthy
+      postgres-migrate:
+        condition: service_completed_successfully
+    environment:
+      - APP_ENV=dev
+    ports:
+      - "50051:50051"
+    volumes:
+      - ./configs:/app/configs:ro
+    healthcheck:
+      test: [ "CMD-SHELL", "/bin/grpc_health_probe -addr=127.0.0.1:50051 || exit 1" ]
+      interval: 5s
+    cpus: 4
+    sysctls:
+      - net.core.somaxconn=65535
+    networks:
+      - go-chat-net
+
+  chat-service:
+    image: go-chat-msa/chat-service:dev
+    container_name: chat-service
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_NAME: chat-service
+    depends_on:
+      mongo:
+        condition: service_healthy
+      mongo-migrate:
+        condition: service_completed_successfully
+    environment:
+      - APP_ENV=dev
+    ports:
+      - "50052:50052"
+    volumes:
+      - ./configs:/app/configs:ro
+    healthcheck:
+      test: [ "CMD-SHELL", "/bin/grpc_health_probe -addr=127.0.0.1:50052 || exit 1" ]
+      interval: 5s
+    sysctls:
+      - net.core.somaxconn=65535
+    networks:
+      - go-chat-net
+
+  websocket-service-1:
+    image: go-chat-msa/websocket-service:dev
+    container_name: websocket-service-1
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_NAME: websocket-service
+    depends_on:
+      chat-service:
+        condition: service_healthy
+    environment:
+      - APP_ENV=dev
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./configs:/app/configs:ro
+    healthcheck:
+      test: [ "CMD-SHELL", "wget -q -O /dev/null http://localhost:8081/health || exit 1" ]
+      interval: 5s
+    networks:
+      - go-chat-net
+    sysctls:
+      - net.core.somaxconn=65535
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+
+  websocket-service-2:
+    image: go-chat-msa/websocket-service:dev
+    container_name: websocket-service-2
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_NAME: websocket-service
+    depends_on:
+      chat-service:
+        condition: service_healthy
+    environment:
+      - APP_ENV=dev
+    ports:
+      - "8082:8081"
+    volumes:
+      - ./configs:/app/configs:ro
+    healthcheck:
+      test: [ "CMD-SHELL", "wget -q -O /dev/null http://localhost:8081/health || exit 1" ]
+      interval: 5s
+    networks:
+      - go-chat-net
+    sysctls:
+      - net.core.somaxconn=65535
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+
+  api-gateway:
+    image: go-chat-msa/api-gateway:dev
+    container_name: api-gateway
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_NAME: api-gateway
+    depends_on:
+      user-service:
+        condition: service_healthy
+      chat-service:
+        condition: service_healthy
+    environment:
+      - APP_ENV=dev
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./configs:/app/configs:ro
+    healthcheck:
+      test: [ "CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/health || exit 1" ]
+      interval: 5s
+    networks:
+      - go-chat-net
+    sysctls:
+      - net.core.somaxconn=65535
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+
+  ws-gateway:
+    image: go-chat-msa/ws-gateway:dev
+    container_name: ws-gateway
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_NAME: ws-gateway
+    depends_on:
+      websocket-service-1:
+        condition: service_started
+      websocket-service-2:
+        condition: service_started
+    environment:
+      - APP_ENV=dev
+    ports:
+      - "8088:8088"
+    volumes:
+      - ./configs:/app/configs:ro
+    healthcheck:
+      test: [ "CMD-SHELL", "wget -q -O /dev/null http://localhost:8088/health || exit 1" ]
+      interval: 5s
+    networks:
+      - go-chat-net
+    sysctls:
+      - net.core.somaxconn=65535
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+
+  retention-worker:
+    image: go-chat-msa/retention-worker:dev
+    container_name: retention-worker
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_NAME: retention-worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      postgres-migrate:
+        condition: service_completed_successfully
+    environment:
+      - APP_ENV=dev
+    volumes:
+      - ./configs:/app/configs:ro
+    networks:
+      - go-chat-net
+
+  # Frontend
+  frontend:
+    image: go-chat-msa/frontend:dev
+    container_name: frontend
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    depends_on:
+      api-gateway:
+        condition: service_healthy
+      ws-gateway:
+        condition: service_healthy
+    ports:
+      - "3001:3001"
+    networks:
+      - go-chat-net
+
+  # Observability
+  loki:
+    image: grafana/loki:3.6
+    container_name: loki
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./observability/loki/config.yaml:/etc/loki/config.yaml:ro
+    command: -config.file=/etc/loki/config.yaml
+    # distroless — no shell for healthcheck
+    networks:
+      - go-chat-net
+
+  prometheus:
+    image: prom/prometheus:v3.5.1
+    container_name: prometheus
+    command:
+      - --config.file=/etc/prometheus/config.yaml
+      - --web.enable-remote-write-receiver
+      - --storage.tsdb.retention.time=7d
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./observability/prometheus/config.yaml:/etc/prometheus/config.yaml:ro
+    networks:
+      - go-chat-net
+
+  tempo:
+    image: grafana/tempo:2.10.1
+    container_name: tempo
+    volumes:
+      - ./observability/tempo/config.yaml:/etc/tempo/config.yaml:ro
+    command: [ "-config.file=/etc/tempo/config.yaml" ]
+    ports:
+      - "3200:3200"
+    networks:
+      - go-chat-net
+
+  pyroscope:
+    image: grafana/pyroscope:1.18.1
+    container_name: pyroscope
+    volumes:
+      - ./observability/pyroscope/config.yaml:/etc/pyroscope/config.yaml:ro
+    command: [ "-config.file=/etc/pyroscope/config.yaml" ]
+    ports:
+      - "4040:4040"
+    networks:
+      - go-chat-net
+
+  alloy:
+    image: grafana/alloy:v1.14.0
+    container_name: alloy
+    depends_on:
+      loki:
+        condition: service_started
+      prometheus:
+        condition: service_started
+      tempo:
+        condition: service_started
+    ports:
+      - "12345:12345"
+      - "4317:4317"
+      - "4318:4318"
+    volumes:
+      - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: run --server.http.listen-addr=0.0.0.0:12345 /etc/alloy/config.alloy
+    healthcheck:
+      test: [ "CMD", "bash", "-c", "echo > /dev/tcp/127.0.0.1/12345" ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - go-chat-net
+
+  grafana:
+    image: grafana/grafana:12.4
+    container_name: grafana
+    depends_on:
+      loki:
+        condition: service_started
+      prometheus:
+        condition: service_started
+      tempo:
+        condition: service_started
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+    networks:
+      - go-chat-net
+
+  swagger-ui:
+    image: swaggerapi/swagger-ui:v5.32.0
+    container_name: swagger-ui
+    ports:
+      - "8089:8080"
+    volumes:
+      - ./api/openapi/openapi.yaml:/openapi.yaml:ro
+    environment:
+      - SWAGGER_JSON=/openapi.yaml
+      - SUPPORTED_SUBMIT_METHODS=[]
+    networks:
+      - go-chat-net
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.51.0
+    container_name: cadvisor
+    privileged: true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    ports:
+      - "8085:8080"
+    networks:
+      - go-chat-net
+
+  # Load Testing
+  k6-worker-1:
+    <<: *k6-common
+    container_name: k6-worker-1
+    environment: { K6_TARGET_VUS: 2500, K6_VU_OFFSET: 0 }
+
+  k6-worker-2:
+    <<: *k6-common
+    container_name: k6-worker-2
+    environment: { K6_TARGET_VUS: 2500, K6_VU_OFFSET: 2500 }
+
+  k6-worker-3:
+    <<: *k6-common
+    container_name: k6-worker-3
+    environment: { K6_TARGET_VUS: 2500, K6_VU_OFFSET: 5000 }
+
+  k6-worker-4:
+    <<: *k6-common
+    container_name: k6-worker-4
+    environment: { K6_TARGET_VUS: 2500, K6_VU_OFFSET: 7500 }
+
+networks:
+  go-chat-net:
+    driver: bridge

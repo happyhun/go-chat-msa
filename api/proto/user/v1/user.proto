@@ -1,0 +1,176 @@
+syntax = "proto3";
+
+package user.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "go-chat-msa/api/proto/v1/user";
+
+service UserService {
+  // 사용자 관리
+  rpc CreateUser(CreateUserRequest) returns (CreateUserResponse);
+  rpc VerifyUser(VerifyUserRequest) returns (VerifyUserResponse);
+  rpc RefreshToken(RefreshTokenRequest) returns (RefreshTokenResponse);
+  rpc RevokeToken(RevokeTokenRequest) returns (RevokeTokenResponse);
+
+  // 채팅방 관리
+  rpc CreateRoom(CreateRoomRequest) returns (CreateRoomResponse);
+  rpc ListJoinedRooms(ListJoinedRoomsRequest) returns (ListJoinedRoomsResponse);
+  rpc JoinRoom(JoinRoomRequest) returns (JoinRoomResponse);
+  rpc GetMemberJoinedAt(GetMemberJoinedAtRequest) returns (GetMemberJoinedAtResponse);
+  rpc VerifyRoomMember(VerifyRoomMemberRequest) returns (VerifyRoomMemberResponse);
+  rpc LeaveRoom(LeaveRoomRequest) returns (LeaveRoomResponse);
+  rpc SearchRooms(SearchRoomsRequest) returns (SearchRoomsResponse);
+  rpc UpdateRoom(UpdateRoomRequest) returns (UpdateRoomResponse);
+  rpc DeleteRoom(DeleteRoomRequest) returns (DeleteRoomResponse);
+  rpc ListRoomMembers(ListRoomMembersRequest) returns (ListRoomMembersResponse);
+}
+
+// 사용자 관리
+message User {
+  string id = 1;
+  string username = 2;
+  google.protobuf.Timestamp created_at = 3;
+}
+
+message CreateUserRequest {
+  string username = 1;
+  string password = 2;
+}
+
+message CreateUserResponse {
+  string user_id = 1;
+}
+
+message VerifyUserRequest {
+  string username = 1;
+  string password = 2;
+}
+
+message VerifyUserResponse {
+  string user_id = 1;
+  string access_token = 2;
+  string refresh_token = 3;
+}
+
+message RefreshTokenRequest {
+  string refresh_token = 1;
+}
+
+message RefreshTokenResponse {
+  string access_token = 1;
+  string refresh_token = 2;
+}
+
+message RevokeTokenRequest {
+  string refresh_token = 1;
+}
+
+message RevokeTokenResponse {}
+
+// 채팅방 관리
+message Room {
+  string id = 1;
+  string name = 2;
+  reserved 3;
+  string manager_id = 4;
+  int32 capacity = 5;
+  int32 member_count = 6;
+}
+
+// 특정 유저의 방 참여 정보 (Room + Membership Context)
+message UserRoom {
+  Room room = 1;
+  google.protobuf.Timestamp joined_at = 2;
+}
+
+message CreateRoomRequest {
+  string name = 1;
+  string manager_id = 3;
+  int32 capacity = 4;
+}
+
+message CreateRoomResponse {
+  string room_id = 1;
+}
+
+message GetMemberJoinedAtRequest {
+  string room_id = 1;
+  string user_id = 2;
+}
+
+message GetMemberJoinedAtResponse {
+  google.protobuf.Timestamp joined_at = 1;
+}
+
+message VerifyRoomMemberRequest {
+  string room_id = 1;
+  string user_id = 2;
+}
+
+message VerifyRoomMemberResponse {}
+
+message LeaveRoomRequest {
+  string room_id = 1;
+  string user_id = 2;
+}
+
+message LeaveRoomResponse {}
+
+message ListJoinedRoomsRequest {
+  string user_id = 1;
+}
+
+message ListJoinedRoomsResponse {
+  repeated UserRoom rooms = 1;
+}
+
+message SearchRoomsRequest {
+  string query = 1;
+  int32 limit = 2;
+  int32 offset = 3;
+}
+
+message SearchRoomsResponse {
+  repeated Room rooms = 1;
+  int32 total_count = 2;
+}
+
+message UpdateRoomRequest {
+  string id = 1;
+  string name = 2;
+  int32 capacity = 3;
+  string requester_id = 4;
+}
+
+message UpdateRoomResponse {}
+
+message JoinRoomRequest {
+  string user_id = 1;
+  string room_id = 2;
+}
+
+message JoinRoomResponse {}
+
+message DeleteRoomRequest {
+  string room_id = 1;
+  string requester_id = 2;  // manager_id 검증용
+}
+
+message DeleteRoomResponse {
+  bool success = 1;
+}
+
+message RoomMember {
+  string user_id = 1;
+  string username = 2;
+  google.protobuf.Timestamp joined_at = 3;
+}
+
+message ListRoomMembersRequest {
+  string room_id = 1;
+}
+
+message ListRoomMembersResponse {
+  repeated RoomMember members = 1;
+}

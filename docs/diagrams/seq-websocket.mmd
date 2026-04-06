@@ -1,0 +1,56 @@
+sequenceDiagram
+    autonumber
+
+    participant Client as Client
+
+    box WebSocket Service
+        participant Manager as Manager
+        participant Hub as Hub
+        participant Session as Session
+    end
+
+    participant ChatSvc as Chat Service
+    participant Others as Other Clients
+
+    Note over Client, Others: 1. 세션 등록
+    alt 허브가 존재하지 않는 경우
+        Manager->>Hub: 새 허브 가동
+        Hub->>ChatSvc: 마지막 시퀀스 번호 조회
+        ChatSvc-->>Hub: 시퀀스 번호 반환
+    end
+
+    Manager->>Hub: 세션 등록 요청
+    Hub->>Session: 새 세션 생성
+
+    alt 동일 사용자 세션이 존재하는 경우
+        Hub->>Session: 충돌 처리 지시
+        Session->>Client: "conflict" 메시지 전송 및 웹소켓 종료
+    end
+
+    Hub->>Session: 세션 송수신 펌프 가동
+
+    Note over Client, Others: 2. 실시간 메시지 처리
+    Client->>Session: 메시지 전송
+    Session->>Session: 처리율 제한 검사
+    Session->>Hub: 브로드캐스트 요청
+    Hub->>Hub: 메시지 중복 검사
+
+    loop 방 내부 세션 순회
+        Hub->>Session: 메시지 전송
+        Session->>Others: 메시지 전송
+    end
+
+    Hub--)ChatSvc: 비동기 배치 저장
+
+    Note over Client, Others: 3. 연결 해제
+    Client->>Session: 연결 종료
+    Session->>Hub: 세션 해제 요청
+    Hub->>Session: 세션 종료
+
+    alt 마지막 세션이 종료된 경우
+        Hub->>Hub: 허브 종료 타이머 시작
+        Note over Manager, Hub: 타이머 만료 시
+        Hub->>Hub: 프로세스 자체 종료
+        Hub-->>Manager: 종료 알림
+        Manager->>Manager: Hub 목록에서 제거 및 자원 반환
+    end

@@ -1,0 +1,460 @@
+{
+    "annotations": {
+        "list": [
+            {
+                "builtIn": 1,
+                "datasource": {
+                    "type": "grafana",
+                    "uid": "-- Grafana --"
+                },
+                "enable": true,
+                "hide": false,
+                "iconColor": "rgba(0, 211, 255, 1)",
+                "name": "Annotations & Alerts",
+                "type": "dashboard"
+            }
+        ]
+    },
+    "graphTooltip": 1,
+    "id": null,
+    "links": [
+        {
+            "title": "← Overview",
+            "type": "link",
+            "url": "/d/gochat-overview"
+        }
+    ],
+    "panels": [
+        {
+            "collapsed": false,
+            "id": 1,
+            "title": "Container Resource",
+            "type": "row",
+            "gridPos": {
+                "x": 0,
+                "y": 0,
+                "w": 24,
+                "h": 1
+            }
+        },
+        {
+            "id": 2,
+            "title": "CPU",
+            "type": "timeseries",
+            "gridPos": {
+                "x": 0,
+                "y": 1,
+                "w": 12,
+                "h": 8
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "short",
+                    "min": 0,
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "custom": {
+                        "lineInterpolation": "smooth",
+                        "lineWidth": 2,
+                        "fillOpacity": 15,
+                        "showPoints": "never",
+                        "axisLabel": "cores"
+                    }
+                },
+                "overrides": [
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Total"
+                        },
+                        "properties": [
+                            {
+                                "id": "custom.lineStyle",
+                                "value": {
+                                    "fill": "dash",
+                                    "dash": [
+                                        6,
+                                        4
+                                    ]
+                                }
+                            },
+                            {
+                                "id": "custom.fillOpacity",
+                                "value": 0
+                            },
+                            {
+                                "id": "color",
+                                "value": {
+                                    "mode": "fixed",
+                                    "fixedColor": "white"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            "options": {
+                "tooltip": {
+                    "mode": "multi",
+                    "sort": "desc"
+                },
+                "legend": {
+                    "displayMode": "table",
+                    "placement": "bottom",
+                    "calcs": [
+                        "lastNotNull",
+                        "max"
+                    ]
+                }
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "prometheus"
+                    },
+                    "expr": "sum by(service) (rate(container_cpu_usage_seconds_total{service=~\"$service\", cpu=\"total\"}[$__rate_interval]))",
+                    "legendFormat": "{{ service }}",
+                    "refId": "A"
+                },
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "prometheus"
+                    },
+                    "expr": "sum(rate(container_cpu_usage_seconds_total{service=~\"$service\", cpu=\"total\"}[$__rate_interval]))",
+                    "legendFormat": "Total",
+                    "refId": "B"
+                }
+            ]
+        },
+        {
+            "id": 3,
+            "title": "Memory",
+            "type": "timeseries",
+            "gridPos": {
+                "x": 12,
+                "y": 1,
+                "w": 12,
+                "h": 8
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "bytes",
+                    "min": 0,
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "custom": {
+                        "lineInterpolation": "smooth",
+                        "lineWidth": 2,
+                        "fillOpacity": 15,
+                        "showPoints": "never"
+                    }
+                },
+                "overrides": [
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Total"
+                        },
+                        "properties": [
+                            {
+                                "id": "custom.lineStyle",
+                                "value": {
+                                    "fill": "dash",
+                                    "dash": [
+                                        6,
+                                        4
+                                    ]
+                                }
+                            },
+                            {
+                                "id": "custom.fillOpacity",
+                                "value": 0
+                            },
+                            {
+                                "id": "color",
+                                "value": {
+                                    "mode": "fixed",
+                                    "fixedColor": "white"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            "options": {
+                "tooltip": {
+                    "mode": "multi",
+                    "sort": "desc"
+                },
+                "legend": {
+                    "displayMode": "table",
+                    "placement": "bottom",
+                    "calcs": [
+                        "lastNotNull",
+                        "max"
+                    ]
+                }
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "prometheus"
+                    },
+                    "expr": "sum by(service) (container_memory_rss{service=~\"$service\"})",
+                    "legendFormat": "{{ service }}",
+                    "refId": "A"
+                },
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "prometheus"
+                    },
+                    "expr": "sum(container_memory_rss{service=~\"$service\"})",
+                    "legendFormat": "Total",
+                    "refId": "B"
+                }
+            ]
+        },
+        {
+            "collapsed": false,
+            "id": 10,
+            "title": "System",
+            "type": "row",
+            "gridPos": {
+                "x": 0,
+                "y": 9,
+                "w": 24,
+                "h": 1
+            }
+        },
+        {
+            "id": 11,
+            "title": "Build Info",
+            "type": "table",
+            "gridPos": {
+                "x": 0,
+                "y": 10,
+                "w": 18,
+                "h": 5
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {},
+                "overrides": [
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Value"
+                        },
+                        "properties": [
+                            {
+                                "id": "custom.hidden",
+                                "value": true
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Time"
+                        },
+                        "properties": [
+                            {
+                                "id": "custom.hidden",
+                                "value": true
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "vcs_modified"
+                        },
+                        "properties": [
+                            {
+                                "id": "custom.cellOptions",
+                                "value": {
+                                    "mode": "basic",
+                                    "type": "color-text"
+                                }
+                            },
+                            {
+                                "id": "mappings",
+                                "value": [
+                                    {
+                                        "options": {
+                                            "false": {
+                                                "color": "green",
+                                                "index": 0,
+                                                "text": "false"
+                                            },
+                                            "true": {
+                                                "color": "yellow",
+                                                "index": 1,
+                                                "text": "true"
+                                            }
+                                        },
+                                        "type": "value"
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            },
+            "options": {},
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "prometheus"
+                    },
+                    "expr": "gochat_build_info",
+                    "instant": true,
+                    "format": "table",
+                    "refId": "A"
+                }
+            ],
+            "transformations": [
+                {
+                    "id": "organize",
+                    "options": {
+                        "includeByName": {
+                            "service": true,
+                            "goversion": true,
+                            "vcs_revision": true,
+                            "vcs_time": true,
+                            "vcs_modified": true
+                        },
+                        "indexByName": {
+                            "service": 0,
+                            "goversion": 1,
+                            "vcs_revision": 2,
+                            "vcs_time": 3,
+                            "vcs_modified": 4
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "id": 12,
+            "title": "Panics",
+            "type": "stat",
+            "gridPos": {
+                "x": 18,
+                "y": 10,
+                "w": 6,
+                "h": 5
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "short",
+                    "decimals": 0,
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            },
+                            {
+                                "color": "red",
+                                "value": 1
+                            }
+                        ]
+                    }
+                },
+                "overrides": []
+            },
+            "options": {
+                "colorMode": "background",
+                "graphMode": "none",
+                "justifyMode": "center",
+                "orientation": "auto",
+                "textMode": "auto",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ]
+                }
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "prometheus"
+                    },
+                    "expr": "sum(increase(gochat_panic_recovered_total[$__range]))",
+                    "refId": "A"
+                }
+            ]
+        }
+    ],
+    "refresh": "30s",
+    "schemaVersion": 39,
+    "tags": [
+        "gochat",
+        "infra"
+    ],
+    "templating": {
+        "list": [
+            {
+                "allValue": ".*",
+                "current": {
+                    "selected": true,
+                    "text": [
+                        "All"
+                    ],
+                    "value": [
+                        "$__all"
+                    ]
+                },
+                "datasource": {
+                    "type": "prometheus",
+                    "uid": "prometheus"
+                },
+                "definition": "label_values(container_cpu_usage_seconds_total, service)",
+                "includeAll": true,
+                "label": "Service",
+                "multi": true,
+                "name": "service",
+                "query": {
+                    "qryType": 1,
+                    "query": "label_values(container_cpu_usage_seconds_total, service)"
+                },
+                "refresh": 2,
+                "sort": 1,
+                "type": "query"
+            }
+        ]
+    },
+    "time": {
+        "from": "now-1h",
+        "to": "now"
+    },
+    "timezone": "Asia/Seoul",
+    "title": "INFRA",
+    "uid": "gochat-infra",
+    "version": 1
+}

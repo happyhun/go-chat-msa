@@ -1,0 +1,33 @@
+with-expecter: true
+resolve-type-alias: false
+disable-version-string: true
+issue-845-fix: true
+packages:
+  go-chat-msa/internal/user/db:
+    config:
+      dir: "{{.InterfaceDir}}/mocks"
+      mockname: "Mock{{.InterfaceName}}"
+      outpkg: "mocks"
+    interfaces:
+      Querier:
+  go-chat-msa/internal/chat:
+    config:
+      dir: "{{.InterfaceDir}}/mocks"
+      mockname: "Mock{{.InterfaceName}}"
+      outpkg: "mocks"
+    interfaces:
+      Repository:
+  go-chat-msa/api/proto/user/v1:
+    config:
+      dir: "internal/apigateway/mocks"
+      mockname: "Mock{{.InterfaceName}}"
+      outpkg: "mocks"
+    interfaces:
+      UserServiceClient:
+  go-chat-msa/api/proto/chat/v1:
+    config:
+      dir: "internal/apigateway/mocks"
+      mockname: "Mock{{.InterfaceName}}"
+      outpkg: "mocks"
+    interfaces:
+      ChatServiceClient:

@@ -1,0 +1,212 @@
+discovery.docker "containers" {
+	host             = "unix:///var/run/docker.sock"
+	refresh_interval = "5s"
+}
+
+discovery.relabel "containers" {
+	targets = discovery.docker.containers.targets
+
+	// 불필요한 컨테이너 제외
+	rule {
+		source_labels = ["__meta_docker_container_name"]
+		regex         = "/(.*migrate.*|.*k6-worker.*|alloy|loki|grafana|prometheus|tempo|pyroscope)"
+		action        = "drop"
+	}
+
+	rule {
+		source_labels = ["__meta_docker_container_name"]
+		regex         = "/(.*)"
+		target_label  = "container"
+	}
+
+	rule {
+		source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+		target_label  = "service"
+	}
+
+	rule {
+		target_label = "env"
+		replacement  = "dev"
+	}
+}
+
+loki.source.docker "containers" {
+	host       = "unix:///var/run/docker.sock"
+	targets    = discovery.relabel.containers.output
+	forward_to = [loki.process.json_logs.receiver]
+}
+
+loki.process "json_logs" {
+	forward_to = [loki.write.default.receiver]
+
+	// 헬스체크 노이즈 제거
+	stage.drop {
+		expression = ".*(pg_isready|adminCommand: ping|/health|HealthCheck|grpc\\.health\\.v1\\.Health/Check).*"
+	}
+
+	// MongoDB 로그 처리
+	stage.match {
+		selector = "{service=\"mongo\"}"
+		stage.json {
+			expressions = { s = "s", t = "t.\"$date\"" }
+		}
+		stage.template {
+			source = "level"
+			template = `{{ if eq .s "I" }}info{{ else if eq .s "W" }}warn{{ else if eq .s "E" }}error{{ else if eq .s "F" }}fatal{{ else if eq .s "D" }}debug{{ else }}{{ .s }}{{ end }}`
+		}
+		stage.labels { values = { level = "" } }
+		stage.timestamp {
+			source = "t"
+			format = "RFC3339Nano"
+		}
+	}
+
+	// Postgres 로그 처리
+	stage.match {
+		selector = "{service=\"postgres\"}"
+		stage.regex {
+			expression = "^(?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}.\\d{3} \\w+) \\[(?P<pid>\\d+)\\]\\s+(?:\\S+\\s+)?(?P<pg_level>\\w+):"
+		}
+		stage.template {
+			source = "level"
+			template = `{{ if or (eq .pg_level "LOG") (eq .pg_level "INFO") (eq .pg_level "NOTICE") }}info{{ else if eq .pg_level "WARNING" }}warn{{ else if or (eq .pg_level "ERROR") (eq .pg_level "FATAL") (eq .pg_level "PANIC") }}error{{ else }}{{ lower .pg_level }}{{ end }}`
+		}
+		stage.labels { values = { level = "" } }
+	}
+
+	// Go 서비스 로그 처리
+	stage.match {
+		selector = "{service!~\"(mongo|postgres)\"}"
+		stage.json {
+			expressions = {
+				level     = "level",
+				timestamp = "time",
+			}
+		}
+		stage.template {
+			source   = "level"
+			template = `{{ lower .level }}`
+		}
+		stage.labels {
+			values = { level = "" }
+		}
+		stage.timestamp {
+			source = "timestamp"
+			format = "RFC3339Nano"
+		}
+	}
+}
+
+loki.write "default" {
+	endpoint {
+		url = "http://loki:3100/loki/api/v1/push"
+	}
+}
+
+// 컨테이너 리소스 메트릭 (cAdvisor)
+prometheus.scrape "cadvisor" {
+	targets         = [{__address__ = "cadvisor:8080", job = "cadvisor"}]
+	forward_to      = [prometheus.relabel.cadvisor.receiver]
+	scrape_interval = "15s"
+	metrics_path    = "/metrics"
+}
+
+prometheus.remote_write "cadvisor" {
+	endpoint {
+		url = "http://prometheus:9090/api/v1/write"
+	}
+}
+
+prometheus.relabel "cadvisor" {
+	forward_to = [prometheus.remote_write.cadvisor.receiver]
+
+	rule {
+		source_labels = ["name"]
+		regex         = "^/(.*)"
+		target_label  = "service"
+		replacement   = "$1"
+		action        = "replace"
+	}
+
+	rule {
+		source_labels = ["container_label_com_docker_compose_service"]
+		regex         = "(.+)"
+		target_label  = "service"
+		action        = "replace"
+	}
+
+	rule {
+		source_labels = ["service"]
+		regex         = "($|loki|prometheus|tempo|pyroscope|alloy|grafana|cadvisor|swagger-ui|.*migrate.*)"
+		action        = "drop"
+	}
+
+	rule {
+		source_labels = ["__name__"]
+		regex         = "container_cpu_usage_seconds_total|container_memory_rss"
+		action        = "keep"
+	}
+}
+
+// OTel 수집 (트레이스 + 메트릭)
+otelcol.receiver.otlp "default" {
+	grpc {
+		endpoint = "0.0.0.0:4317"
+	}
+	http {
+		endpoint = "0.0.0.0:4318"
+	}
+
+	output {
+		traces  = [otelcol.processor.filter.drop_healthcheck.input]
+		metrics = [otelcol.processor.batch.metrics.input]
+	}
+}
+
+otelcol.processor.batch "metrics" {
+	output {
+		metrics = [otelcol.exporter.prometheus.default.input]
+	}
+}
+
+otelcol.exporter.prometheus "default" {
+	forward_to = [prometheus.remote_write.default.receiver]
+}
+
+prometheus.remote_write "default" {
+	endpoint {
+		url = "http://prometheus:9090/api/v1/write"
+	}
+}
+
+// 헬스체크 트레이스 제외
+otelcol.processor.filter "drop_healthcheck" {
+	error_mode = "ignore"
+	traces {
+		span = [
+			`attributes["http.route"] == "/health"`,
+			`attributes["http.target"] == "/health"`,
+			`attributes["url.path"] == "/health"`,
+			`IsMatch(name, "grpc\\.health\\..*")`,
+			`IsMatch(name, ".*HealthCheck.*")`,
+		]
+	}
+	output {
+		traces = [otelcol.processor.batch.default.input]
+	}
+}
+
+otelcol.processor.batch "default" {
+	output {
+		traces = [otelcol.exporter.otlphttp.tempo.input]
+	}
+}
+
+otelcol.exporter.otlphttp "tempo" {
+	client {
+		endpoint = "http://tempo:4318"
+		tls {
+			insecure = true
+		}
+	}
+}

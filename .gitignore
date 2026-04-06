@@ -1,0 +1,33 @@
+# Go
+*.test
+*.out
+vendor/
+go.work
+
+# Build
+bin/
+dist/
+tmp/
+node_modules/
+
+# Environment
+.env
+.env.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# AI
+CLAUDE.md
+GEMINI.md
+.claude/
+.agents/
+
+# OS
+.DS_Store
+
+# K6
+test/load/results/

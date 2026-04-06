@@ -1,0 +1,14 @@
+[
+    {
+        "dropIndexes": "messages",
+        "index": "unique_room_client_msg"
+    },
+    {
+        "dropIndexes": "messages",
+        "index": "unique_room_sequence"
+    },
+    {
+        "dropIndexes": "messages",
+        "index": "idx_message_ttl"
+    }
+]

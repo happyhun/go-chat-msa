@@ -1,0 +1,23 @@
+flowchart TB
+    Client["Client"]
+
+    subgraph WSGateway ["WS Gateway"]
+        direction TB
+        Router["Router"]
+        Hashring["Consistent Hashing"]
+        Config[/"Service Registry"/]
+    end
+
+    subgraph WS_Cluster ["WebSocket Service Cluster"]
+        direction LR
+        WSS1["WebSocket Service 1"]
+        WSS2["WebSocket Service 2"]
+    end
+
+    Client == "WS Upgrade" ==> Router
+
+    Config -- "시작 시 초기화" --> Hashring
+    Router -- "1. Room ID로 노드 조회" --> Hashring
+    Hashring -- "2. 타겟 노드 반환" --> Router
+
+    Router == "3. 프록시 연결" ==> WS_Cluster

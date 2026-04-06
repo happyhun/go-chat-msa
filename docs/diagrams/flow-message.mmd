@@ -1,0 +1,59 @@
+flowchart TB
+    Client["Client"]
+
+    subgraph Manager ["Manager"]
+        direction TB
+        ManagerLoop(("Manager Actor Loop"))
+        PersistCh[/"Persist Channel"/]
+
+        subgraph WorkerPool ["Batch Worker Pool"]
+            direction LR
+            W1("Worker 1")
+            W2("Worker 2")
+        end
+
+        subgraph StoreAdapter ["Chat Store Adapter"]
+            direction TB
+            RetryCh[/"Retry Channel"/]
+            RetryWorker("Retry Worker")
+        end
+    end
+
+    subgraph Hub ["Hub"]
+        direction TB
+        HubLoop(("Hub Actor Loop"))
+        Idempotency["Dedup LRU"]
+    end
+
+    subgraph Session ["Session"]
+        direction TB
+        Socket(("WebSocket"))
+        RP("Read Pump")
+        RateLimit{"Rate Limiter"}
+
+        WP("Write Pump")
+        Buffer[/"Send Channel"/]
+    end
+
+    ChatService["Chat Service"]
+
+    Client == "메시지 전송" ==> Socket
+    Socket ==> RP
+    RP ==> RateLimit
+    RateLimit ==> HubLoop
+
+    ManagerLoop -- "시스템 메시지 주입" --> HubLoop
+
+    HubLoop -. "중복 검사" .-> Idempotency
+    HubLoop ==>|"브로드캐스트"| Buffer
+    Buffer ==> WP
+    WP ==> Socket
+    Socket ==> Client
+
+    HubLoop -- "메시지 저장" --> PersistCh
+    PersistCh --> WorkerPool
+    WorkerPool -- "배치 플러시" --> StoreAdapter
+    ChatService -. "실패" .-> RetryCh
+    RetryCh -. "재시도 대기" .-> RetryWorker
+    RetryWorker -. "지수 백오프 재시도" .-> ChatService
+    StoreAdapter -- "배치 저장" --> ChatService

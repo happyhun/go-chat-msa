@@ -1,0 +1,569 @@
+{
+    "annotations": {
+        "list": [
+            {
+                "builtIn": 1,
+                "datasource": {
+                    "type": "grafana",
+                    "uid": "-- Grafana --"
+                },
+                "enable": true,
+                "hide": false,
+                "iconColor": "rgba(0, 211, 255, 1)",
+                "name": "Annotations & Alerts",
+                "type": "dashboard"
+            }
+        ]
+    },
+    "graphTooltip": 1,
+    "id": null,
+    "links": [
+        {
+            "title": "Dashboards",
+            "type": "dashboards",
+            "tags": [
+                "gochat"
+            ],
+            "asDropdown": true,
+            "keepTime": true
+        }
+    ],
+    "panels": [
+        {
+            "collapsed": false,
+            "id": 1,
+            "title": "Golden Signals",
+            "type": "row",
+            "gridPos": {
+                "x": 0,
+                "y": 0,
+                "w": 24,
+                "h": 1
+            }
+        },
+        {
+            "id": 2,
+            "title": "HTTP P99",
+            "type": "stat",
+            "gridPos": {
+                "x": 0,
+                "y": 1,
+                "w": 3,
+                "h": 4
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "options": {
+                "colorMode": "background",
+                "graphMode": "none",
+                "justifyMode": "center",
+                "orientation": "auto",
+                "textMode": "auto",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ]
+                }
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "ms",
+                    "decimals": 0,
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 100
+                            },
+                            {
+                                "color": "red",
+                                "value": 500
+                            }
+                        ]
+                    }
+                }
+            },
+            "targets": [
+                {
+                    "expr": "max(histogram_quantile(0.99, sum by(service, le) (rate(gochat_http_request_duration_seconds_bucket[$__rate_interval]))) >= 0) * 1000",
+                    "refId": "A"
+                }
+            ]
+        },
+        {
+            "id": 3,
+            "title": "gRPC P99",
+            "type": "stat",
+            "gridPos": {
+                "x": 3,
+                "y": 1,
+                "w": 3,
+                "h": 4
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "options": {
+                "colorMode": "background",
+                "graphMode": "none",
+                "justifyMode": "center",
+                "orientation": "auto",
+                "textMode": "auto",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ]
+                }
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "ms",
+                    "decimals": 0,
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 100
+                            },
+                            {
+                                "color": "red",
+                                "value": 500
+                            }
+                        ]
+                    }
+                }
+            },
+            "targets": [
+                {
+                    "expr": "max(histogram_quantile(0.99, sum by(service, le) (rate(gochat_grpc_request_duration_seconds_bucket[$__rate_interval]))) >= 0) * 1000",
+                    "refId": "A"
+                }
+            ]
+        },
+        {
+            "id": 4,
+            "title": "WS Egress P99",
+            "type": "stat",
+            "gridPos": {
+                "x": 6,
+                "y": 1,
+                "w": 4,
+                "h": 4
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "options": {
+                "colorMode": "background",
+                "graphMode": "none",
+                "justifyMode": "center",
+                "orientation": "auto",
+                "textMode": "auto",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ]
+                }
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "ms",
+                    "decimals": 0,
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 50
+                            },
+                            {
+                                "color": "red",
+                                "value": 200
+                            }
+                        ]
+                    }
+                }
+            },
+            "targets": [
+                {
+                    "expr": "max(histogram_quantile(0.99, sum by(le) (rate(gochat_ws_egress_duration_seconds_bucket[$__rate_interval]))) >= 0) * 1000",
+                    "refId": "A"
+                }
+            ]
+        },
+        {
+            "id": 5,
+            "title": "HTTP Error Rate",
+            "type": "stat",
+            "gridPos": {
+                "x": 10,
+                "y": 1,
+                "w": 4,
+                "h": 4
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "options": {
+                "colorMode": "background",
+                "graphMode": "none",
+                "justifyMode": "center",
+                "orientation": "auto",
+                "textMode": "auto",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ]
+                }
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "percentunit",
+                    "decimals": 2,
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 0.01
+                            },
+                            {
+                                "color": "red",
+                                "value": 0.05
+                            }
+                        ]
+                    }
+                }
+            },
+            "targets": [
+                {
+                    "expr": "max(sum by(service) (rate(gochat_http_requests_total{status_code=~\"5..\"}[$__rate_interval])) / sum by(service) (rate(gochat_http_requests_total[$__rate_interval])))",
+                    "refId": "A"
+                }
+            ]
+        },
+        {
+            "id": 6,
+            "title": "gRPC Error Rate",
+            "type": "stat",
+            "gridPos": {
+                "x": 14,
+                "y": 1,
+                "w": 4,
+                "h": 4
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "options": {
+                "colorMode": "background",
+                "graphMode": "none",
+                "justifyMode": "center",
+                "orientation": "auto",
+                "textMode": "auto",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ]
+                }
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "percentunit",
+                    "decimals": 2,
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 0.01
+                            },
+                            {
+                                "color": "red",
+                                "value": 0.05
+                            }
+                        ]
+                    }
+                }
+            },
+            "targets": [
+                {
+                    "expr": "max(sum by(service) (rate(gochat_grpc_requests_total{code=~\"Internal|Unknown|DataLoss|Unavailable\"}[$__rate_interval])) / sum by(service) (rate(gochat_grpc_requests_total[$__rate_interval])))",
+                    "refId": "A"
+                }
+            ]
+        },
+        {
+            "id": 7,
+            "title": "Active Sessions",
+            "type": "stat",
+            "gridPos": {
+                "x": 18,
+                "y": 1,
+                "w": 3,
+                "h": 4
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "options": {
+                "colorMode": "background",
+                "graphMode": "none",
+                "justifyMode": "center",
+                "orientation": "auto",
+                "textMode": "auto",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ]
+                }
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "short",
+                    "decimals": 0,
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    }
+                }
+            },
+            "targets": [
+                {
+                    "expr": "sum(gochat_ws_connections_active)",
+                    "refId": "A"
+                }
+            ]
+        },
+        {
+            "id": 8,
+            "title": "HTTP RPS",
+            "type": "stat",
+            "gridPos": {
+                "x": 21,
+                "y": 1,
+                "w": 3,
+                "h": 4
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "options": {
+                "colorMode": "background",
+                "graphMode": "none",
+                "justifyMode": "center",
+                "orientation": "auto",
+                "textMode": "auto",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ]
+                }
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "reqps",
+                    "decimals": 1,
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    }
+                }
+            },
+            "targets": [
+                {
+                    "expr": "sum(rate(gochat_http_requests_total[$__rate_interval]))",
+                    "refId": "A"
+                }
+            ]
+        },
+        {
+            "collapsed": false,
+            "id": 9,
+            "title": "Trend",
+            "type": "row",
+            "gridPos": {
+                "x": 0,
+                "y": 5,
+                "w": 24,
+                "h": 1
+            }
+        },
+        {
+            "id": 10,
+            "title": "HTTP Traffic",
+            "type": "timeseries",
+            "gridPos": {
+                "x": 0,
+                "y": 6,
+                "w": 8,
+                "h": 8
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "reqps",
+                    "custom": {
+                        "lineInterpolation": "smooth",
+                        "lineWidth": 2,
+                        "fillOpacity": 15,
+                        "showPoints": "never"
+                    }
+                }
+            },
+            "targets": [
+                {
+                    "expr": "sum by(service) (rate(gochat_http_requests_total[$__rate_interval]))",
+                    "legendFormat": "{{ service }}",
+                    "refId": "A"
+                }
+            ]
+        },
+        {
+            "id": 11,
+            "title": "Error Rate",
+            "type": "timeseries",
+            "gridPos": {
+                "x": 8,
+                "y": 6,
+                "w": 8,
+                "h": 8
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "percentunit",
+                    "custom": {
+                        "lineInterpolation": "smooth",
+                        "lineWidth": 2,
+                        "fillOpacity": 10,
+                        "showPoints": "never"
+                    }
+                }
+            },
+            "targets": [
+                {
+                    "expr": "sum by(service) (rate(gochat_http_requests_total{status_code=~\"5..\"}[$__rate_interval])) / sum by(service) (rate(gochat_http_requests_total[$__rate_interval]))",
+                    "legendFormat": "HTTP {{ service }}",
+                    "refId": "A"
+                },
+                {
+                    "expr": "sum by(service) (rate(gochat_grpc_requests_total{code=~\"Internal|Unknown|DataLoss|Unavailable\"}[$__rate_interval])) / sum by(service) (rate(gochat_grpc_requests_total[$__rate_interval]))",
+                    "legendFormat": "gRPC {{ service }}",
+                    "refId": "B"
+                }
+            ]
+        },
+        {
+            "id": 12,
+            "title": "WS Throughput",
+            "type": "timeseries",
+            "gridPos": {
+                "x": 16,
+                "y": 6,
+                "w": 8,
+                "h": 8
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "short",
+                    "custom": {
+                        "lineInterpolation": "smooth",
+                        "lineWidth": 2,
+                        "fillOpacity": 15,
+                        "showPoints": "never",
+                        "axisSoftMin": 0
+                    }
+                },
+                "overrides": []
+            },
+            "options": {
+                "tooltip": {
+                    "mode": "multi"
+                },
+                "legend": {
+                    "displayMode": "list",
+                    "placement": "bottom"
+                }
+            },
+            "targets": [
+                {
+                    "expr": "sum(rate(gochat_ws_messages_received_total[$__rate_interval]))",
+                    "legendFormat": "Ingress",
+                    "refId": "A"
+                },
+                {
+                    "expr": "sum(rate(gochat_ws_messages_sent_total[$__rate_interval]))",
+                    "legendFormat": "Egress",
+                    "refId": "B"
+                }
+            ]
+        }
+    ],
+    "refresh": "30s",
+    "schemaVersion": 39,
+    "tags": [
+        "gochat"
+    ],
+    "templating": {
+        "list": []
+    },
+    "time": {
+        "from": "now-1h",
+        "to": "now"
+    },
+    "timezone": "Asia/Seoul",
+    "title": "OVERVIEW",
+    "uid": "gochat-overview",
+    "version": 1
+}

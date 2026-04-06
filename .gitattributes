@@ -1,0 +1,4 @@
+# Generated code — collapse in GitHub diffs, exclude from language stats
+api/proto/**/*.pb.go linguist-generated
+internal/user/db/*.go linguist-generated
+internal/*/mocks/mock_*.go linguist-generated

@@ -1,0 +1,68 @@
+syntax = "proto3";
+
+package chat.v1;
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "go-chat-msa/api/proto/v1/chat";
+
+service ChatService {
+  rpc BatchCreateMessages(BatchCreateMessagesRequest) returns (google.protobuf.Empty);
+  rpc ListMessages(ListMessagesRequest) returns (ListMessagesResponse);
+  rpc SyncMessages(SyncMessagesRequest) returns (SyncMessagesResponse);
+  rpc GetLastSequenceNumber(GetLastSequenceNumberRequest) returns (GetLastSequenceNumberResponse);
+}
+
+message Message {
+  string id = 1;
+  string room_id = 2;
+  string sender_id = 3;
+  string content = 4;
+  string type = 5;
+  google.protobuf.Timestamp timestamp = 6;
+  int64 sequence_number = 7;
+}
+
+message CreateMessageRequest {
+  string room_id = 1;
+  string sender_id = 2;
+  string content = 3;
+  string client_msg_id = 4;
+  string type = 5;
+  int64 sequence_number = 6;
+  string message_id = 7;
+}
+
+message BatchCreateMessagesRequest {
+  repeated CreateMessageRequest requests = 1;
+}
+
+message ListMessagesRequest {
+  string room_id = 1;
+  int32 limit = 2;
+  google.protobuf.Timestamp joined_at = 3;
+}
+
+message ListMessagesResponse {
+  repeated Message messages = 1;
+}
+
+message SyncMessagesRequest {
+  string room_id = 1;
+  int64 last_sequence_number = 2;
+  int32 limit = 3;
+  google.protobuf.Timestamp joined_at = 4;
+}
+
+message SyncMessagesResponse {
+  repeated Message messages = 1;
+}
+
+message GetLastSequenceNumberRequest {
+  string room_id = 1;
+}
+
+message GetLastSequenceNumberResponse {
+  int64 sequence_number = 1;
+}

@@ -1,0 +1,30 @@
+[
+  {
+    "createIndexes": "messages",
+    "indexes": [
+      {
+        "key": {
+          "roomId": 1,
+          "clientMsgId": 1
+        },
+        "name": "unique_room_client_msg",
+        "unique": true
+      },
+      {
+        "key": {
+          "roomId": 1,
+          "sequenceNumber": 1
+        },
+        "name": "unique_room_sequence",
+        "unique": true
+      },
+      {
+        "key": {
+          "createdAt": 1
+        },
+        "name": "idx_message_ttl",
+        "expireAfterSeconds": 7776000
+      }
+    ]
+  }
+]
