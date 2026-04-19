@@ -367,7 +367,10 @@ REST API(`GET /rooms/{id}/messages`)에서 `last_seq` 쿼리 파라미터 유무
 - 서버/클라이언트 스텁이 자동 생성되어 라우팅, 요청 파싱, 응답 직렬화를 직접 작성할 필요가 없음
 - Protobuf 바이너리 직렬화로 JSON 대비 페이로드는 2~3배 작고, 파싱은 5~10배 빠름
 
-API Gateway는 서비스당 단일 연결을 쓰고, 트래픽이 많은 WebSocket Service는 커넥션 풀을 넉넉히 잡아 병목을 피합니다.
+각 서비스는 타겟당 단일 `grpc.ClientConn`을 공유합니다.  
+`ClientConn`은 HTTP/2 multiplexing으로 다중 요청을 동시 처리하며, keepalive 파라미터로 장기 유휴 연결을 유지합니다.  
+저장 파이프라인은 배치 워커 풀로, 핸드셰이크 경로는 ws-gateway rate limiter로 동시 호출 수를 억제해 HTTP/2 권장치(연결당 ~100 스트림) 이내로 유도합니다.  
+추후 권장치를 초과하는 병목이 관측되면 커넥션 풀을 도입할 예정입니다.
 
 ### 3.2 WebSocket 라우팅
 
