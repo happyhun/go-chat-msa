@@ -51,7 +51,7 @@ func (s *Service) BatchCreateMessages(ctx context.Context, req *pb.BatchCreateMe
 
 	if err := s.repo.SaveMany(ctx, msgs); err != nil {
 		slog.ErrorContext(ctx, "failed to batch save messages", "count", len(msgs), "error", err)
-		chatMessagesSavedTotal.Add(ctx, int64(len(msgs)), metric.WithAttributes(attribute.String("status", "internal")))
+		chatMessagesSavedTotal.Add(ctx, int64(len(msgs)), metric.WithAttributes(attribute.String("status", "error")))
 		return nil, status.Errorf(codes.Internal, "failed to batch save messages: %v", err)
 	}
 	chatMessagesSavedTotal.Add(ctx, int64(len(msgs)), metric.WithAttributes(attribute.String("status", "ok")))

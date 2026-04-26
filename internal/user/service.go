@@ -91,11 +91,11 @@ func (s *Service) CreateUser(ctx context.Context, req *pb.CreateUserRequest) (*p
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			userCreatedTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("status", "already_exists")))
+			userCreatedTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("status", "error")))
 			return nil, status.Error(codes.AlreadyExists, "username already exists")
 		}
 		slog.ErrorContext(ctx, "failed to create user", "error", err)
-		userCreatedTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("status", "internal")))
+		userCreatedTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("status", "error")))
 		return nil, status.Error(codes.Internal, "failed to create user")
 	}
 
@@ -120,11 +120,11 @@ func (s *Service) VerifyUser(ctx context.Context, req *pb.VerifyUserRequest) (*p
 		case errors.Is(err, hasher.ErrClosed):
 			return nil, status.Error(codes.Unavailable, "service shutting down")
 		case errors.Is(err, bcrypt.ErrMismatchedHashAndPassword):
-			authLoginTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("status", "invalid_credentials")))
+			authLoginTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("status", "error")))
 			return nil, status.Error(codes.Unauthenticated, "invalid username or password")
 		default:
 			slog.ErrorContext(ctx, "failed to compare password", "error", err)
-			authLoginTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("status", "internal")))
+			authLoginTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("status", "error")))
 			return nil, status.Error(codes.Internal, "failed to verify user")
 		}
 	}
@@ -428,7 +428,7 @@ func (s *Service) JoinRoom(ctx context.Context, req *pb.JoinRoomRequest) (*pb.Jo
 		}
 
 		if int32(count) >= room.Capacity {
-			roomJoinTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("status", "room_full")))
+			roomJoinTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("status", "error")))
 			return status.Error(codes.FailedPrecondition, "room is full")
 		}
 
@@ -439,7 +439,7 @@ func (s *Service) JoinRoom(ctx context.Context, req *pb.JoinRoomRequest) (*pb.Jo
 		}); err != nil {
 			var pgErr *pgconn.PgError
 			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-				roomJoinTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("status", "already_member")))
+				roomJoinTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("status", "error")))
 				return status.Error(codes.AlreadyExists, "already a member of the room")
 			}
 			return err
@@ -450,16 +450,16 @@ func (s *Service) JoinRoom(ctx context.Context, req *pb.JoinRoomRequest) (*pb.Jo
 		if ok {
 			switch st.Code() {
 			case codes.NotFound:
-				roomJoinTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("status", "not_found")))
+				roomJoinTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("status", "error")))
 			case codes.AlreadyExists:
 			case codes.FailedPrecondition:
 			default:
-				roomJoinTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("status", "internal")))
+				roomJoinTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("status", "error")))
 			}
 			return nil, err
 		}
 		slog.ErrorContext(ctx, "failed to join room", "error", err)
-		roomJoinTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("status", "internal")))
+		roomJoinTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("status", "error")))
 		return nil, status.Error(codes.Internal, "failed to join room")
 	}
 
