@@ -87,6 +87,13 @@ SELECT id, name, manager_id, capacity FROM rooms
 WHERE id = $1 AND deleted_at IS NULL
 FOR UPDATE;
 
+-- name: ListJoinedRoomIDsForUpdate :many
+SELECT rm.room_id
+FROM room_members rm
+JOIN rooms r ON r.id = rm.room_id
+WHERE rm.user_id = $1 AND r.deleted_at IS NULL
+FOR UPDATE OF r;
+
 -- name: PurgeDeletedRooms :execrows
 DELETE FROM rooms
 WHERE deleted_at IS NOT NULL
