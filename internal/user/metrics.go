@@ -11,6 +11,7 @@ import (
 var (
 	userMeter           = otel.Meter("go-chat-msa/user")
 	userCreatedTotal    metric.Int64Counter
+	userDeletedTotal    metric.Int64Counter
 	authLoginTotal      metric.Int64Counter
 	authTokenReuseTotal metric.Int64Counter
 	roomJoinTotal       metric.Int64Counter
@@ -23,6 +24,12 @@ func init() {
 	)
 	if err != nil {
 		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_user_created", "error", err)
+	}
+	userDeletedTotal, err = userMeter.Int64Counter("gochat_user_deleted",
+		metric.WithDescription("회원탈퇴 시도 횟수"),
+	)
+	if err != nil {
+		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_user_deleted", "error", err)
 	}
 	authLoginTotal, err = userMeter.Int64Counter("gochat_auth_login",
 		metric.WithDescription("로그인 시도 횟수"),

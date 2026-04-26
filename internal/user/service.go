@@ -179,6 +179,9 @@ func (s *Service) RefreshToken(ctx context.Context, req *pb.RefreshTokenRequest)
 
 		user, err := qtx.GetUserByID(ctx, rt.UserID)
 		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return status.Error(codes.Unauthenticated, "user no longer exists")
+			}
 			slog.ErrorContext(ctx, "failed to get user for refresh", "error", err)
 			return status.Error(codes.Internal, "failed to get user")
 		}
@@ -558,48 +561,126 @@ func (s *Service) LeaveRoom(ctx context.Context, req *pb.LeaveRoomRequest) (*pb.
 	}
 
 	if err := s.runInTx(ctx, func(qtx db.Querier) error {
-		room, err := qtx.GetRoomForUpdate(ctx, roomUUID)
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return status.Error(codes.NotFound, "room not found")
-			}
-			return status.Error(codes.Internal, "failed to get room")
-		}
-
-		if err := qtx.DeleteRoomMember(ctx, db.DeleteRoomMemberParams{RoomID: roomUUID, UserID: userUUID}); err != nil {
-			slog.ErrorContext(ctx, "failed to delete room member", "error", err)
-			return status.Error(codes.Internal, "failed to leave room")
-		}
-
-		if room.ManagerID.Valid && room.ManagerID.Bytes == userUUID.Bytes {
-			oldestMember, err := qtx.GetOldestRoomMember(ctx, roomUUID)
-			if errors.Is(err, pgx.ErrNoRows) {
-				if _, err := qtx.SoftDeleteRoom(ctx, db.SoftDeleteRoomParams{
-					ID:        roomUUID,
-					ManagerID: room.ManagerID,
-					DeletedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
-				}); err != nil {
-					slog.ErrorContext(ctx, "failed to soft delete empty room", "error", err)
-					return status.Error(codes.Internal, "failed to delete empty room")
-				}
-				return nil
-			}
-			if err != nil {
-				slog.ErrorContext(ctx, "failed to get oldest member", "error", err)
-				return status.Error(codes.Internal, "failed to delegate room manager")
-			}
-			if err := qtx.UpdateRoomManager(ctx, db.UpdateRoomManagerParams{ID: roomUUID, ManagerID: oldestMember}); err != nil {
-				slog.ErrorContext(ctx, "failed to delegate room manager", "error", err, "room_id", roomUUID)
-				return status.Error(codes.Internal, "failed to delegate room manager")
-			}
-		}
-
-		return nil
+		return s.leaveRoomTx(ctx, qtx, roomUUID, userUUID)
 	}); err != nil {
 		return nil, err
 	}
 
 	return &pb.LeaveRoomResponse{}, nil
+}
+
+func (s *Service) leaveRoomTx(ctx context.Context, qtx db.Querier, roomUUID, userUUID pgtype.UUID) error {
+	room, err := qtx.GetRoomForUpdate(ctx, roomUUID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return status.Error(codes.NotFound, "room not found")
+		}
+		return status.Error(codes.Internal, "failed to get room")
+	}
+
+	if err := qtx.DeleteRoomMember(ctx, db.DeleteRoomMemberParams{RoomID: roomUUID, UserID: userUUID}); err != nil {
+		slog.ErrorContext(ctx, "failed to delete room member", "error", err)
+		return status.Error(codes.Internal, "failed to leave room")
+	}
+
+	if !(room.ManagerID.Valid && room.ManagerID.Bytes == userUUID.Bytes) {
+		return nil
+	}
+
+	oldestMember, err := qtx.GetOldestRoomMember(ctx, roomUUID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if _, err := qtx.SoftDeleteRoom(ctx, db.SoftDeleteRoomParams{
+			ID:        roomUUID,
+			ManagerID: room.ManagerID,
+			DeletedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		}); err != nil {
+			slog.ErrorContext(ctx, "failed to soft delete empty room", "error", err)
+			return status.Error(codes.Internal, "failed to delete empty room")
+		}
+		return nil
+	}
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to get oldest member", "error", err)
+		return status.Error(codes.Internal, "failed to delegate room manager")
+	}
+	if err := qtx.UpdateRoomManager(ctx, db.UpdateRoomManagerParams{ID: roomUUID, ManagerID: oldestMember}); err != nil {
+		slog.ErrorContext(ctx, "failed to delegate room manager", "error", err, "room_id", roomUUID)
+		return status.Error(codes.Internal, "failed to delegate room manager")
+	}
+	return nil
+}
+
+func (s *Service) DeleteUser(ctx context.Context, req *pb.DeleteUserRequest) (*pb.DeleteUserResponse, error) {
+	userUUID, err := toPGUUID(req.UserId)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, "invalid user_id")
+	}
+
+	user, err := s.queries.GetUserByID(ctx, userUUID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			userDeletedTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("status", "error")))
+			return nil, status.Error(codes.NotFound, "user not found")
+		}
+		slog.ErrorContext(ctx, "failed to get user", "error", err)
+		userDeletedTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("status", "error")))
+		return nil, status.Error(codes.Internal, "failed to get user")
+	}
+
+	if err := s.hasher.ComparePassword(ctx, user.PasswordHash, req.Password); err != nil {
+		userDeletedTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("status", "error")))
+		switch {
+		case errors.Is(err, hasher.ErrQueueFull):
+			return nil, status.Error(codes.ResourceExhausted, "system overloaded")
+		case errors.Is(err, hasher.ErrClosed):
+			return nil, status.Error(codes.Unavailable, "service shutting down")
+		case errors.Is(err, bcrypt.ErrMismatchedHashAndPassword):
+			return nil, status.Error(codes.Unauthenticated, "invalid password")
+		default:
+			slog.ErrorContext(ctx, "failed to compare password", "error", err)
+			return nil, status.Error(codes.Internal, "failed to verify password")
+		}
+	}
+
+	var leftRoomIDs []string
+	if err := s.runInTx(ctx, func(qtx db.Querier) error {
+		roomIDs, err := qtx.ListJoinedRoomIDsForUpdate(ctx, userUUID)
+		if err != nil {
+			slog.ErrorContext(ctx, "failed to list joined rooms", "error", err)
+			return status.Error(codes.Internal, "failed to list joined rooms")
+		}
+
+		leftRoomIDs = make([]string, 0, len(roomIDs))
+		for _, roomID := range roomIDs {
+			if err := s.leaveRoomTx(ctx, qtx, roomID, userUUID); err != nil {
+				return err
+			}
+			leftRoomIDs = append(leftRoomIDs, roomID.String())
+		}
+
+		if err := qtx.DeleteRefreshTokensByUserID(ctx, userUUID); err != nil {
+			slog.ErrorContext(ctx, "failed to delete refresh tokens", "error", err)
+			return status.Error(codes.Internal, "failed to revoke tokens")
+		}
+
+		if _, err := qtx.SoftDeleteUser(ctx, db.SoftDeleteUserParams{
+			ID:        userUUID,
+			DeletedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		}); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return status.Error(codes.NotFound, "user not found")
+			}
+			slog.ErrorContext(ctx, "failed to soft delete user", "error", err)
+			return status.Error(codes.Internal, "failed to delete user")
+		}
+		return nil
+	}); err != nil {
+		userDeletedTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("status", "error")))
+		return nil, err
+	}
+
+	userDeletedTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("status", "ok")))
+	return &pb.DeleteUserResponse{LeftRoomIds: leftRoomIDs}, nil
 }
 
 func (s *Service) DeleteRoom(ctx context.Context, req *pb.DeleteRoomRequest) (*pb.DeleteRoomResponse, error) {
