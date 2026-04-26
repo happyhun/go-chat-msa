@@ -12,6 +12,7 @@ service UserService {
   rpc VerifyUser(VerifyUserRequest) returns (VerifyUserResponse);
   rpc RefreshToken(RefreshTokenRequest) returns (RefreshTokenResponse);
   rpc RevokeToken(RevokeTokenRequest) returns (RevokeTokenResponse);
+  rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse);
 
   // 채팅방 관리
   rpc CreateRoom(CreateRoomRequest) returns (CreateRoomResponse);
@@ -67,6 +68,15 @@ message RevokeTokenRequest {
 }
 
 message RevokeTokenResponse {}
+
+message DeleteUserRequest {
+  string user_id = 1;
+  string password = 2;
+}
+
+message DeleteUserResponse {
+  repeated string left_room_ids = 1;
+}
 
 // 채팅방 관리
 message Room {
