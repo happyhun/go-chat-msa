@@ -105,6 +105,7 @@ func (r *Router) registerV1Routes() {
 		middleware.RateLimitMiddleware(r.authenticatedLimiter, middleware.ContextKeyFunc(middleware.UserIDKey)),
 	})
 
+	r.muxV1.Handle("DELETE /me", middleware.ChainMiddleware(r.handleDeleteUser, authMws...))
 	r.muxV1.Handle("GET /me/rooms", middleware.ChainMiddleware(r.handleListJoinedRooms, authMws...))
 	r.muxV1.Handle("GET /rooms", middleware.ChainMiddleware(r.handleSearchRooms, authMws...))
 	r.muxV1.Handle("POST /rooms", middleware.ChainMiddleware(r.handleCreateRoom, authMws...))
