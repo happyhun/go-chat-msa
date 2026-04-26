@@ -247,6 +247,80 @@ func (_c *MockUserServiceClient_DeleteRoom_Call) RunAndReturn(run func(context.C
 	return _c
 }
 
+// DeleteUser provides a mock function with given fields: ctx, in, opts
+func (_m *MockUserServiceClient) DeleteUser(ctx context.Context, in *user.DeleteUserRequest, opts ...grpc.CallOption) (*user.DeleteUserResponse, error) {
+	_va := make([]interface{}, len(opts))
+	for _i := range opts {
+		_va[_i] = opts[_i]
+	}
+	var _ca []interface{}
+	_ca = append(_ca, ctx, in)
+	_ca = append(_ca, _va...)
+	ret := _m.Called(_ca...)
+
+	if len(ret) == 0 {
+		panic("no return value specified for DeleteUser")
+	}
+
+	var r0 *user.DeleteUserResponse
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, *user.DeleteUserRequest, ...grpc.CallOption) (*user.DeleteUserResponse, error)); ok {
+		return rf(ctx, in, opts...)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, *user.DeleteUserRequest, ...grpc.CallOption) *user.DeleteUserResponse); ok {
+		r0 = rf(ctx, in, opts...)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*user.DeleteUserResponse)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, *user.DeleteUserRequest, ...grpc.CallOption) error); ok {
+		r1 = rf(ctx, in, opts...)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// MockUserServiceClient_DeleteUser_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DeleteUser'
+type MockUserServiceClient_DeleteUser_Call struct {
+	*mock.Call
+}
+
+// DeleteUser is a helper method to define mock.On call
+//   - ctx context.Context
+//   - in *user.DeleteUserRequest
+//   - opts ...grpc.CallOption
+func (_e *MockUserServiceClient_Expecter) DeleteUser(ctx interface{}, in interface{}, opts ...interface{}) *MockUserServiceClient_DeleteUser_Call {
+	return &MockUserServiceClient_DeleteUser_Call{Call: _e.mock.On("DeleteUser",
+		append([]interface{}{ctx, in}, opts...)...)}
+}
+
+func (_c *MockUserServiceClient_DeleteUser_Call) Run(run func(ctx context.Context, in *user.DeleteUserRequest, opts ...grpc.CallOption)) *MockUserServiceClient_DeleteUser_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		variadicArgs := make([]grpc.CallOption, len(args)-2)
+		for i, a := range args[2:] {
+			if a != nil {
+				variadicArgs[i] = a.(grpc.CallOption)
+			}
+		}
+		run(args[0].(context.Context), args[1].(*user.DeleteUserRequest), variadicArgs...)
+	})
+	return _c
+}
+
+func (_c *MockUserServiceClient_DeleteUser_Call) Return(_a0 *user.DeleteUserResponse, _a1 error) *MockUserServiceClient_DeleteUser_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *MockUserServiceClient_DeleteUser_Call) RunAndReturn(run func(context.Context, *user.DeleteUserRequest, ...grpc.CallOption) (*user.DeleteUserResponse, error)) *MockUserServiceClient_DeleteUser_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetMemberJoinedAt provides a mock function with given fields: ctx, in, opts
 func (_m *MockUserServiceClient) GetMemberJoinedAt(ctx context.Context, in *user.GetMemberJoinedAtRequest, opts ...grpc.CallOption) (*user.GetMemberJoinedAtResponse, error) {
 	_va := make([]interface{}, len(opts))

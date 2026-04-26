@@ -2,6 +2,7 @@ package apigateway
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	userpb "go-chat-msa/api/proto/user/v1"
 	"go-chat-msa/internal/apigateway/mocks"
 	"go-chat-msa/internal/shared/config"
+	"go-chat-msa/internal/shared/middleware"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -363,6 +365,134 @@ func TestRouter_HandleLogout(t *testing.T) {
 				}
 				assert.NotNil(t, tokenCookie)
 				assert.Equal(t, -1, tokenCookie.MaxAge)
+			}
+		})
+	}
+}
+
+func TestRouter_HandleDeleteUser(t *testing.T) {
+	t.Parallel()
+
+	const userID = "11111111-1111-1111-1111-111111111111"
+
+	tests := []struct {
+		name         string
+		userIDInCtx  string
+		body         any
+		mockBehavior func(m *mocks.MockUserServiceClient)
+		expectedCode int
+		expectCookie bool
+	}{
+		{
+			name:        "Success: 비밀번호 일치 시 204 + 쿠키 만료",
+			userIDInCtx: userID,
+			body:        DeleteUserRequest{Password: "SecurePass123!"},
+			mockBehavior: func(m *mocks.MockUserServiceClient) {
+				m.EXPECT().DeleteUser(mock.Anything, &userpb.DeleteUserRequest{
+					UserId:   userID,
+					Password: "SecurePass123!",
+				}).Return(&userpb.DeleteUserResponse{}, nil)
+			},
+			expectedCode: http.StatusNoContent,
+			expectCookie: true,
+		},
+		{
+			name:         "Failure: JWT 미들웨어 미통과 (Unauthorized)",
+			userIDInCtx:  "",
+			body:         DeleteUserRequest{Password: "SecurePass123!"},
+			mockBehavior: func(m *mocks.MockUserServiceClient) {},
+			expectedCode: http.StatusUnauthorized,
+		},
+		{
+			name:         "Failure: 잘못된 JSON 본문",
+			userIDInCtx:  userID,
+			body:         "not-json",
+			mockBehavior: func(m *mocks.MockUserServiceClient) {},
+			expectedCode: http.StatusBadRequest,
+		},
+		{
+			name:         "Failure: 비밀번호 누락",
+			userIDInCtx:  userID,
+			body:         DeleteUserRequest{Password: ""},
+			mockBehavior: func(m *mocks.MockUserServiceClient) {},
+			expectedCode: http.StatusBadRequest,
+		},
+		{
+			name:        "Failure: 비밀번호 불일치 (gRPC Unauthenticated → 401)",
+			userIDInCtx: userID,
+			body:        DeleteUserRequest{Password: "wrong"},
+			mockBehavior: func(m *mocks.MockUserServiceClient) {
+				m.EXPECT().DeleteUser(mock.Anything, mock.Anything).
+					Return(nil, status.Error(codes.Unauthenticated, "invalid password"))
+			},
+			expectedCode: http.StatusUnauthorized,
+		},
+		{
+			name:        "Failure: 사용자 없음 (gRPC NotFound → 404)",
+			userIDInCtx: userID,
+			body:        DeleteUserRequest{Password: "SecurePass123!"},
+			mockBehavior: func(m *mocks.MockUserServiceClient) {
+				m.EXPECT().DeleteUser(mock.Anything, mock.Anything).
+					Return(nil, status.Error(codes.NotFound, "user not found"))
+			},
+			expectedCode: http.StatusNotFound,
+		},
+		{
+			name:        "Failure: 내부 오류 (gRPC Internal → 500)",
+			userIDInCtx: userID,
+			body:        DeleteUserRequest{Password: "SecurePass123!"},
+			mockBehavior: func(m *mocks.MockUserServiceClient) {
+				m.EXPECT().DeleteUser(mock.Anything, mock.Anything).
+					Return(nil, status.Error(codes.Internal, "boom"))
+			},
+			expectedCode: http.StatusInternalServerError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mockUserClient := mocks.NewMockUserServiceClient(t)
+			tt.mockBehavior(mockUserClient)
+
+			r := &Router{
+				userClient: mockUserClient,
+				config: &Config{
+					AppConfig: config.AppConfig{Env: "test"},
+				},
+			}
+
+			var reqBody []byte
+			if s, ok := tt.body.(string); ok {
+				reqBody = []byte(s)
+			} else {
+				var err error
+				reqBody, err = json.Marshal(tt.body)
+				require.NoError(t, err)
+			}
+
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodDelete, "/me", bytes.NewBuffer(reqBody))
+			req.Header.Set("Content-Type", "application/json")
+			if tt.userIDInCtx != "" {
+				ctx := context.WithValue(req.Context(), middleware.UserIDKey, tt.userIDInCtx)
+				req = req.WithContext(ctx)
+			}
+
+			r.handleDeleteUser(w, req)
+
+			assert.Equal(t, tt.expectedCode, w.Code)
+
+			if tt.expectCookie {
+				var cookie *http.Cookie
+				for _, c := range w.Result().Cookies() {
+					if c.Name == "refresh_token" {
+						cookie = c
+						break
+					}
+				}
+				require.NotNil(t, cookie)
+				assert.Equal(t, -1, cookie.MaxAge)
 			}
 		})
 	}

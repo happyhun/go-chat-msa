@@ -875,6 +875,65 @@ func (_c *MockQuerier_GetUserByUsername_Call) RunAndReturn(run func(context.Cont
 	return _c
 }
 
+// ListJoinedRoomIDsForUpdate provides a mock function with given fields: ctx, userID
+func (_m *MockQuerier) ListJoinedRoomIDsForUpdate(ctx context.Context, userID pgtype.UUID) ([]pgtype.UUID, error) {
+	ret := _m.Called(ctx, userID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ListJoinedRoomIDsForUpdate")
+	}
+
+	var r0 []pgtype.UUID
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, pgtype.UUID) ([]pgtype.UUID, error)); ok {
+		return rf(ctx, userID)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, pgtype.UUID) []pgtype.UUID); ok {
+		r0 = rf(ctx, userID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]pgtype.UUID)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, pgtype.UUID) error); ok {
+		r1 = rf(ctx, userID)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// MockQuerier_ListJoinedRoomIDsForUpdate_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ListJoinedRoomIDsForUpdate'
+type MockQuerier_ListJoinedRoomIDsForUpdate_Call struct {
+	*mock.Call
+}
+
+// ListJoinedRoomIDsForUpdate is a helper method to define mock.On call
+//   - ctx context.Context
+//   - userID pgtype.UUID
+func (_e *MockQuerier_Expecter) ListJoinedRoomIDsForUpdate(ctx interface{}, userID interface{}) *MockQuerier_ListJoinedRoomIDsForUpdate_Call {
+	return &MockQuerier_ListJoinedRoomIDsForUpdate_Call{Call: _e.mock.On("ListJoinedRoomIDsForUpdate", ctx, userID)}
+}
+
+func (_c *MockQuerier_ListJoinedRoomIDsForUpdate_Call) Run(run func(ctx context.Context, userID pgtype.UUID)) *MockQuerier_ListJoinedRoomIDsForUpdate_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(pgtype.UUID))
+	})
+	return _c
+}
+
+func (_c *MockQuerier_ListJoinedRoomIDsForUpdate_Call) Return(_a0 []pgtype.UUID, _a1 error) *MockQuerier_ListJoinedRoomIDsForUpdate_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *MockQuerier_ListJoinedRoomIDsForUpdate_Call) RunAndReturn(run func(context.Context, pgtype.UUID) ([]pgtype.UUID, error)) *MockQuerier_ListJoinedRoomIDsForUpdate_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // ListJoinedRooms provides a mock function with given fields: ctx, userID
 func (_m *MockQuerier) ListJoinedRooms(ctx context.Context, userID pgtype.UUID) ([]db.ListJoinedRoomsRow, error) {
 	ret := _m.Called(ctx, userID)
@@ -1097,6 +1156,63 @@ func (_c *MockQuerier_PurgeDeletedRooms_Call) RunAndReturn(run func(context.Cont
 	return _c
 }
 
+// PurgeDeletedUsers provides a mock function with given fields: ctx, deletedAt
+func (_m *MockQuerier) PurgeDeletedUsers(ctx context.Context, deletedAt pgtype.Timestamptz) (int64, error) {
+	ret := _m.Called(ctx, deletedAt)
+
+	if len(ret) == 0 {
+		panic("no return value specified for PurgeDeletedUsers")
+	}
+
+	var r0 int64
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, pgtype.Timestamptz) (int64, error)); ok {
+		return rf(ctx, deletedAt)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, pgtype.Timestamptz) int64); ok {
+		r0 = rf(ctx, deletedAt)
+	} else {
+		r0 = ret.Get(0).(int64)
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, pgtype.Timestamptz) error); ok {
+		r1 = rf(ctx, deletedAt)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// MockQuerier_PurgeDeletedUsers_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'PurgeDeletedUsers'
+type MockQuerier_PurgeDeletedUsers_Call struct {
+	*mock.Call
+}
+
+// PurgeDeletedUsers is a helper method to define mock.On call
+//   - ctx context.Context
+//   - deletedAt pgtype.Timestamptz
+func (_e *MockQuerier_Expecter) PurgeDeletedUsers(ctx interface{}, deletedAt interface{}) *MockQuerier_PurgeDeletedUsers_Call {
+	return &MockQuerier_PurgeDeletedUsers_Call{Call: _e.mock.On("PurgeDeletedUsers", ctx, deletedAt)}
+}
+
+func (_c *MockQuerier_PurgeDeletedUsers_Call) Run(run func(ctx context.Context, deletedAt pgtype.Timestamptz)) *MockQuerier_PurgeDeletedUsers_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(pgtype.Timestamptz))
+	})
+	return _c
+}
+
+func (_c *MockQuerier_PurgeDeletedUsers_Call) Return(_a0 int64, _a1 error) *MockQuerier_PurgeDeletedUsers_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *MockQuerier_PurgeDeletedUsers_Call) RunAndReturn(run func(context.Context, pgtype.Timestamptz) (int64, error)) *MockQuerier_PurgeDeletedUsers_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // SearchRooms provides a mock function with given fields: ctx, arg
 func (_m *MockQuerier) SearchRooms(ctx context.Context, arg db.SearchRoomsParams) ([]db.SearchRoomsRow, error) {
 	ret := _m.Called(ctx, arg)
@@ -1209,6 +1325,63 @@ func (_c *MockQuerier_SoftDeleteRoom_Call) Return(_a0 pgtype.UUID, _a1 error) *M
 }
 
 func (_c *MockQuerier_SoftDeleteRoom_Call) RunAndReturn(run func(context.Context, db.SoftDeleteRoomParams) (pgtype.UUID, error)) *MockQuerier_SoftDeleteRoom_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// SoftDeleteUser provides a mock function with given fields: ctx, arg
+func (_m *MockQuerier) SoftDeleteUser(ctx context.Context, arg db.SoftDeleteUserParams) (pgtype.UUID, error) {
+	ret := _m.Called(ctx, arg)
+
+	if len(ret) == 0 {
+		panic("no return value specified for SoftDeleteUser")
+	}
+
+	var r0 pgtype.UUID
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, db.SoftDeleteUserParams) (pgtype.UUID, error)); ok {
+		return rf(ctx, arg)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, db.SoftDeleteUserParams) pgtype.UUID); ok {
+		r0 = rf(ctx, arg)
+	} else {
+		r0 = ret.Get(0).(pgtype.UUID)
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, db.SoftDeleteUserParams) error); ok {
+		r1 = rf(ctx, arg)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// MockQuerier_SoftDeleteUser_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SoftDeleteUser'
+type MockQuerier_SoftDeleteUser_Call struct {
+	*mock.Call
+}
+
+// SoftDeleteUser is a helper method to define mock.On call
+//   - ctx context.Context
+//   - arg db.SoftDeleteUserParams
+func (_e *MockQuerier_Expecter) SoftDeleteUser(ctx interface{}, arg interface{}) *MockQuerier_SoftDeleteUser_Call {
+	return &MockQuerier_SoftDeleteUser_Call{Call: _e.mock.On("SoftDeleteUser", ctx, arg)}
+}
+
+func (_c *MockQuerier_SoftDeleteUser_Call) Run(run func(ctx context.Context, arg db.SoftDeleteUserParams)) *MockQuerier_SoftDeleteUser_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(db.SoftDeleteUserParams))
+	})
+	return _c
+}
+
+func (_c *MockQuerier_SoftDeleteUser_Call) Return(_a0 pgtype.UUID, _a1 error) *MockQuerier_SoftDeleteUser_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *MockQuerier_SoftDeleteUser_Call) RunAndReturn(run func(context.Context, db.SoftDeleteUserParams) (pgtype.UUID, error)) *MockQuerier_SoftDeleteUser_Call {
 	_c.Call.Return(run)
 	return _c
 }

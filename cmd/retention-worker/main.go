@@ -60,6 +60,23 @@ func main() {
 	}
 }
 
+func purge(ctx context.Context, kind string, fn func(context.Context) (int64, error)) {
+	n, err := fn(ctx)
+	if err != nil {
+		retentionPurgedTotal.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("kind", kind),
+			attribute.String("status", "error"),
+		))
+		slog.ErrorContext(ctx, "failed to purge", "kind", kind, "error", err)
+		return
+	}
+	retentionPurgedTotal.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("kind", kind),
+		attribute.String("status", "ok"),
+	))
+	slog.InfoContext(ctx, "purged", "kind", kind, "count", n)
+}
+
 func loadConfig() (*Config, error) {
 	env := config.GetEnv()
 	logger.InitLogger(env)
@@ -112,18 +129,19 @@ func run(ctx context.Context) error {
 		defer cancel()
 
 		now := time.Now()
-		threshold := now.AddDate(0, 0, -cfg.RetentionWorker.RetentionDays)
-		n, err := queries.PurgeDeletedRooms(jobCtx, pgtype.Timestamptz{
-			Time: threshold, Valid: true,
-		})
-		retentionDuration.Record(jobCtx, time.Since(now).Seconds())
-		if err != nil {
-			retentionPurgedTotal.Add(jobCtx, 1, metric.WithAttributes(attribute.String("status", "error")))
-			slog.ErrorContext(jobCtx, "failed to purge deleted rooms", "error", err)
-			return
+		threshold := pgtype.Timestamptz{
+			Time:  now.AddDate(0, 0, -cfg.RetentionWorker.RetentionDays),
+			Valid: true,
 		}
-		retentionPurgedTotal.Add(jobCtx, 1, metric.WithAttributes(attribute.String("status", "ok")))
-		slog.InfoContext(jobCtx, "purged deleted rooms", "count", n, "threshold", threshold)
+
+		purge(jobCtx, "rooms", func(ctx context.Context) (int64, error) {
+			return queries.PurgeDeletedRooms(ctx, threshold)
+		})
+		purge(jobCtx, "users", func(ctx context.Context) (int64, error) {
+			return queries.PurgeDeletedUsers(ctx, threshold)
+		})
+
+		retentionDuration.Record(jobCtx, time.Since(now).Seconds())
 	}); err != nil {
 		return err
 	}

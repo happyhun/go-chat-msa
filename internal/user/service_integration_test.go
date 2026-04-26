@@ -1023,6 +1023,157 @@ func (s *UserSuite) TestLeaveRoom_ConcurrentManagerDelegation() {
 	s.Equal(charlieID, managerID, "유일한 잔존 멤버 charlie가 방장이어야 함")
 }
 
+func (s *UserSuite) TestDeleteUser_FullFlow() {
+	aliceID := s.createUser("delfullalice", "")
+	bobID := s.createUser("delfullbob", "")
+
+	loginRes, err := s.client.VerifyUser(s.T().Context(), &pb.VerifyUserRequest{
+		Username: "delfullalice",
+		Password: "SecurePass123!",
+	})
+	s.Require().NoError(err)
+
+	managerRoom, err := s.client.CreateRoom(s.T().Context(), &pb.CreateRoomRequest{
+		Name: "Alice Manager Room", ManagerId: aliceID, Capacity: 10,
+	})
+	s.Require().NoError(err)
+
+	_, err = s.client.JoinRoom(s.T().Context(), &pb.JoinRoomRequest{
+		UserId: bobID, RoomId: managerRoom.RoomId,
+	})
+	s.Require().NoError(err)
+
+	bobsRoom, err := s.client.CreateRoom(s.T().Context(), &pb.CreateRoomRequest{
+		Name: "Bob Owner Room", ManagerId: bobID, Capacity: 10,
+	})
+	s.Require().NoError(err)
+	_, err = s.client.JoinRoom(s.T().Context(), &pb.JoinRoomRequest{
+		UserId: aliceID, RoomId: bobsRoom.RoomId,
+	})
+	s.Require().NoError(err)
+
+	deleteRes, err := s.client.DeleteUser(s.T().Context(), &pb.DeleteUserRequest{
+		UserId:   aliceID,
+		Password: "SecurePass123!",
+	})
+	s.Require().NoError(err)
+	s.NotNil(deleteRes)
+	s.Len(deleteRes.LeftRoomIds, 2, "정리된 방 두 개")
+
+	var deletedAt pgtype.Timestamptz
+	err = s.db.QueryRow(s.T().Context(),
+		"SELECT deleted_at FROM users WHERE id = $1", aliceID,
+	).Scan(&deletedAt)
+	s.Require().NoError(err)
+	s.True(deletedAt.Valid)
+
+	var tokenCount int64
+	err = s.db.QueryRow(s.T().Context(),
+		"SELECT COUNT(*) FROM refresh_tokens WHERE user_id = $1", aliceID,
+	).Scan(&tokenCount)
+	s.Require().NoError(err)
+	s.Zero(tokenCount, "alice의 refresh token 모두 삭제")
+
+	var memberCount int64
+	err = s.db.QueryRow(s.T().Context(),
+		"SELECT COUNT(*) FROM room_members WHERE user_id = $1", aliceID,
+	).Scan(&memberCount)
+	s.Require().NoError(err)
+	s.Zero(memberCount, "alice의 멤버십 모두 삭제")
+
+	_, _, managerID := s.getRoom(managerRoom.RoomId)
+	s.Equal(bobID, managerID, "alice가 방장이던 방은 bob으로 위임됨")
+
+	_, err = s.client.RefreshToken(s.T().Context(), &pb.RefreshTokenRequest{
+		RefreshToken: loginRes.RefreshToken,
+	})
+	s.Error(err)
+	s.Equal(codes.Unauthenticated, status.Code(err))
+
+	_, err = s.client.VerifyUser(s.T().Context(), &pb.VerifyUserRequest{
+		Username: "delfullalice",
+		Password: "SecurePass123!",
+	})
+	s.Error(err)
+	s.Equal(codes.Unauthenticated, status.Code(err))
+}
+
+func (s *UserSuite) TestDeleteUser_WrongPassword() {
+	aliceID := s.createUser("delwrongpw", "")
+
+	_, err := s.client.DeleteUser(s.T().Context(), &pb.DeleteUserRequest{
+		UserId:   aliceID,
+		Password: "WrongPassword!",
+	})
+	s.Error(err)
+	s.Equal(codes.Unauthenticated, status.Code(err))
+
+	var deletedAt pgtype.Timestamptz
+	err = s.db.QueryRow(s.T().Context(),
+		"SELECT deleted_at FROM users WHERE id = $1", aliceID,
+	).Scan(&deletedAt)
+	s.Require().NoError(err)
+	s.False(deletedAt.Valid, "비밀번호 오답 시 deleted_at은 변하지 않아야 함")
+}
+
+func (s *UserSuite) TestDeleteUser_LonelyManagerSoftDeletesRoom() {
+	aliceID := s.createUser("delsolo", "")
+
+	roomRes, err := s.client.CreateRoom(s.T().Context(), &pb.CreateRoomRequest{
+		Name: "Solo Room", ManagerId: aliceID, Capacity: 10,
+	})
+	s.Require().NoError(err)
+
+	_, err = s.client.DeleteUser(s.T().Context(), &pb.DeleteUserRequest{
+		UserId: aliceID, Password: "SecurePass123!",
+	})
+	s.Require().NoError(err)
+
+	s.False(s.roomExists(roomRes.RoomId), "혼자 만든 방은 soft delete됨")
+}
+
+func (s *UserSuite) TestDeleteUser_UsernameFrozenDuringGrace() {
+	aliceID := s.createUser("delfrozen", "")
+
+	_, err := s.client.DeleteUser(s.T().Context(), &pb.DeleteUserRequest{
+		UserId: aliceID, Password: "SecurePass123!",
+	})
+	s.Require().NoError(err)
+
+	_, err = s.client.CreateUser(s.T().Context(), &pb.CreateUserRequest{
+		Username: "delfrozen",
+		Password: "SecurePass123!",
+	})
+	s.Error(err)
+	s.Equal(codes.AlreadyExists, status.Code(err))
+}
+
+func (s *UserSuite) TestDeleteUser_UsernameReleasedAfterPurge() {
+	aliceID := s.createUser("delreleased", "")
+
+	_, err := s.client.DeleteUser(s.T().Context(), &pb.DeleteUserRequest{
+		UserId: aliceID, Password: "SecurePass123!",
+	})
+	s.Require().NoError(err)
+
+	_, err = s.db.Exec(s.T().Context(),
+		"UPDATE users SET deleted_at = $1 WHERE id = $2",
+		time.Now().Add(-31*24*time.Hour), aliceID,
+	)
+	s.Require().NoError(err)
+
+	threshold := pgtype.Timestamptz{Time: time.Now().Add(-30 * 24 * time.Hour), Valid: true}
+	n, err := db.New(s.db).PurgeDeletedUsers(s.T().Context(), threshold)
+	s.Require().NoError(err)
+	s.Equal(int64(1), n)
+
+	_, err = s.client.CreateUser(s.T().Context(), &pb.CreateUserRequest{
+		Username: "delreleased",
+		Password: "SecurePass123!",
+	})
+	s.NoError(err, "purge 후 동일 username 재가입 가능")
+}
+
 func (s *UserSuite) getRoom(roomID string) (string, int32, string) {
 	var name string
 	var capacity int32
