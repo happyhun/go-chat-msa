@@ -674,3 +674,67 @@ func (s *E2ESuite) TestScenario_12_RateLimit_SpamProtection() {
 		}
 	}
 }
+
+func (s *E2ESuite) TestScenario_13_UserDeletion_FullLifecycle() {
+	s.T().Log(">>> starting TestScenario_13_UserDeletion_FullLifecycle")
+	ctx := s.T().Context()
+
+	alice := s.generateUniqueUsername("dela")
+	password := "SecurePass123!"
+
+	s.Require().NoError(s.signUp(ctx, alice, password))
+	aliceToken, refreshCookie, err := s.loginWithCookie(ctx, alice, password)
+	s.Require().NoError(err)
+	s.Require().NotNil(refreshCookie)
+
+	client := &http.Client{Timeout: httpClientTimeout}
+	delBody := strings.NewReader(`{"password":"WrongPassword!"}`)
+	wrongReq, _ := http.NewRequestWithContext(ctx, "DELETE", s.gatewayBaseURL+"/me", delBody)
+	wrongReq.Header.Set("Content-Type", "application/json")
+	wrongReq.Header.Set("Authorization", "Bearer "+aliceToken)
+	wrongResp, err := client.Do(wrongReq)
+	s.Require().NoError(err)
+	wrongResp.Body.Close()
+	s.Equal(http.StatusUnauthorized, wrongResp.StatusCode, "wrong password → 401")
+
+	correctBody := strings.NewReader(fmt.Sprintf(`{"password":%q}`, password))
+	delReq, _ := http.NewRequestWithContext(ctx, "DELETE", s.gatewayBaseURL+"/me", correctBody)
+	delReq.Header.Set("Content-Type", "application/json")
+	delReq.Header.Set("Authorization", "Bearer "+aliceToken)
+	delResp, err := client.Do(delReq)
+	s.Require().NoError(err)
+	delResp.Body.Close()
+	s.Require().Equal(http.StatusNoContent, delResp.StatusCode, "delete → 204")
+
+	cookieCleared := false
+	for _, c := range delResp.Cookies() {
+		if c.Name == "refresh_token" && c.MaxAge < 0 {
+			cookieCleared = true
+			break
+		}
+	}
+	s.True(cookieCleared, "refresh_token 쿠키 만료")
+
+	refreshReq, _ := http.NewRequestWithContext(ctx, "POST", s.gatewayBaseURL+"/auth/refresh", nil)
+	refreshReq.AddCookie(refreshCookie)
+	refreshResp, err := client.Do(refreshReq)
+	s.Require().NoError(err)
+	refreshResp.Body.Close()
+	s.Equal(http.StatusUnauthorized, refreshResp.StatusCode, "탈퇴 후 refresh → 401")
+
+	loginReq, _ := http.NewRequestWithContext(ctx, "POST", s.gatewayBaseURL+"/auth/token",
+		strings.NewReader(fmt.Sprintf(`{"username":%q,"password":%q}`, alice, password)))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginResp, err := client.Do(loginReq)
+	s.Require().NoError(err)
+	loginResp.Body.Close()
+	s.Equal(http.StatusUnauthorized, loginResp.StatusCode, "탈퇴 후 동일 자격으로 로그인 → 401")
+
+	signupReq, _ := http.NewRequestWithContext(ctx, "POST", s.gatewayBaseURL+"/users",
+		strings.NewReader(fmt.Sprintf(`{"username":%q,"password":%q}`, alice, password)))
+	signupReq.Header.Set("Content-Type", "application/json")
+	signupResp, err := client.Do(signupReq)
+	s.Require().NoError(err)
+	signupResp.Body.Close()
+	s.Equal(http.StatusConflict, signupResp.StatusCode, "grace 기간 동안 동일 username 재가입 차단 → 409")
+}
