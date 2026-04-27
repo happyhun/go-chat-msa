@@ -107,7 +107,7 @@ async function tryRefresh(): Promise<boolean> {
 
   refreshPromise = (async () => {
     try {
-      const res = await fetch('/api/auth/refresh', {
+      const res = await fetch('/api/auth/token/refresh', {
         method: 'POST',
         credentials: 'include',
       })

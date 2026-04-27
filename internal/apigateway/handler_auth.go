@@ -12,26 +12,26 @@ import (
 	"go-chat-msa/internal/shared/middleware"
 )
 
-type SignupRequest struct {
+type CreateUserRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 }
 
-type SignupResponse struct {
+type CreateUserResponse struct {
 	UserID string `json:"user_id"`
 }
 
-type LoginRequest struct {
+type VerifyUserRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 }
 
-type LoginResponse struct {
+type VerifyUserResponse struct {
 	UserID      string `json:"user_id"`
 	AccessToken string `json:"access_token"`
 }
 
-type RefreshResponse struct {
+type RefreshTokenResponse struct {
 	AccessToken string `json:"access_token"`
 }
 
@@ -41,10 +41,10 @@ type DeleteUserRequest struct {
 
 const secondsPerDay = int(24 * time.Hour / time.Second)
 
-func (r *Router) handleSignup(w http.ResponseWriter, req *http.Request) {
-	var body SignupRequest
+func (r *Router) handleCreateUser(w http.ResponseWriter, req *http.Request) {
+	var body CreateUserRequest
 	if err := httpio.ReadJSON(req.Context(), w, req, &body); err != nil {
-		slog.WarnContext(req.Context(), "ReadJSON failed in handleSignup", "error", err)
+		slog.WarnContext(req.Context(), "ReadJSON failed in handleCreateUser", "error", err)
 		httpio.WriteProblem(req.Context(), w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -63,13 +63,13 @@ func (r *Router) handleSignup(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	httpio.WriteJSON(req.Context(), w, http.StatusCreated, SignupResponse{UserID: resp.UserId})
+	httpio.WriteJSON(req.Context(), w, http.StatusCreated, CreateUserResponse{UserID: resp.UserId})
 }
 
-func (r *Router) handleLogin(w http.ResponseWriter, req *http.Request) {
-	var body LoginRequest
+func (r *Router) handleVerifyUser(w http.ResponseWriter, req *http.Request) {
+	var body VerifyUserRequest
 	if err := httpio.ReadJSON(req.Context(), w, req, &body); err != nil {
-		slog.WarnContext(req.Context(), "ReadJSON failed in handleLogin", "error", err)
+		slog.WarnContext(req.Context(), "ReadJSON failed in handleVerifyUser", "error", err)
 		httpio.WriteProblem(req.Context(), w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -90,13 +90,13 @@ func (r *Router) handleLogin(w http.ResponseWriter, req *http.Request) {
 
 	r.setRefreshTokenCookie(w, resp.RefreshToken)
 
-	httpio.WriteJSON(req.Context(), w, http.StatusOK, LoginResponse{
+	httpio.WriteJSON(req.Context(), w, http.StatusOK, VerifyUserResponse{
 		UserID:      resp.UserId,
 		AccessToken: resp.AccessToken,
 	})
 }
 
-func (r *Router) handleRefresh(w http.ResponseWriter, req *http.Request) {
+func (r *Router) handleRefreshToken(w http.ResponseWriter, req *http.Request) {
 	cookie, err := req.Cookie("refresh_token")
 	if err != nil {
 		httpio.WriteProblem(req.Context(), w, http.StatusUnauthorized, "missing refresh token")
@@ -113,12 +113,12 @@ func (r *Router) handleRefresh(w http.ResponseWriter, req *http.Request) {
 
 	r.setRefreshTokenCookie(w, resp.RefreshToken)
 
-	httpio.WriteJSON(req.Context(), w, http.StatusOK, RefreshResponse{
+	httpio.WriteJSON(req.Context(), w, http.StatusOK, RefreshTokenResponse{
 		AccessToken: resp.AccessToken,
 	})
 }
 
-func (r *Router) handleLogout(w http.ResponseWriter, req *http.Request) {
+func (r *Router) handleRevokeToken(w http.ResponseWriter, req *http.Request) {
 	cookie, err := req.Cookie("refresh_token")
 	if err != nil {
 		httpio.WriteProblem(req.Context(), w, http.StatusUnauthorized, "missing refresh token")

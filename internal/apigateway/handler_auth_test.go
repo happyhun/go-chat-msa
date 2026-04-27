@@ -22,7 +22,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-func TestRouter_HandleSignup(t *testing.T) {
+func TestRouter_HandleCreateUser(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -34,7 +34,7 @@ func TestRouter_HandleSignup(t *testing.T) {
 	}{
 		{
 			name: "Success: 유효한 회원가입 요청",
-			body: SignupRequest{
+			body: CreateUserRequest{
 				Username: "testuser",
 				Password: "SecurePass123!",
 			},
@@ -58,7 +58,7 @@ func TestRouter_HandleSignup(t *testing.T) {
 		},
 		{
 			name: "Failure: 유저 서비스 내부 에러 (Internal)",
-			body: SignupRequest{
+			body: CreateUserRequest{
 				Username: "testuser",
 				Password: "SecurePass123!",
 			},
@@ -82,7 +82,7 @@ func TestRouter_HandleSignup(t *testing.T) {
 				config:     &Config{AppConfig: config.AppConfig{Env: "test"}},
 			}
 
-			handler := http.HandlerFunc(r.handleSignup)
+			handler := http.HandlerFunc(r.handleCreateUser)
 
 			var reqBody []byte
 			if s, ok := tt.body.(string); ok {
@@ -94,7 +94,7 @@ func TestRouter_HandleSignup(t *testing.T) {
 			}
 
 			w := httptest.NewRecorder()
-			req := httptest.NewRequest("POST", "/auth/signup", bytes.NewBuffer(reqBody))
+			req := httptest.NewRequest("POST", "/users", bytes.NewBuffer(reqBody))
 			req.Header.Set("Content-Type", "application/json")
 
 			handler.ServeHTTP(w, req)
@@ -116,7 +116,7 @@ func TestRouter_HandleSignup(t *testing.T) {
 	}
 }
 
-func TestRouter_HandleLogin(t *testing.T) {
+func TestRouter_HandleVerifyUser(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -129,7 +129,7 @@ func TestRouter_HandleLogin(t *testing.T) {
 	}{
 		{
 			name: "Success: 액세스 토큰만 발급하는 로그인",
-			body: LoginRequest{
+			body: VerifyUserRequest{
 				Username: "testuser",
 				Password: "SecurePass123!",
 			},
@@ -147,7 +147,7 @@ func TestRouter_HandleLogin(t *testing.T) {
 		},
 		{
 			name: "Success: 리프레시 토큰 쿠키가 포함된 로그인",
-			body: LoginRequest{
+			body: VerifyUserRequest{
 				Username: "testuser",
 				Password: "SecurePass123!",
 			},
@@ -165,7 +165,7 @@ func TestRouter_HandleLogin(t *testing.T) {
 		},
 		{
 			name: "Failure: 유저 서비스 에러 (잘못된 자격 증명 등)",
-			body: LoginRequest{
+			body: VerifyUserRequest{
 				Username: "testuser",
 				Password: "SecurePass123!",
 			},
@@ -196,7 +196,7 @@ func TestRouter_HandleLogin(t *testing.T) {
 				},
 			}
 
-			handler := http.HandlerFunc(r.handleLogin)
+			handler := http.HandlerFunc(r.handleVerifyUser)
 
 			var reqBody []byte
 			if s, ok := tt.body.(string); ok {
@@ -208,7 +208,7 @@ func TestRouter_HandleLogin(t *testing.T) {
 			}
 
 			w := httptest.NewRecorder()
-			req := httptest.NewRequest("POST", "/auth/login", bytes.NewBuffer(reqBody))
+			req := httptest.NewRequest("POST", "/auth/token", bytes.NewBuffer(reqBody))
 			req.Header.Set("Content-Type", "application/json")
 
 			handler.ServeHTTP(w, req)
@@ -230,7 +230,7 @@ func TestRouter_HandleLogin(t *testing.T) {
 	}
 }
 
-func TestRouter_HandleRefresh(t *testing.T) {
+func TestRouter_HandleRefreshToken(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -289,10 +289,10 @@ func TestRouter_HandleRefresh(t *testing.T) {
 					},
 				},
 			}
-			handler := http.HandlerFunc(r.handleRefresh)
+			handler := http.HandlerFunc(r.handleRefreshToken)
 
 			w := httptest.NewRecorder()
-			req := httptest.NewRequest("POST", "/auth/refresh", nil)
+			req := httptest.NewRequest("POST", "/auth/token/refresh", nil)
 			if tt.hasCookie {
 				req.AddCookie(&http.Cookie{Name: "refresh_token", Value: tt.cookieValue})
 			}
@@ -304,7 +304,7 @@ func TestRouter_HandleRefresh(t *testing.T) {
 	}
 }
 
-func TestRouter_HandleLogout(t *testing.T) {
+func TestRouter_HandleRevokeToken(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -343,7 +343,7 @@ func TestRouter_HandleLogout(t *testing.T) {
 				userClient: mockUserClient,
 				config:     &Config{AppConfig: config.AppConfig{Env: "test"}},
 			}
-			handler := http.HandlerFunc(r.handleLogout)
+			handler := http.HandlerFunc(r.handleRevokeToken)
 
 			w := httptest.NewRecorder()
 			req := httptest.NewRequest("POST", "/auth/logout", nil)
