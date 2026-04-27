@@ -203,6 +203,7 @@ Grafana Full Stack 기반 관측성 구성. Profiles를 제외한 시그널은 G
 | 메트릭 | 타입 | 라벨 | 서비스 |
 |--------|------|------|--------|
 | gochat_user_created_total | counter | status | user-service |
+| gochat_user_deleted_total | counter | status | user-service |
 | gochat_auth_login_total | counter | status | user-service |
 | gochat_auth_token_reuse_detected_total | counter | - | user-service |
 | gochat_room_join_total | counter | status | user-service |
@@ -214,7 +215,7 @@ Grafana Full Stack 기반 관측성 구성. Profiles를 제외한 시그널은 G
 | gochat_hasher_queue_full_total | counter | - | user-service |
 | gochat_wsgateway_routed_total | counter | endpoint | ws-gateway |
 | gochat_retention_duration_seconds | histogram | - | retention-worker |
-| gochat_retention_purged_total | counter | status | retention-worker |
+| gochat_retention_purged_total | counter | kind, status | retention-worker |
 
 ### System
 
