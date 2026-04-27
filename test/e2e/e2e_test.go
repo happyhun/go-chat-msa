@@ -71,7 +71,7 @@ func (s *E2ESuite) TestScenario_02_Auth_TokenRefresh() {
 	time.Sleep(1 * time.Second)
 
 	client := &http.Client{Timeout: httpClientTimeout}
-	req, _ := http.NewRequestWithContext(ctx, "POST", s.gatewayBaseURL+"/auth/refresh", nil)
+	req, _ := http.NewRequestWithContext(ctx, "POST", s.gatewayBaseURL+"/auth/token/refresh", nil)
 	req.AddCookie(refreshCookie)
 	resp, err := client.Do(req)
 	s.Require().NoError(err)
@@ -118,7 +118,7 @@ func (s *E2ESuite) TestScenario_03_Auth_Logout() {
 	}
 	s.Require().True(cookieCleared, "Refresh token cookie should be expired after logout")
 
-	refreshReq, _ := http.NewRequestWithContext(ctx, "POST", s.gatewayBaseURL+"/auth/refresh", nil)
+	refreshReq, _ := http.NewRequestWithContext(ctx, "POST", s.gatewayBaseURL+"/auth/token/refresh", nil)
 	refreshReq.AddCookie(refreshCookie)
 	refreshResp, err := client.Do(refreshReq)
 	s.Require().NoError(err)
@@ -715,7 +715,7 @@ func (s *E2ESuite) TestScenario_13_UserDeletion_FullLifecycle() {
 	}
 	s.True(cookieCleared, "refresh_token 쿠키 만료")
 
-	refreshReq, _ := http.NewRequestWithContext(ctx, "POST", s.gatewayBaseURL+"/auth/refresh", nil)
+	refreshReq, _ := http.NewRequestWithContext(ctx, "POST", s.gatewayBaseURL+"/auth/token/refresh", nil)
 	refreshReq.AddCookie(refreshCookie)
 	refreshResp, err := client.Do(refreshReq)
 	s.Require().NoError(err)

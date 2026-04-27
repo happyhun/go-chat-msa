@@ -58,7 +58,7 @@
 | websocket-service | 실시간 메시지 브로드캐스트, 세션/룸 관리 | WebSocket | - |
 | user-service | 사용자 및 채팅방 CRUD, Bcrypt 워커 풀 | gRPC | PostgreSQL |
 | chat-service | 메시지 저장 및 조회 | gRPC | MongoDB |
-| retention-worker | 소프트 삭제된 채팅방 퍼지 | - | PostgreSQL |
+| retention-worker | 소프트 삭제된 채팅방·사용자 퍼지 | - | PostgreSQL |
 
 ---
 
@@ -131,6 +131,7 @@ DB 유출에 대비하여 원본이 아닌 SHA-256 해시만 저장합니다.
 1. 사용 시 해당 토큰을 `used=true`로 마킹하고 새 토큰을 발급합니다.
 2. 이미 사용된 토큰이 다시 들어오면 탈취로 간주하고, 해당 유저의 모든 Refresh Token을 파기합니다.
 3. 만료된 토큰은 백그라운드 고루틴이 주기적으로 일괄 삭제합니다.
+4. 회원탈퇴 시 해당 사용자의 모든 Refresh Token을 즉시 폐기합니다. 또한 `GetUserByID`가 `deleted_at IS NULL` 조건으로 걸러지므로 grace 기간 동안 살아있는 토큰으로 재발급 시도가 들어와도 `Unauthenticated`로 거부됩니다.
 
 #### WebSocket 티켓
 
@@ -188,7 +189,7 @@ HTTP 미들웨어가 아닌 WebSocket `readPump` 안에서 메시지 단위로 �
 
 | 테이블 | 용도 |
 | :--- | :--- |
-| users | 사용자 계정 |
+| users | 사용자 계정 (소프트 삭제용 `deleted_at` 포함) |
 | rooms | 채팅방 (소프트 삭제용 `deleted_at` 포함) |
 | room_members | 채팅방 멤버십 (복합 PK: `user_id`, `room_id`) |
 | refresh_tokens | 리프레시 토큰 해시 저장 |
@@ -204,7 +205,8 @@ PK는 애플리케이션에서 UUID v7로 생성합니다.
 
 | 대상 | 종류 | 용도 |
 | :--- | :--- | :--- |
-| `users.username` | UNIQUE | 로그인, 중복 검사 |
+| `users.username` | UNIQUE | 로그인, 중복 검사 (탈퇴자 row까지 포함하여 grace 기간 동안 동일 username 재가입 차단) |
+| `users.deleted_at` | INDEX (partial: `WHERE deleted_at IS NOT NULL`) | retention-worker가 grace 만료 행을 빠르게 스캔 |
 | `room_members.(user_id, room_id)` | PK (복합) | 멤버십 조회 |
 | `room_members.room_id` | INDEX | 방별 멤버 목록 |
 | `rooms.manager_id` | INDEX | 방장별 방 조회 |
@@ -264,7 +266,19 @@ TTL 90일은 채팅 서비스 특성상 오래된 메시지의 조회 빈도가 
 | 접속 | 채팅방 화면 진입 | WebSocket 핸드셰이크 | 없음 |
 | 접속 해제 | 채팅방 화면 이탈 | WebSocket Close | 없음 |
 
-### 2.6 세션 생명주기
+### 2.6 회원 라이프사이클
+
+회원탈퇴는 즉시 비활성화하되 일정 기간 데이터를 보존하는 3단계 정책을 따릅니다 (Google·GitHub 등의 표준 패턴).
+
+| 시점 | 동작 |
+| :--- | :--- |
+| T0 (탈퇴 요청) | `users.deleted_at = now()` 설정. 비밀번호 재인증 후 진행. 모든 Refresh Token 즉시 폐기. 가입한 방마다 LeaveRoom 로직 적용(매니저면 위임 또는 빈 방 soft-delete). |
+| T0 ~ T+30일 (grace) | `GetUserByUsername`/`GetUserByID`가 `deleted_at IS NULL` 필터로 차단 → 로그인·토큰 갱신 실패. `users.username` UNIQUE 제약이 탈퇴자 row까지 포함해 동일 username 재가입을 막음(freeze). |
+| T+30일 이후 | retention-worker가 `deleted_at < now() - 30d` 행을 hard delete. CASCADE로 `refresh_tokens`/`room_members` 정리, `rooms.manager_id`는 SET NULL. username freeze 자연 해제. |
+
+채팅방의 soft delete + 30일 grace + retention purge 패턴과 정확히 동일합니다. 운영 일관성을 위해 retention-worker가 두 도메인을 한 cron job 안에서 처리하며, `gochat_retention_purged_total{kind="rooms"|"users"}` 라벨로 분리 관측합니다.
+
+### 2.7 세션 생명주기
 
 #### WebSocket 연결 수립
 
@@ -291,7 +305,7 @@ TTL 90일은 채팅 서비스 특성상 오래된 메시지의 조회 빈도가 
 3. API Gateway가 비동기로 WS Gateway에 요청을 보내 해당 방의 모든 세션을 강제 종료합니다.
 4. 이후 해당 방은 검색이나 조회에서 제외됩니다.
 
-### 2.7 메시지 흐름
+### 2.8 메시지 흐름
 
 WebSocket은 실시간 전송 전용이고, 히스토리 조회나 동기화는 REST API로 클라이언트가 직접 합니다.
 
@@ -322,7 +336,7 @@ REST API(`GET /rooms/{id}/messages`)에서 `last_seq` 쿼리 파라미터 유무
 - 실시간 수신 중에는 WebSocket 메시지를 받으면서 `last_seq` 갱신
 - 재연결 시 `last_seq` 이후의 누락분을 REST API로 보충
 
-### 2.8 설정 관리
+### 2.9 설정 관리
 
 공통 설정 타입은 `internal/shared/config` 패키지에서 일괄 정의하고, 각 서비스는 이를 가져다 조합합니다.
 
@@ -344,7 +358,7 @@ REST API(`GET /rooms/{id}/messages`)에서 `last_seq` 쿼리 파라미터 유무
 - **Go 상수**: 환경마다 동일하고 변경 가능성이 거의 없는 값. 채널 버퍼 크기, 배치 사이즈, 최대 메시지 크기, 업그레이더 버퍼 등
 - **YAML**: 환경마다 달라지거나 정책적으로 변경될 수 있는 값. 타임아웃, 시크릿, 호스트 주소, 처리율 제한 정책 등
 
-### 2.9 우아한 종료
+### 2.10 우아한 종료
 
 각 서비스는 `errgroup`으로 종료 순서를 관리하며, HTTP/gRPC 서버의 표준 graceful shutdown을 따릅니다. WebSocket Service는 세션과 영속화 파이프라인 때문에 종료 순서가 가장 정교합니다.
 

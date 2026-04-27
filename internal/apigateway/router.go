@@ -95,10 +95,10 @@ func (r *Router) registerV1Routes() {
 		func(w http.ResponseWriter, req *http.Request) {
 			httpio.WriteJSON(req.Context(), w, http.StatusOK, map[string]string{"status": "healthy"})
 		}, publicMws...))
-	r.muxV1.Handle("POST /users", middleware.ChainMiddleware(r.handleSignup, publicMws...))
-	r.muxV1.Handle("POST /auth/token", middleware.ChainMiddleware(r.handleLogin, publicMws...))
-	r.muxV1.Handle("POST /auth/refresh", middleware.ChainMiddleware(r.handleRefresh, publicMws...))
-	r.muxV1.Handle("DELETE /auth/token", middleware.ChainMiddleware(r.handleLogout, publicMws...))
+	r.muxV1.Handle("POST /users", middleware.ChainMiddleware(r.handleCreateUser, publicMws...))
+	r.muxV1.Handle("POST /auth/token", middleware.ChainMiddleware(r.handleVerifyUser, publicMws...))
+	r.muxV1.Handle("POST /auth/token/refresh", middleware.ChainMiddleware(r.handleRefreshToken, publicMws...))
+	r.muxV1.Handle("DELETE /auth/token", middleware.ChainMiddleware(r.handleRevokeToken, publicMws...))
 
 	authMws := slices.Concat(globalMws, []func(http.Handler) http.Handler{
 		middleware.BearerAuthMiddleware(r.jwtSecret),
