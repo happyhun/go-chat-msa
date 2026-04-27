@@ -51,6 +51,9 @@ const errorMessages: Record<string, string> = {
   'unauthorized': '로그인이 필요합니다.',
   'missing token': '로그인이 필요합니다.',
   'invalid token': '인증 정보가 유효하지 않습니다. 다시 로그인해 주세요.',
+  'password is required': '비밀번호를 입력해 주세요.',
+  'invalid password': '비밀번호가 올바르지 않습니다.',
+  'user not found': '사용자를 찾을 수 없습니다.',
 
   // Room
   'room name is required': '채팅방 이름을 입력해 주세요.',
@@ -199,6 +202,13 @@ export function login(username: string, password: string) {
 
 export function logout() {
   return request<void>('/api/auth/token', { method: 'DELETE' })
+}
+
+export function deleteUser(password: string) {
+  return request<void>('/api/me', {
+    method: 'DELETE',
+    body: JSON.stringify({ password }),
+  })
 }
 
 // Rooms
