@@ -1,10 +1,16 @@
+import { useState } from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
-import { logout } from '../api/client'
+import { deleteUser, logout } from '../api/client'
 import { useAuth } from '../context/AuthContext'
+import { useToast } from '../context/ToastContext'
+import DeleteUserModal from './DeleteUserModal'
+import UserMenu from './UserMenu'
 
 export default function Layout() {
   const { username, doLogout } = useAuth()
+  const { success } = useToast()
   const navigate = useNavigate()
+  const [deleteOpen, setDeleteOpen] = useState(false)
 
   const handleLogout = async () => {
     try {
@@ -13,7 +19,15 @@ export default function Layout() {
       // ignore
     }
     doLogout()
-    navigate('/login')
+    navigate('/login', { replace: true })
+  }
+
+  const handleDeleteUser = async (password: string) => {
+    await deleteUser(password)
+    setDeleteOpen(false)
+    doLogout()
+    success('탈퇴가 완료되었습니다.')
+    navigate('/login', { replace: true })
   }
 
   return (
@@ -22,15 +36,13 @@ export default function Layout() {
       <header className="bg-white border-b border-gray-200 shrink-0">
         <div className="max-w-2xl mx-auto px-4 h-14 flex items-center justify-between">
           <h1 className="text-lg font-bold text-gray-900">Go Chat</h1>
-          <div className="flex items-center gap-3">
-            <span className="text-sm text-gray-500">{username}</span>
-            <button
-              onClick={handleLogout}
-              className="text-sm text-gray-500 hover:text-red-500 transition-colors"
-            >
-              로그아웃
-            </button>
-          </div>
+          {username && (
+            <UserMenu
+              username={username}
+              onLogout={handleLogout}
+              onDeleteUser={() => setDeleteOpen(true)}
+            />
+          )}
         </div>
       </header>
 
@@ -68,6 +80,13 @@ export default function Layout() {
       <main className="flex-1 overflow-y-auto">
         <Outlet />
       </main>
+
+      {deleteOpen && (
+        <DeleteUserModal
+          onConfirm={handleDeleteUser}
+          onCancel={() => setDeleteOpen(false)}
+        />
+      )}
     </div>
   )
 }
