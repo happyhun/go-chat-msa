@@ -19,6 +19,8 @@ tags:
     description: 시스템 상태 점검 및 메트릭 수집
   - name: Auth
     description: 사용자 가입, 로그인, 로그아웃 및 토큰 관리
+  - name: User
+    description: 사용자 정보 조회 (작성자 표시용 일괄 조회)
   - name: Room
     description: 채팅방 생성, 수정, 삭제 및 참여 관리
   - name: Message
@@ -73,6 +75,42 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '409':
           $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+    get:
+      tags:
+        - User
+      summary: 사용자 일괄 조회
+      description: 채팅 메시지 작성자 표시 등을 위해 user_id 목록으로 활성 사용자 정보를 조회합니다. 탈퇴(soft/hard delete)된 사용자는 응답에서 제외됩니다. 한 요청당 최대 100개.
+      operationId: batchGetUsers
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: ids
+          in: query
+          required: true
+          description: 조회할 user_id 목록 (최대 100개)
+          schema:
+            type: array
+            items:
+              type: string
+              format: uuid
+            minItems: 1
+            maxItems: 100
+          style: form
+          explode: true
+      responses:
+        '200':
+          description: 조회 성공 (요청 ID 중 활성 사용자만 반환)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchGetUsersResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '429':
           $ref: '#/components/responses/TooManyRequests'
 
@@ -614,6 +652,23 @@ components:
           type: string
           format: password
           description: "본인 인증용 현재 비밀번호"
+
+    User:
+      type: object
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        username:
+          type: string
+
+    BatchGetUsersResponse:
+      type: object
+      properties:
+        users:
+          type: array
+          items:
+            $ref: '#/components/schemas/User'
 
     # Room
     CreateRoomRequest:

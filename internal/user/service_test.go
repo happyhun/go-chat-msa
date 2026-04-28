@@ -1514,6 +1514,91 @@ func TestService_DeleteUser(t *testing.T) {
 	}
 }
 
+func TestService_BatchGetUsers(t *testing.T) {
+	t.Parallel()
+	aliceID := uuid.New()
+	bobID := uuid.New()
+	alicePG := pgtype.UUID{Bytes: aliceID, Valid: true}
+	bobPG := pgtype.UUID{Bytes: bobID, Valid: true}
+	createdAt := pgtype.Timestamptz{Time: time.Now().Truncate(time.Second), Valid: true}
+
+	tests := []struct {
+		name         string
+		req          *pb.BatchGetUsersRequest
+		mockBehavior func(m *dbmocks.MockQuerier)
+		wantLen      int
+		wantErr      bool
+		errCode      codes.Code
+	}{
+		{
+			name:         "Success: 빈 ID 배열",
+			req:          &pb.BatchGetUsersRequest{UserIds: []string{}},
+			mockBehavior: func(m *dbmocks.MockQuerier) {},
+			wantLen:      0,
+		},
+		{
+			name: "Success: 활성 사용자만 반환 (deleted 빠짐)",
+			req:  &pb.BatchGetUsersRequest{UserIds: []string{aliceID.String(), bobID.String()}},
+			mockBehavior: func(m *dbmocks.MockQuerier) {
+				m.EXPECT().GetUsersByIDs(mock.Anything, mock.MatchedBy(func(ids []pgtype.UUID) bool {
+					return len(ids) == 2
+				})).Return([]db.GetUsersByIDsRow{
+					{ID: alicePG, Username: "alice", CreatedAt: createdAt},
+				}, nil)
+			},
+			wantLen: 1,
+		},
+		{
+			name: "Success: 모두 활성",
+			req:  &pb.BatchGetUsersRequest{UserIds: []string{aliceID.String(), bobID.String()}},
+			mockBehavior: func(m *dbmocks.MockQuerier) {
+				m.EXPECT().GetUsersByIDs(mock.Anything, mock.Anything).Return([]db.GetUsersByIDsRow{
+					{ID: alicePG, Username: "alice", CreatedAt: createdAt},
+					{ID: bobPG, Username: "bob", CreatedAt: createdAt},
+				}, nil)
+			},
+			wantLen: 2,
+		},
+		{
+			name:         "Failure: 잘못된 UUID 포함",
+			req:          &pb.BatchGetUsersRequest{UserIds: []string{aliceID.String(), "not-a-uuid"}},
+			mockBehavior: func(m *dbmocks.MockQuerier) {},
+			wantErr:      true,
+			errCode:      codes.InvalidArgument,
+		},
+		{
+			name: "Failure: DB 에러",
+			req:  &pb.BatchGetUsersRequest{UserIds: []string{aliceID.String()}},
+			mockBehavior: func(m *dbmocks.MockQuerier) {
+				m.EXPECT().GetUsersByIDs(mock.Anything, mock.Anything).Return(nil, assert.AnError)
+			},
+			wantErr: true,
+			errCode: codes.Internal,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mockQueries := dbmocks.NewMockQuerier(t)
+			tt.mockBehavior(mockQueries)
+
+			s := createTestService(mockQueries)
+			got, err := s.BatchGetUsers(t.Context(), tt.req)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Equal(t, tt.errCode, status.Code(err))
+				assert.Nil(t, got)
+			} else {
+				require.NoError(t, err)
+				require.NotNil(t, got)
+				assert.Len(t, got.Users, tt.wantLen)
+			}
+		})
+	}
+}
+
 func TestService_PurgeExpiredTokens(t *testing.T) {
 	t.Parallel()
 

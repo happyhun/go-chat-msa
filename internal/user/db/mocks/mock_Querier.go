@@ -875,6 +875,65 @@ func (_c *MockQuerier_GetUserByUsername_Call) RunAndReturn(run func(context.Cont
 	return _c
 }
 
+// GetUsersByIDs provides a mock function with given fields: ctx, dollar_1
+func (_m *MockQuerier) GetUsersByIDs(ctx context.Context, dollar_1 []pgtype.UUID) ([]db.GetUsersByIDsRow, error) {
+	ret := _m.Called(ctx, dollar_1)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetUsersByIDs")
+	}
+
+	var r0 []db.GetUsersByIDsRow
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, []pgtype.UUID) ([]db.GetUsersByIDsRow, error)); ok {
+		return rf(ctx, dollar_1)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, []pgtype.UUID) []db.GetUsersByIDsRow); ok {
+		r0 = rf(ctx, dollar_1)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]db.GetUsersByIDsRow)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, []pgtype.UUID) error); ok {
+		r1 = rf(ctx, dollar_1)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// MockQuerier_GetUsersByIDs_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetUsersByIDs'
+type MockQuerier_GetUsersByIDs_Call struct {
+	*mock.Call
+}
+
+// GetUsersByIDs is a helper method to define mock.On call
+//   - ctx context.Context
+//   - dollar_1 []pgtype.UUID
+func (_e *MockQuerier_Expecter) GetUsersByIDs(ctx interface{}, dollar_1 interface{}) *MockQuerier_GetUsersByIDs_Call {
+	return &MockQuerier_GetUsersByIDs_Call{Call: _e.mock.On("GetUsersByIDs", ctx, dollar_1)}
+}
+
+func (_c *MockQuerier_GetUsersByIDs_Call) Run(run func(ctx context.Context, dollar_1 []pgtype.UUID)) *MockQuerier_GetUsersByIDs_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].([]pgtype.UUID))
+	})
+	return _c
+}
+
+func (_c *MockQuerier_GetUsersByIDs_Call) Return(_a0 []db.GetUsersByIDsRow, _a1 error) *MockQuerier_GetUsersByIDs_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *MockQuerier_GetUsersByIDs_Call) RunAndReturn(run func(context.Context, []pgtype.UUID) ([]db.GetUsersByIDsRow, error)) *MockQuerier_GetUsersByIDs_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // ListJoinedRoomIDsForUpdate provides a mock function with given fields: ctx, userID
 func (_m *MockQuerier) ListJoinedRoomIDsForUpdate(ctx context.Context, userID pgtype.UUID) ([]pgtype.UUID, error) {
 	ret := _m.Called(ctx, userID)

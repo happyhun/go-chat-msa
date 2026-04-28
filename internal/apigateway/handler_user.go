@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/google/uuid"
+
 	userpb "go-chat-msa/api/proto/user/v1"
 	"go-chat-msa/internal/shared/event"
 	"go-chat-msa/internal/shared/httpio"
@@ -33,6 +35,17 @@ type VerifyUserResponse struct {
 type DeleteUserRequest struct {
 	Password string `json:"password"`
 }
+
+type User struct {
+	UserID   string `json:"user_id"`
+	Username string `json:"username"`
+}
+
+type BatchGetUsersResponse struct {
+	Users []User `json:"users"`
+}
+
+const maxBatchUserIDs = 100
 
 
 func (r *Router) handleCreateUser(w http.ResponseWriter, req *http.Request) {
@@ -137,4 +150,36 @@ func (r *Router) handleDeleteUser(w http.ResponseWriter, req *http.Request) {
 			r.broadcastSystemMessage(ctx, roomID, username, event.SystemEventLeave)
 		}
 	}(timeoutCtx, resp.LeftRoomIds, username)
+}
+
+func (r *Router) handleBatchGetUsers(w http.ResponseWriter, req *http.Request) {
+	ids := req.URL.Query()["ids"]
+	if len(ids) == 0 {
+		httpio.WriteProblem(req.Context(), w, http.StatusBadRequest, "ids parameter is required")
+		return
+	}
+	if len(ids) > maxBatchUserIDs {
+		httpio.WriteProblem(req.Context(), w, http.StatusBadRequest, "too many ids")
+		return
+	}
+	for _, id := range ids {
+		if _, err := uuid.Parse(id); err != nil {
+			httpio.WriteProblem(req.Context(), w, http.StatusBadRequest, "invalid user id")
+			return
+		}
+	}
+
+	resp, err := r.userClient.BatchGetUsers(req.Context(), &userpb.BatchGetUsersRequest{
+		UserIds: ids,
+	})
+	if err != nil {
+		writeProblemFromGRPC(w, req, err)
+		return
+	}
+
+	users := make([]User, len(resp.Users))
+	for i, u := range resp.Users {
+		users[i] = User{UserID: u.Id, Username: u.Username}
+	}
+	httpio.WriteJSON(req.Context(), w, http.StatusOK, BatchGetUsersResponse{Users: users})
 }

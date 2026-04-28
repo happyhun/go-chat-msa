@@ -7,8 +7,10 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 
 	userpb "go-chat-msa/api/proto/user/v1"
 	"go-chat-msa/internal/apigateway/mocks"
@@ -358,3 +360,100 @@ func TestRouter_HandleDeleteUser(t *testing.T) {
 	}
 }
 
+
+func TestRouter_HandleBatchGetUsers(t *testing.T) {
+	t.Parallel()
+
+	aliceID := uuid.New().String()
+	bobID := uuid.New().String()
+
+	tests := []struct {
+		name         string
+		query        string
+		mockBehavior func(m *mocks.MockUserServiceClient)
+		expectedCode int
+		expectedLen  int
+	}{
+		{
+			name:  "Success: 활성 사용자 목록 반환",
+			query: "ids=" + aliceID + "&ids=" + bobID,
+			mockBehavior: func(m *mocks.MockUserServiceClient) {
+				m.EXPECT().BatchGetUsers(mock.Anything, mock.MatchedBy(func(req *userpb.BatchGetUsersRequest) bool {
+					return len(req.UserIds) == 2
+				})).Return(&userpb.BatchGetUsersResponse{
+					Users: []*userpb.User{
+						{Id: aliceID, Username: "alice"},
+						{Id: bobID, Username: "bob"},
+					},
+				}, nil)
+			},
+			expectedCode: http.StatusOK,
+			expectedLen:  2,
+		},
+		{
+			name:  "Success: 일부만 존재 (탈퇴자 제외)",
+			query: "ids=" + aliceID + "&ids=" + bobID,
+			mockBehavior: func(m *mocks.MockUserServiceClient) {
+				m.EXPECT().BatchGetUsers(mock.Anything, mock.Anything).Return(&userpb.BatchGetUsersResponse{
+					Users: []*userpb.User{{Id: aliceID, Username: "alice"}},
+				}, nil)
+			},
+			expectedCode: http.StatusOK,
+			expectedLen:  1,
+		},
+		{
+			name:         "Failure: ids 누락",
+			query:        "",
+			mockBehavior: func(m *mocks.MockUserServiceClient) {},
+			expectedCode: http.StatusBadRequest,
+		},
+		{
+			name:         "Failure: 100 초과",
+			query:        strings.Repeat("ids="+aliceID+"&", 101),
+			mockBehavior: func(m *mocks.MockUserServiceClient) {},
+			expectedCode: http.StatusBadRequest,
+		},
+		{
+			name:         "Failure: 잘못된 UUID",
+			query:        "ids=" + aliceID + "&ids=not-a-uuid",
+			mockBehavior: func(m *mocks.MockUserServiceClient) {},
+			expectedCode: http.StatusBadRequest,
+		},
+		{
+			name:  "Failure: gRPC Internal",
+			query: "ids=" + aliceID,
+			mockBehavior: func(m *mocks.MockUserServiceClient) {
+				m.EXPECT().BatchGetUsers(mock.Anything, mock.Anything).
+					Return(nil, status.Error(codes.Internal, "boom"))
+			},
+			expectedCode: http.StatusInternalServerError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mockUserClient := mocks.NewMockUserServiceClient(t)
+			tt.mockBehavior(mockUserClient)
+
+			r := &Router{
+				userClient: mockUserClient,
+				config:     &Config{AppConfig: config.AppConfig{Env: "test"}},
+			}
+
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/users?"+tt.query, nil)
+
+			r.handleBatchGetUsers(w, req)
+
+			assert.Equal(t, tt.expectedCode, w.Code)
+
+			if tt.expectedCode == http.StatusOK {
+				var body BatchGetUsersResponse
+				err := json.Unmarshal(w.Body.Bytes(), &body)
+				require.NoError(t, err)
+				assert.Len(t, body.Users, tt.expectedLen)
+			}
+		})
+	}
+}
