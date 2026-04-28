@@ -13,6 +13,10 @@ WHERE username = $1 AND deleted_at IS NULL LIMIT 1;
 SELECT * FROM users
 WHERE id = $1 AND deleted_at IS NULL LIMIT 1;
 
+-- name: GetUsersByIDs :many
+SELECT id, username, created_at FROM users
+WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL;
+
 -- name: SoftDeleteUser :one
 UPDATE users
 SET deleted_at = $2

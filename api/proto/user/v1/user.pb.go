@@ -563,6 +563,94 @@ func (x *DeleteUserResponse) GetLeftRoomIds() []string {
 	return nil
 }
 
+type BatchGetUsersRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UserIds       []string               `protobuf:"bytes,1,rep,name=user_ids,json=userIds,proto3" json:"user_ids,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BatchGetUsersRequest) Reset() {
+	*x = BatchGetUsersRequest{}
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BatchGetUsersRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BatchGetUsersRequest) ProtoMessage() {}
+
+func (x *BatchGetUsersRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BatchGetUsersRequest.ProtoReflect.Descriptor instead.
+func (*BatchGetUsersRequest) Descriptor() ([]byte, []int) {
+	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *BatchGetUsersRequest) GetUserIds() []string {
+	if x != nil {
+		return x.UserIds
+	}
+	return nil
+}
+
+type BatchGetUsersResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Users         []*User                `protobuf:"bytes,1,rep,name=users,proto3" json:"users,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BatchGetUsersResponse) Reset() {
+	*x = BatchGetUsersResponse{}
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BatchGetUsersResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BatchGetUsersResponse) ProtoMessage() {}
+
+func (x *BatchGetUsersResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BatchGetUsersResponse.ProtoReflect.Descriptor instead.
+func (*BatchGetUsersResponse) Descriptor() ([]byte, []int) {
+	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *BatchGetUsersResponse) GetUsers() []*User {
+	if x != nil {
+		return x.Users
+	}
+	return nil
+}
+
 // 채팅방 관리
 type Room struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -577,7 +665,7 @@ type Room struct {
 
 func (x *Room) Reset() {
 	*x = Room{}
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[11]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -589,7 +677,7 @@ func (x *Room) String() string {
 func (*Room) ProtoMessage() {}
 
 func (x *Room) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[11]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -602,7 +690,7 @@ func (x *Room) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Room.ProtoReflect.Descriptor instead.
 func (*Room) Descriptor() ([]byte, []int) {
-	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{11}
+	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *Room) GetId() string {
@@ -651,7 +739,7 @@ type UserRoom struct {
 
 func (x *UserRoom) Reset() {
 	*x = UserRoom{}
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[12]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -663,7 +751,7 @@ func (x *UserRoom) String() string {
 func (*UserRoom) ProtoMessage() {}
 
 func (x *UserRoom) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[12]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -676,7 +764,7 @@ func (x *UserRoom) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UserRoom.ProtoReflect.Descriptor instead.
 func (*UserRoom) Descriptor() ([]byte, []int) {
-	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{12}
+	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *UserRoom) GetRoom() *Room {
@@ -704,7 +792,7 @@ type CreateRoomRequest struct {
 
 func (x *CreateRoomRequest) Reset() {
 	*x = CreateRoomRequest{}
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[13]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -716,7 +804,7 @@ func (x *CreateRoomRequest) String() string {
 func (*CreateRoomRequest) ProtoMessage() {}
 
 func (x *CreateRoomRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[13]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -729,7 +817,7 @@ func (x *CreateRoomRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateRoomRequest.ProtoReflect.Descriptor instead.
 func (*CreateRoomRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{13}
+	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *CreateRoomRequest) GetName() string {
@@ -762,7 +850,7 @@ type CreateRoomResponse struct {
 
 func (x *CreateRoomResponse) Reset() {
 	*x = CreateRoomResponse{}
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[14]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -774,7 +862,7 @@ func (x *CreateRoomResponse) String() string {
 func (*CreateRoomResponse) ProtoMessage() {}
 
 func (x *CreateRoomResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[14]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -787,7 +875,7 @@ func (x *CreateRoomResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateRoomResponse.ProtoReflect.Descriptor instead.
 func (*CreateRoomResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{14}
+	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *CreateRoomResponse) GetRoomId() string {
@@ -807,7 +895,7 @@ type GetMemberJoinedAtRequest struct {
 
 func (x *GetMemberJoinedAtRequest) Reset() {
 	*x = GetMemberJoinedAtRequest{}
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[15]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -819,7 +907,7 @@ func (x *GetMemberJoinedAtRequest) String() string {
 func (*GetMemberJoinedAtRequest) ProtoMessage() {}
 
 func (x *GetMemberJoinedAtRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[15]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -832,7 +920,7 @@ func (x *GetMemberJoinedAtRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetMemberJoinedAtRequest.ProtoReflect.Descriptor instead.
 func (*GetMemberJoinedAtRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{15}
+	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *GetMemberJoinedAtRequest) GetRoomId() string {
@@ -858,7 +946,7 @@ type GetMemberJoinedAtResponse struct {
 
 func (x *GetMemberJoinedAtResponse) Reset() {
 	*x = GetMemberJoinedAtResponse{}
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[16]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -870,7 +958,7 @@ func (x *GetMemberJoinedAtResponse) String() string {
 func (*GetMemberJoinedAtResponse) ProtoMessage() {}
 
 func (x *GetMemberJoinedAtResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[16]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -883,7 +971,7 @@ func (x *GetMemberJoinedAtResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetMemberJoinedAtResponse.ProtoReflect.Descriptor instead.
 func (*GetMemberJoinedAtResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{16}
+	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *GetMemberJoinedAtResponse) GetJoinedAt() *timestamppb.Timestamp {
@@ -903,7 +991,7 @@ type VerifyRoomMemberRequest struct {
 
 func (x *VerifyRoomMemberRequest) Reset() {
 	*x = VerifyRoomMemberRequest{}
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[17]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -915,7 +1003,7 @@ func (x *VerifyRoomMemberRequest) String() string {
 func (*VerifyRoomMemberRequest) ProtoMessage() {}
 
 func (x *VerifyRoomMemberRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[17]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -928,7 +1016,7 @@ func (x *VerifyRoomMemberRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VerifyRoomMemberRequest.ProtoReflect.Descriptor instead.
 func (*VerifyRoomMemberRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{17}
+	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *VerifyRoomMemberRequest) GetRoomId() string {
@@ -953,7 +1041,7 @@ type VerifyRoomMemberResponse struct {
 
 func (x *VerifyRoomMemberResponse) Reset() {
 	*x = VerifyRoomMemberResponse{}
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[18]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -965,7 +1053,7 @@ func (x *VerifyRoomMemberResponse) String() string {
 func (*VerifyRoomMemberResponse) ProtoMessage() {}
 
 func (x *VerifyRoomMemberResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[18]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -978,7 +1066,7 @@ func (x *VerifyRoomMemberResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VerifyRoomMemberResponse.ProtoReflect.Descriptor instead.
 func (*VerifyRoomMemberResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{18}
+	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{20}
 }
 
 type LeaveRoomRequest struct {
@@ -991,7 +1079,7 @@ type LeaveRoomRequest struct {
 
 func (x *LeaveRoomRequest) Reset() {
 	*x = LeaveRoomRequest{}
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[19]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1003,7 +1091,7 @@ func (x *LeaveRoomRequest) String() string {
 func (*LeaveRoomRequest) ProtoMessage() {}
 
 func (x *LeaveRoomRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[19]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1016,7 +1104,7 @@ func (x *LeaveRoomRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LeaveRoomRequest.ProtoReflect.Descriptor instead.
 func (*LeaveRoomRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{19}
+	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *LeaveRoomRequest) GetRoomId() string {
@@ -1041,7 +1129,7 @@ type LeaveRoomResponse struct {
 
 func (x *LeaveRoomResponse) Reset() {
 	*x = LeaveRoomResponse{}
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[20]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1053,7 +1141,7 @@ func (x *LeaveRoomResponse) String() string {
 func (*LeaveRoomResponse) ProtoMessage() {}
 
 func (x *LeaveRoomResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[20]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1066,7 +1154,7 @@ func (x *LeaveRoomResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LeaveRoomResponse.ProtoReflect.Descriptor instead.
 func (*LeaveRoomResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{20}
+	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{22}
 }
 
 type ListJoinedRoomsRequest struct {
@@ -1078,7 +1166,7 @@ type ListJoinedRoomsRequest struct {
 
 func (x *ListJoinedRoomsRequest) Reset() {
 	*x = ListJoinedRoomsRequest{}
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[21]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1090,7 +1178,7 @@ func (x *ListJoinedRoomsRequest) String() string {
 func (*ListJoinedRoomsRequest) ProtoMessage() {}
 
 func (x *ListJoinedRoomsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[21]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1103,7 +1191,7 @@ func (x *ListJoinedRoomsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListJoinedRoomsRequest.ProtoReflect.Descriptor instead.
 func (*ListJoinedRoomsRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{21}
+	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *ListJoinedRoomsRequest) GetUserId() string {
@@ -1122,7 +1210,7 @@ type ListJoinedRoomsResponse struct {
 
 func (x *ListJoinedRoomsResponse) Reset() {
 	*x = ListJoinedRoomsResponse{}
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[22]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1134,7 +1222,7 @@ func (x *ListJoinedRoomsResponse) String() string {
 func (*ListJoinedRoomsResponse) ProtoMessage() {}
 
 func (x *ListJoinedRoomsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[22]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1147,7 +1235,7 @@ func (x *ListJoinedRoomsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListJoinedRoomsResponse.ProtoReflect.Descriptor instead.
 func (*ListJoinedRoomsResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{22}
+	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *ListJoinedRoomsResponse) GetRooms() []*UserRoom {
@@ -1168,7 +1256,7 @@ type SearchRoomsRequest struct {
 
 func (x *SearchRoomsRequest) Reset() {
 	*x = SearchRoomsRequest{}
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[23]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1180,7 +1268,7 @@ func (x *SearchRoomsRequest) String() string {
 func (*SearchRoomsRequest) ProtoMessage() {}
 
 func (x *SearchRoomsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[23]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1193,7 +1281,7 @@ func (x *SearchRoomsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SearchRoomsRequest.ProtoReflect.Descriptor instead.
 func (*SearchRoomsRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{23}
+	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *SearchRoomsRequest) GetQuery() string {
@@ -1227,7 +1315,7 @@ type SearchRoomsResponse struct {
 
 func (x *SearchRoomsResponse) Reset() {
 	*x = SearchRoomsResponse{}
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[24]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1239,7 +1327,7 @@ func (x *SearchRoomsResponse) String() string {
 func (*SearchRoomsResponse) ProtoMessage() {}
 
 func (x *SearchRoomsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[24]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1252,7 +1340,7 @@ func (x *SearchRoomsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SearchRoomsResponse.ProtoReflect.Descriptor instead.
 func (*SearchRoomsResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{24}
+	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *SearchRoomsResponse) GetRooms() []*Room {
@@ -1281,7 +1369,7 @@ type UpdateRoomRequest struct {
 
 func (x *UpdateRoomRequest) Reset() {
 	*x = UpdateRoomRequest{}
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[25]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1293,7 +1381,7 @@ func (x *UpdateRoomRequest) String() string {
 func (*UpdateRoomRequest) ProtoMessage() {}
 
 func (x *UpdateRoomRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[25]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1306,7 +1394,7 @@ func (x *UpdateRoomRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateRoomRequest.ProtoReflect.Descriptor instead.
 func (*UpdateRoomRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{25}
+	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *UpdateRoomRequest) GetId() string {
@@ -1345,7 +1433,7 @@ type UpdateRoomResponse struct {
 
 func (x *UpdateRoomResponse) Reset() {
 	*x = UpdateRoomResponse{}
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[26]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1357,7 +1445,7 @@ func (x *UpdateRoomResponse) String() string {
 func (*UpdateRoomResponse) ProtoMessage() {}
 
 func (x *UpdateRoomResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[26]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1370,7 +1458,7 @@ func (x *UpdateRoomResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateRoomResponse.ProtoReflect.Descriptor instead.
 func (*UpdateRoomResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{26}
+	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{28}
 }
 
 type JoinRoomRequest struct {
@@ -1383,7 +1471,7 @@ type JoinRoomRequest struct {
 
 func (x *JoinRoomRequest) Reset() {
 	*x = JoinRoomRequest{}
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[27]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1395,7 +1483,7 @@ func (x *JoinRoomRequest) String() string {
 func (*JoinRoomRequest) ProtoMessage() {}
 
 func (x *JoinRoomRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[27]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1408,7 +1496,7 @@ func (x *JoinRoomRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JoinRoomRequest.ProtoReflect.Descriptor instead.
 func (*JoinRoomRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{27}
+	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *JoinRoomRequest) GetUserId() string {
@@ -1433,7 +1521,7 @@ type JoinRoomResponse struct {
 
 func (x *JoinRoomResponse) Reset() {
 	*x = JoinRoomResponse{}
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[28]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1445,7 +1533,7 @@ func (x *JoinRoomResponse) String() string {
 func (*JoinRoomResponse) ProtoMessage() {}
 
 func (x *JoinRoomResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[28]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1458,7 +1546,7 @@ func (x *JoinRoomResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JoinRoomResponse.ProtoReflect.Descriptor instead.
 func (*JoinRoomResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{28}
+	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{30}
 }
 
 type DeleteRoomRequest struct {
@@ -1471,7 +1559,7 @@ type DeleteRoomRequest struct {
 
 func (x *DeleteRoomRequest) Reset() {
 	*x = DeleteRoomRequest{}
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[29]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1483,7 +1571,7 @@ func (x *DeleteRoomRequest) String() string {
 func (*DeleteRoomRequest) ProtoMessage() {}
 
 func (x *DeleteRoomRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[29]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1496,7 +1584,7 @@ func (x *DeleteRoomRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteRoomRequest.ProtoReflect.Descriptor instead.
 func (*DeleteRoomRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{29}
+	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *DeleteRoomRequest) GetRoomId() string {
@@ -1522,7 +1610,7 @@ type DeleteRoomResponse struct {
 
 func (x *DeleteRoomResponse) Reset() {
 	*x = DeleteRoomResponse{}
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[30]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1534,7 +1622,7 @@ func (x *DeleteRoomResponse) String() string {
 func (*DeleteRoomResponse) ProtoMessage() {}
 
 func (x *DeleteRoomResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[30]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1547,7 +1635,7 @@ func (x *DeleteRoomResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteRoomResponse.ProtoReflect.Descriptor instead.
 func (*DeleteRoomResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{30}
+	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *DeleteRoomResponse) GetSuccess() bool {
@@ -1568,7 +1656,7 @@ type RoomMember struct {
 
 func (x *RoomMember) Reset() {
 	*x = RoomMember{}
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[31]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1580,7 +1668,7 @@ func (x *RoomMember) String() string {
 func (*RoomMember) ProtoMessage() {}
 
 func (x *RoomMember) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[31]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1593,7 +1681,7 @@ func (x *RoomMember) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RoomMember.ProtoReflect.Descriptor instead.
 func (*RoomMember) Descriptor() ([]byte, []int) {
-	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{31}
+	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *RoomMember) GetUserId() string {
@@ -1626,7 +1714,7 @@ type ListRoomMembersRequest struct {
 
 func (x *ListRoomMembersRequest) Reset() {
 	*x = ListRoomMembersRequest{}
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[32]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1638,7 +1726,7 @@ func (x *ListRoomMembersRequest) String() string {
 func (*ListRoomMembersRequest) ProtoMessage() {}
 
 func (x *ListRoomMembersRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[32]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1651,7 +1739,7 @@ func (x *ListRoomMembersRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListRoomMembersRequest.ProtoReflect.Descriptor instead.
 func (*ListRoomMembersRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{32}
+	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *ListRoomMembersRequest) GetRoomId() string {
@@ -1670,7 +1758,7 @@ type ListRoomMembersResponse struct {
 
 func (x *ListRoomMembersResponse) Reset() {
 	*x = ListRoomMembersResponse{}
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[33]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1682,7 +1770,7 @@ func (x *ListRoomMembersResponse) String() string {
 func (*ListRoomMembersResponse) ProtoMessage() {}
 
 func (x *ListRoomMembersResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_user_v1_user_proto_msgTypes[33]
+	mi := &file_api_proto_user_v1_user_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1695,7 +1783,7 @@ func (x *ListRoomMembersResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListRoomMembersResponse.ProtoReflect.Descriptor instead.
 func (*ListRoomMembersResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{33}
+	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *ListRoomMembersResponse) GetMembers() []*RoomMember {
@@ -1739,7 +1827,11 @@ const file_api_proto_user_v1_user_proto_rawDesc = "" +
 	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x1a\n" +
 	"\bpassword\x18\x02 \x01(\tR\bpassword\"8\n" +
 	"\x12DeleteUserResponse\x12\"\n" +
-	"\rleft_room_ids\x18\x01 \x03(\tR\vleftRoomIds\"\x8e\x01\n" +
+	"\rleft_room_ids\x18\x01 \x03(\tR\vleftRoomIds\"1\n" +
+	"\x14BatchGetUsersRequest\x12\x19\n" +
+	"\buser_ids\x18\x01 \x03(\tR\auserIds\"<\n" +
+	"\x15BatchGetUsersResponse\x12#\n" +
+	"\x05users\x18\x01 \x03(\v2\r.user.v1.UserR\x05users\"\x8e\x01\n" +
 	"\x04Room\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1d\n" +
@@ -1805,7 +1897,7 @@ const file_api_proto_user_v1_user_proto_rawDesc = "" +
 	"\x16ListRoomMembersRequest\x12\x17\n" +
 	"\aroom_id\x18\x01 \x01(\tR\x06roomId\"H\n" +
 	"\x17ListRoomMembersResponse\x12-\n" +
-	"\amembers\x18\x01 \x03(\v2\x13.user.v1.RoomMemberR\amembers2\xfe\b\n" +
+	"\amembers\x18\x01 \x03(\v2\x13.user.v1.RoomMemberR\amembers2\xce\t\n" +
 	"\vUserService\x12E\n" +
 	"\n" +
 	"CreateUser\x12\x1a.user.v1.CreateUserRequest\x1a\x1b.user.v1.CreateUserResponse\x12E\n" +
@@ -1814,7 +1906,8 @@ const file_api_proto_user_v1_user_proto_rawDesc = "" +
 	"\fRefreshToken\x12\x1c.user.v1.RefreshTokenRequest\x1a\x1d.user.v1.RefreshTokenResponse\x12H\n" +
 	"\vRevokeToken\x12\x1b.user.v1.RevokeTokenRequest\x1a\x1c.user.v1.RevokeTokenResponse\x12E\n" +
 	"\n" +
-	"DeleteUser\x12\x1a.user.v1.DeleteUserRequest\x1a\x1b.user.v1.DeleteUserResponse\x12E\n" +
+	"DeleteUser\x12\x1a.user.v1.DeleteUserRequest\x1a\x1b.user.v1.DeleteUserResponse\x12N\n" +
+	"\rBatchGetUsers\x12\x1d.user.v1.BatchGetUsersRequest\x1a\x1e.user.v1.BatchGetUsersResponse\x12E\n" +
 	"\n" +
 	"CreateRoom\x12\x1a.user.v1.CreateRoomRequest\x1a\x1b.user.v1.CreateRoomResponse\x12T\n" +
 	"\x0fListJoinedRooms\x12\x1f.user.v1.ListJoinedRoomsRequest\x1a .user.v1.ListJoinedRoomsResponse\x12?\n" +
@@ -1841,7 +1934,7 @@ func file_api_proto_user_v1_user_proto_rawDescGZIP() []byte {
 	return file_api_proto_user_v1_user_proto_rawDescData
 }
 
-var file_api_proto_user_v1_user_proto_msgTypes = make([]protoimpl.MessageInfo, 34)
+var file_api_proto_user_v1_user_proto_msgTypes = make([]protoimpl.MessageInfo, 36)
 var file_api_proto_user_v1_user_proto_goTypes = []any{
 	(*User)(nil),                      // 0: user.v1.User
 	(*CreateUserRequest)(nil),         // 1: user.v1.CreateUserRequest
@@ -1854,75 +1947,80 @@ var file_api_proto_user_v1_user_proto_goTypes = []any{
 	(*RevokeTokenResponse)(nil),       // 8: user.v1.RevokeTokenResponse
 	(*DeleteUserRequest)(nil),         // 9: user.v1.DeleteUserRequest
 	(*DeleteUserResponse)(nil),        // 10: user.v1.DeleteUserResponse
-	(*Room)(nil),                      // 11: user.v1.Room
-	(*UserRoom)(nil),                  // 12: user.v1.UserRoom
-	(*CreateRoomRequest)(nil),         // 13: user.v1.CreateRoomRequest
-	(*CreateRoomResponse)(nil),        // 14: user.v1.CreateRoomResponse
-	(*GetMemberJoinedAtRequest)(nil),  // 15: user.v1.GetMemberJoinedAtRequest
-	(*GetMemberJoinedAtResponse)(nil), // 16: user.v1.GetMemberJoinedAtResponse
-	(*VerifyRoomMemberRequest)(nil),   // 17: user.v1.VerifyRoomMemberRequest
-	(*VerifyRoomMemberResponse)(nil),  // 18: user.v1.VerifyRoomMemberResponse
-	(*LeaveRoomRequest)(nil),          // 19: user.v1.LeaveRoomRequest
-	(*LeaveRoomResponse)(nil),         // 20: user.v1.LeaveRoomResponse
-	(*ListJoinedRoomsRequest)(nil),    // 21: user.v1.ListJoinedRoomsRequest
-	(*ListJoinedRoomsResponse)(nil),   // 22: user.v1.ListJoinedRoomsResponse
-	(*SearchRoomsRequest)(nil),        // 23: user.v1.SearchRoomsRequest
-	(*SearchRoomsResponse)(nil),       // 24: user.v1.SearchRoomsResponse
-	(*UpdateRoomRequest)(nil),         // 25: user.v1.UpdateRoomRequest
-	(*UpdateRoomResponse)(nil),        // 26: user.v1.UpdateRoomResponse
-	(*JoinRoomRequest)(nil),           // 27: user.v1.JoinRoomRequest
-	(*JoinRoomResponse)(nil),          // 28: user.v1.JoinRoomResponse
-	(*DeleteRoomRequest)(nil),         // 29: user.v1.DeleteRoomRequest
-	(*DeleteRoomResponse)(nil),        // 30: user.v1.DeleteRoomResponse
-	(*RoomMember)(nil),                // 31: user.v1.RoomMember
-	(*ListRoomMembersRequest)(nil),    // 32: user.v1.ListRoomMembersRequest
-	(*ListRoomMembersResponse)(nil),   // 33: user.v1.ListRoomMembersResponse
-	(*timestamppb.Timestamp)(nil),     // 34: google.protobuf.Timestamp
+	(*BatchGetUsersRequest)(nil),      // 11: user.v1.BatchGetUsersRequest
+	(*BatchGetUsersResponse)(nil),     // 12: user.v1.BatchGetUsersResponse
+	(*Room)(nil),                      // 13: user.v1.Room
+	(*UserRoom)(nil),                  // 14: user.v1.UserRoom
+	(*CreateRoomRequest)(nil),         // 15: user.v1.CreateRoomRequest
+	(*CreateRoomResponse)(nil),        // 16: user.v1.CreateRoomResponse
+	(*GetMemberJoinedAtRequest)(nil),  // 17: user.v1.GetMemberJoinedAtRequest
+	(*GetMemberJoinedAtResponse)(nil), // 18: user.v1.GetMemberJoinedAtResponse
+	(*VerifyRoomMemberRequest)(nil),   // 19: user.v1.VerifyRoomMemberRequest
+	(*VerifyRoomMemberResponse)(nil),  // 20: user.v1.VerifyRoomMemberResponse
+	(*LeaveRoomRequest)(nil),          // 21: user.v1.LeaveRoomRequest
+	(*LeaveRoomResponse)(nil),         // 22: user.v1.LeaveRoomResponse
+	(*ListJoinedRoomsRequest)(nil),    // 23: user.v1.ListJoinedRoomsRequest
+	(*ListJoinedRoomsResponse)(nil),   // 24: user.v1.ListJoinedRoomsResponse
+	(*SearchRoomsRequest)(nil),        // 25: user.v1.SearchRoomsRequest
+	(*SearchRoomsResponse)(nil),       // 26: user.v1.SearchRoomsResponse
+	(*UpdateRoomRequest)(nil),         // 27: user.v1.UpdateRoomRequest
+	(*UpdateRoomResponse)(nil),        // 28: user.v1.UpdateRoomResponse
+	(*JoinRoomRequest)(nil),           // 29: user.v1.JoinRoomRequest
+	(*JoinRoomResponse)(nil),          // 30: user.v1.JoinRoomResponse
+	(*DeleteRoomRequest)(nil),         // 31: user.v1.DeleteRoomRequest
+	(*DeleteRoomResponse)(nil),        // 32: user.v1.DeleteRoomResponse
+	(*RoomMember)(nil),                // 33: user.v1.RoomMember
+	(*ListRoomMembersRequest)(nil),    // 34: user.v1.ListRoomMembersRequest
+	(*ListRoomMembersResponse)(nil),   // 35: user.v1.ListRoomMembersResponse
+	(*timestamppb.Timestamp)(nil),     // 36: google.protobuf.Timestamp
 }
 var file_api_proto_user_v1_user_proto_depIdxs = []int32{
-	34, // 0: user.v1.User.created_at:type_name -> google.protobuf.Timestamp
-	11, // 1: user.v1.UserRoom.room:type_name -> user.v1.Room
-	34, // 2: user.v1.UserRoom.joined_at:type_name -> google.protobuf.Timestamp
-	34, // 3: user.v1.GetMemberJoinedAtResponse.joined_at:type_name -> google.protobuf.Timestamp
-	12, // 4: user.v1.ListJoinedRoomsResponse.rooms:type_name -> user.v1.UserRoom
-	11, // 5: user.v1.SearchRoomsResponse.rooms:type_name -> user.v1.Room
-	34, // 6: user.v1.RoomMember.joined_at:type_name -> google.protobuf.Timestamp
-	31, // 7: user.v1.ListRoomMembersResponse.members:type_name -> user.v1.RoomMember
-	1,  // 8: user.v1.UserService.CreateUser:input_type -> user.v1.CreateUserRequest
-	3,  // 9: user.v1.UserService.VerifyUser:input_type -> user.v1.VerifyUserRequest
-	5,  // 10: user.v1.UserService.RefreshToken:input_type -> user.v1.RefreshTokenRequest
-	7,  // 11: user.v1.UserService.RevokeToken:input_type -> user.v1.RevokeTokenRequest
-	9,  // 12: user.v1.UserService.DeleteUser:input_type -> user.v1.DeleteUserRequest
-	13, // 13: user.v1.UserService.CreateRoom:input_type -> user.v1.CreateRoomRequest
-	21, // 14: user.v1.UserService.ListJoinedRooms:input_type -> user.v1.ListJoinedRoomsRequest
-	27, // 15: user.v1.UserService.JoinRoom:input_type -> user.v1.JoinRoomRequest
-	15, // 16: user.v1.UserService.GetMemberJoinedAt:input_type -> user.v1.GetMemberJoinedAtRequest
-	17, // 17: user.v1.UserService.VerifyRoomMember:input_type -> user.v1.VerifyRoomMemberRequest
-	19, // 18: user.v1.UserService.LeaveRoom:input_type -> user.v1.LeaveRoomRequest
-	23, // 19: user.v1.UserService.SearchRooms:input_type -> user.v1.SearchRoomsRequest
-	25, // 20: user.v1.UserService.UpdateRoom:input_type -> user.v1.UpdateRoomRequest
-	29, // 21: user.v1.UserService.DeleteRoom:input_type -> user.v1.DeleteRoomRequest
-	32, // 22: user.v1.UserService.ListRoomMembers:input_type -> user.v1.ListRoomMembersRequest
-	2,  // 23: user.v1.UserService.CreateUser:output_type -> user.v1.CreateUserResponse
-	4,  // 24: user.v1.UserService.VerifyUser:output_type -> user.v1.VerifyUserResponse
-	6,  // 25: user.v1.UserService.RefreshToken:output_type -> user.v1.RefreshTokenResponse
-	8,  // 26: user.v1.UserService.RevokeToken:output_type -> user.v1.RevokeTokenResponse
-	10, // 27: user.v1.UserService.DeleteUser:output_type -> user.v1.DeleteUserResponse
-	14, // 28: user.v1.UserService.CreateRoom:output_type -> user.v1.CreateRoomResponse
-	22, // 29: user.v1.UserService.ListJoinedRooms:output_type -> user.v1.ListJoinedRoomsResponse
-	28, // 30: user.v1.UserService.JoinRoom:output_type -> user.v1.JoinRoomResponse
-	16, // 31: user.v1.UserService.GetMemberJoinedAt:output_type -> user.v1.GetMemberJoinedAtResponse
-	18, // 32: user.v1.UserService.VerifyRoomMember:output_type -> user.v1.VerifyRoomMemberResponse
-	20, // 33: user.v1.UserService.LeaveRoom:output_type -> user.v1.LeaveRoomResponse
-	24, // 34: user.v1.UserService.SearchRooms:output_type -> user.v1.SearchRoomsResponse
-	26, // 35: user.v1.UserService.UpdateRoom:output_type -> user.v1.UpdateRoomResponse
-	30, // 36: user.v1.UserService.DeleteRoom:output_type -> user.v1.DeleteRoomResponse
-	33, // 37: user.v1.UserService.ListRoomMembers:output_type -> user.v1.ListRoomMembersResponse
-	23, // [23:38] is the sub-list for method output_type
-	8,  // [8:23] is the sub-list for method input_type
-	8,  // [8:8] is the sub-list for extension type_name
-	8,  // [8:8] is the sub-list for extension extendee
-	0,  // [0:8] is the sub-list for field type_name
+	36, // 0: user.v1.User.created_at:type_name -> google.protobuf.Timestamp
+	0,  // 1: user.v1.BatchGetUsersResponse.users:type_name -> user.v1.User
+	13, // 2: user.v1.UserRoom.room:type_name -> user.v1.Room
+	36, // 3: user.v1.UserRoom.joined_at:type_name -> google.protobuf.Timestamp
+	36, // 4: user.v1.GetMemberJoinedAtResponse.joined_at:type_name -> google.protobuf.Timestamp
+	14, // 5: user.v1.ListJoinedRoomsResponse.rooms:type_name -> user.v1.UserRoom
+	13, // 6: user.v1.SearchRoomsResponse.rooms:type_name -> user.v1.Room
+	36, // 7: user.v1.RoomMember.joined_at:type_name -> google.protobuf.Timestamp
+	33, // 8: user.v1.ListRoomMembersResponse.members:type_name -> user.v1.RoomMember
+	1,  // 9: user.v1.UserService.CreateUser:input_type -> user.v1.CreateUserRequest
+	3,  // 10: user.v1.UserService.VerifyUser:input_type -> user.v1.VerifyUserRequest
+	5,  // 11: user.v1.UserService.RefreshToken:input_type -> user.v1.RefreshTokenRequest
+	7,  // 12: user.v1.UserService.RevokeToken:input_type -> user.v1.RevokeTokenRequest
+	9,  // 13: user.v1.UserService.DeleteUser:input_type -> user.v1.DeleteUserRequest
+	11, // 14: user.v1.UserService.BatchGetUsers:input_type -> user.v1.BatchGetUsersRequest
+	15, // 15: user.v1.UserService.CreateRoom:input_type -> user.v1.CreateRoomRequest
+	23, // 16: user.v1.UserService.ListJoinedRooms:input_type -> user.v1.ListJoinedRoomsRequest
+	29, // 17: user.v1.UserService.JoinRoom:input_type -> user.v1.JoinRoomRequest
+	17, // 18: user.v1.UserService.GetMemberJoinedAt:input_type -> user.v1.GetMemberJoinedAtRequest
+	19, // 19: user.v1.UserService.VerifyRoomMember:input_type -> user.v1.VerifyRoomMemberRequest
+	21, // 20: user.v1.UserService.LeaveRoom:input_type -> user.v1.LeaveRoomRequest
+	25, // 21: user.v1.UserService.SearchRooms:input_type -> user.v1.SearchRoomsRequest
+	27, // 22: user.v1.UserService.UpdateRoom:input_type -> user.v1.UpdateRoomRequest
+	31, // 23: user.v1.UserService.DeleteRoom:input_type -> user.v1.DeleteRoomRequest
+	34, // 24: user.v1.UserService.ListRoomMembers:input_type -> user.v1.ListRoomMembersRequest
+	2,  // 25: user.v1.UserService.CreateUser:output_type -> user.v1.CreateUserResponse
+	4,  // 26: user.v1.UserService.VerifyUser:output_type -> user.v1.VerifyUserResponse
+	6,  // 27: user.v1.UserService.RefreshToken:output_type -> user.v1.RefreshTokenResponse
+	8,  // 28: user.v1.UserService.RevokeToken:output_type -> user.v1.RevokeTokenResponse
+	10, // 29: user.v1.UserService.DeleteUser:output_type -> user.v1.DeleteUserResponse
+	12, // 30: user.v1.UserService.BatchGetUsers:output_type -> user.v1.BatchGetUsersResponse
+	16, // 31: user.v1.UserService.CreateRoom:output_type -> user.v1.CreateRoomResponse
+	24, // 32: user.v1.UserService.ListJoinedRooms:output_type -> user.v1.ListJoinedRoomsResponse
+	30, // 33: user.v1.UserService.JoinRoom:output_type -> user.v1.JoinRoomResponse
+	18, // 34: user.v1.UserService.GetMemberJoinedAt:output_type -> user.v1.GetMemberJoinedAtResponse
+	20, // 35: user.v1.UserService.VerifyRoomMember:output_type -> user.v1.VerifyRoomMemberResponse
+	22, // 36: user.v1.UserService.LeaveRoom:output_type -> user.v1.LeaveRoomResponse
+	26, // 37: user.v1.UserService.SearchRooms:output_type -> user.v1.SearchRoomsResponse
+	28, // 38: user.v1.UserService.UpdateRoom:output_type -> user.v1.UpdateRoomResponse
+	32, // 39: user.v1.UserService.DeleteRoom:output_type -> user.v1.DeleteRoomResponse
+	35, // 40: user.v1.UserService.ListRoomMembers:output_type -> user.v1.ListRoomMembersResponse
+	25, // [25:41] is the sub-list for method output_type
+	9,  // [9:25] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	9,  // [9:9] is the sub-list for extension extendee
+	0,  // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_api_proto_user_v1_user_proto_init() }
@@ -1936,7 +2034,7 @@ func file_api_proto_user_v1_user_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_proto_user_v1_user_proto_rawDesc), len(file_api_proto_user_v1_user_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   34,
+			NumMessages:   36,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

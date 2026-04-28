@@ -106,6 +106,7 @@ func (r *Router) registerV1Routes() {
 	})
 
 	r.muxV1.Handle("DELETE /me", middleware.ChainMiddleware(r.handleDeleteUser, authMws...))
+	r.muxV1.Handle("GET /users", middleware.ChainMiddleware(r.handleBatchGetUsers, authMws...))
 	r.muxV1.Handle("GET /me/rooms", middleware.ChainMiddleware(r.handleListJoinedRooms, authMws...))
 	r.muxV1.Handle("GET /rooms", middleware.ChainMiddleware(r.handleSearchRooms, authMws...))
 	r.muxV1.Handle("POST /rooms", middleware.ChainMiddleware(r.handleCreateRoom, authMws...))

@@ -31,7 +31,7 @@ type CreateRoomResponse struct {
 	RoomID string `json:"room_id"`
 }
 
-type JoinedRoomItem struct {
+type JoinedRoom struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	ManagerID   string `json:"manager_id"`
@@ -41,20 +41,20 @@ type JoinedRoomItem struct {
 }
 
 type ListJoinedRoomsResponse struct {
-	Rooms []JoinedRoomItem `json:"rooms"`
+	Rooms []JoinedRoom `json:"rooms"`
 }
 
-type RoomMemberItem struct {
+type RoomMember struct {
 	UserID   string `json:"user_id"`
 	Username string `json:"username"`
 	JoinedAt string `json:"joined_at"`
 }
 
 type ListRoomMembersResponse struct {
-	Members []RoomMemberItem `json:"members"`
+	Members []RoomMember `json:"members"`
 }
 
-type SearchedRoomItem struct {
+type SearchedRoom struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	ManagerID   string `json:"manager_id"`
@@ -63,11 +63,11 @@ type SearchedRoomItem struct {
 }
 
 type SearchRoomsResponse struct {
-	Rooms      []SearchedRoomItem `json:"rooms"`
+	Rooms      []SearchedRoom `json:"rooms"`
 	TotalCount int64              `json:"total_count"`
 }
 
-type MessageItem struct {
+type Message struct {
 	ID             string `json:"id"`
 	RoomID         string `json:"room_id"`
 	SenderID       string `json:"sender_id"`
@@ -78,7 +78,7 @@ type MessageItem struct {
 }
 
 type ListMessagesResponse struct {
-	Messages []MessageItem `json:"messages"`
+	Messages []Message `json:"messages"`
 }
 
 func (r *Router) handleListJoinedRooms(w http.ResponseWriter, req *http.Request) {
@@ -96,9 +96,9 @@ func (r *Router) handleListJoinedRooms(w http.ResponseWriter, req *http.Request)
 		return
 	}
 
-	rooms := make([]JoinedRoomItem, len(resp.Rooms))
+	rooms := make([]JoinedRoom, len(resp.Rooms))
 	for i, ur := range resp.Rooms {
-		rooms[i] = JoinedRoomItem{
+		rooms[i] = JoinedRoom{
 			ID:          ur.Room.Id,
 			Name:        ur.Room.Name,
 			ManagerID:   ur.Room.ManagerId,
@@ -155,9 +155,9 @@ func (r *Router) handleSearchRooms(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	rooms := make([]SearchedRoomItem, len(resp.Rooms))
+	rooms := make([]SearchedRoom, len(resp.Rooms))
 	for i, room := range resp.Rooms {
-		rooms[i] = SearchedRoomItem{
+		rooms[i] = SearchedRoom{
 			ID:          room.Id,
 			Name:        room.Name,
 			ManagerID:   room.ManagerId,
@@ -383,7 +383,7 @@ func (r *Router) handleListMessages(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		httpio.WriteJSON(req.Context(), w, http.StatusOK, ListMessagesResponse{
-			Messages: messageItemsFromProto(resp.Messages),
+			Messages: messagesFromProto(resp.Messages),
 		})
 		return
 	}
@@ -406,18 +406,18 @@ func (r *Router) handleListMessages(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	httpio.WriteJSON(req.Context(), w, http.StatusOK, ListMessagesResponse{
-		Messages: messageItemsFromProto(resp.Messages),
+		Messages: messagesFromProto(resp.Messages),
 	})
 }
 
-func messageItemsFromProto(msgs []*chatpb.Message) []MessageItem {
-	items := make([]MessageItem, len(msgs))
+func messagesFromProto(msgs []*chatpb.Message) []Message {
+	items := make([]Message, len(msgs))
 	for i, m := range msgs {
 		var ts int64
 		if m.Timestamp != nil {
 			ts = m.Timestamp.Seconds
 		}
-		items[i] = MessageItem{
+		items[i] = Message{
 			ID:             m.Id,
 			RoomID:         m.RoomId,
 			SenderID:       m.SenderId,
@@ -456,9 +456,9 @@ func (r *Router) handleListRoomMembers(w http.ResponseWriter, req *http.Request)
 		return
 	}
 
-	members := make([]RoomMemberItem, len(resp.Members))
+	members := make([]RoomMember, len(resp.Members))
 	for i, m := range resp.Members {
-		members[i] = RoomMemberItem{
+		members[i] = RoomMember{
 			UserID:   m.UserId,
 			Username: m.Username,
 			JoinedAt: m.JoinedAt.AsTime().Format(time.RFC3339),

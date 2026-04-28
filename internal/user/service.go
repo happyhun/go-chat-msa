@@ -213,6 +213,37 @@ func (s *Service) RevokeToken(ctx context.Context, req *pb.RevokeTokenRequest) (
 	return &pb.RevokeTokenResponse{}, nil
 }
 
+func (s *Service) BatchGetUsers(ctx context.Context, req *pb.BatchGetUsersRequest) (*pb.BatchGetUsersResponse, error) {
+	if len(req.UserIds) == 0 {
+		return &pb.BatchGetUsersResponse{}, nil
+	}
+
+	uuids := make([]pgtype.UUID, 0, len(req.UserIds))
+	for _, id := range req.UserIds {
+		uid, err := toPGUUID(id)
+		if err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "invalid user_id: %s", id)
+		}
+		uuids = append(uuids, uid)
+	}
+
+	rows, err := s.queries.GetUsersByIDs(ctx, uuids)
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to batch get users", "error", err)
+		return nil, status.Error(codes.Internal, "failed to batch get users")
+	}
+
+	users := make([]*pb.User, 0, len(rows))
+	for _, row := range rows {
+		users = append(users, &pb.User{
+			Id:        row.ID.String(),
+			Username:  row.Username,
+			CreatedAt: timestamppb.New(row.CreatedAt.Time),
+		})
+	}
+	return &pb.BatchGetUsersResponse{Users: users}, nil
+}
+
 func (s *Service) PurgeExpiredTokens(ctx context.Context) {
 	interval := s.config.Token.TokenPurgeInterval
 	ticker := time.NewTicker(interval)

@@ -1174,6 +1174,40 @@ func (s *UserSuite) TestDeleteUser_UsernameReleasedAfterPurge() {
 	s.NoError(err, "purge 후 동일 username 재가입 가능")
 }
 
+func (s *UserSuite) TestBatchGetUsers_FiltersDeleted() {
+	aliceID := s.createUser("batchalice", "")
+	bobID := s.createUser("batchbob", "")
+	charlieID := s.createUser("batchcharlie", "")
+
+	_, err := s.client.DeleteUser(s.T().Context(), &pb.DeleteUserRequest{
+		UserId:   bobID,
+		Password: "SecurePass123!",
+	})
+	s.Require().NoError(err)
+
+	res, err := s.client.BatchGetUsers(s.T().Context(), &pb.BatchGetUsersRequest{
+		UserIds: []string{aliceID, bobID, charlieID, uuid.New().String()},
+	})
+	s.Require().NoError(err)
+
+	usernames := make(map[string]string)
+	for _, u := range res.Users {
+		usernames[u.Id] = u.Username
+	}
+	s.Len(usernames, 2, "활성 사용자(alice, charlie)만 반환")
+	s.Equal("batchalice", usernames[aliceID])
+	s.Equal("batchcharlie", usernames[charlieID])
+	s.NotContains(usernames, bobID, "탈퇴자 응답 제외")
+}
+
+func (s *UserSuite) TestBatchGetUsers_EmptyInput() {
+	res, err := s.client.BatchGetUsers(s.T().Context(), &pb.BatchGetUsersRequest{
+		UserIds: []string{},
+	})
+	s.Require().NoError(err)
+	s.Empty(res.Users)
+}
+
 func (s *UserSuite) getRoom(roomID string) (string, int32, string) {
 	var name string
 	var capacity int32

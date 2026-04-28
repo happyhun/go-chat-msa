@@ -27,6 +27,7 @@ type Querier interface {
 	GetRoomMemberCount(ctx context.Context, roomID pgtype.UUID) (int64, error)
 	GetUserByID(ctx context.Context, id pgtype.UUID) (User, error)
 	GetUserByUsername(ctx context.Context, username string) (User, error)
+	GetUsersByIDs(ctx context.Context, dollar_1 []pgtype.UUID) ([]GetUsersByIDsRow, error)
 	ListJoinedRoomIDsForUpdate(ctx context.Context, userID pgtype.UUID) ([]pgtype.UUID, error)
 	ListJoinedRooms(ctx context.Context, userID pgtype.UUID) ([]ListJoinedRoomsRow, error)
 	ListRoomMembers(ctx context.Context, roomID pgtype.UUID) ([]ListRoomMembersRow, error)

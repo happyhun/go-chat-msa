@@ -211,6 +211,30 @@ export function deleteUser(password: string) {
   })
 }
 
+export interface UserSummary {
+  user_id: string
+  username: string
+}
+
+export async function batchGetUsers(ids: string[]): Promise<UserSummary[]> {
+  if (ids.length === 0) return []
+  const chunks = chunk(ids, 100)
+  const results = await Promise.all(
+    chunks.map((c) => {
+      const params = new URLSearchParams()
+      for (const id of c) params.append('ids', id)
+      return request<{ users: UserSummary[] }>(`/api/users?${params}`)
+    }),
+  )
+  return results.flatMap((r) => r.users)
+}
+
+function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = []
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size))
+  return out
+}
+
 // Rooms
 export function listJoinedRooms() {
   return request<{ rooms: import('../types').RoomInfo[] }>('/api/me/rooms')

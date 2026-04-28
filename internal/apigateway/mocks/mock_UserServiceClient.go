@@ -25,6 +25,80 @@ func (_m *MockUserServiceClient) EXPECT() *MockUserServiceClient_Expecter {
 	return &MockUserServiceClient_Expecter{mock: &_m.Mock}
 }
 
+// BatchGetUsers provides a mock function with given fields: ctx, in, opts
+func (_m *MockUserServiceClient) BatchGetUsers(ctx context.Context, in *user.BatchGetUsersRequest, opts ...grpc.CallOption) (*user.BatchGetUsersResponse, error) {
+	_va := make([]interface{}, len(opts))
+	for _i := range opts {
+		_va[_i] = opts[_i]
+	}
+	var _ca []interface{}
+	_ca = append(_ca, ctx, in)
+	_ca = append(_ca, _va...)
+	ret := _m.Called(_ca...)
+
+	if len(ret) == 0 {
+		panic("no return value specified for BatchGetUsers")
+	}
+
+	var r0 *user.BatchGetUsersResponse
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, *user.BatchGetUsersRequest, ...grpc.CallOption) (*user.BatchGetUsersResponse, error)); ok {
+		return rf(ctx, in, opts...)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, *user.BatchGetUsersRequest, ...grpc.CallOption) *user.BatchGetUsersResponse); ok {
+		r0 = rf(ctx, in, opts...)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*user.BatchGetUsersResponse)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, *user.BatchGetUsersRequest, ...grpc.CallOption) error); ok {
+		r1 = rf(ctx, in, opts...)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// MockUserServiceClient_BatchGetUsers_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'BatchGetUsers'
+type MockUserServiceClient_BatchGetUsers_Call struct {
+	*mock.Call
+}
+
+// BatchGetUsers is a helper method to define mock.On call
+//   - ctx context.Context
+//   - in *user.BatchGetUsersRequest
+//   - opts ...grpc.CallOption
+func (_e *MockUserServiceClient_Expecter) BatchGetUsers(ctx interface{}, in interface{}, opts ...interface{}) *MockUserServiceClient_BatchGetUsers_Call {
+	return &MockUserServiceClient_BatchGetUsers_Call{Call: _e.mock.On("BatchGetUsers",
+		append([]interface{}{ctx, in}, opts...)...)}
+}
+
+func (_c *MockUserServiceClient_BatchGetUsers_Call) Run(run func(ctx context.Context, in *user.BatchGetUsersRequest, opts ...grpc.CallOption)) *MockUserServiceClient_BatchGetUsers_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		variadicArgs := make([]grpc.CallOption, len(args)-2)
+		for i, a := range args[2:] {
+			if a != nil {
+				variadicArgs[i] = a.(grpc.CallOption)
+			}
+		}
+		run(args[0].(context.Context), args[1].(*user.BatchGetUsersRequest), variadicArgs...)
+	})
+	return _c
+}
+
+func (_c *MockUserServiceClient_BatchGetUsers_Call) Return(_a0 *user.BatchGetUsersResponse, _a1 error) *MockUserServiceClient_BatchGetUsers_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *MockUserServiceClient_BatchGetUsers_Call) RunAndReturn(run func(context.Context, *user.BatchGetUsersRequest, ...grpc.CallOption) (*user.BatchGetUsersResponse, error)) *MockUserServiceClient_BatchGetUsers_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // CreateRoom provides a mock function with given fields: ctx, in, opts
 func (_m *MockUserServiceClient) CreateRoom(ctx context.Context, in *user.CreateRoomRequest, opts ...grpc.CallOption) (*user.CreateRoomResponse, error) {
 	_va := make([]interface{}, len(opts))
