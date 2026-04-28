@@ -336,6 +336,14 @@ REST API(`GET /rooms/{id}/messages`)에서 `last_seq` 쿼리 파라미터 유무
 - 실시간 수신 중에는 WebSocket 메시지를 받으면서 `last_seq` 갱신
 - 재연결 시 `last_seq` 이후의 누락분을 REST API로 보충
 
+#### 메시지 작성자 표시
+
+메시지는 `senderId`만 저장하고 username은 저장하지 않습니다(정규화). 클라이언트가 메시지 페이지를 받으면 unique `sender_id`를 모아 `GET /users?ids=...`로 일괄 조회하여 user_id → username 매핑 캐시를 누적 갱신합니다(Slack/Discord 패턴).
+
+방을 떠난 사용자의 메시지도 user 본체가 살아있으면 정상적으로 username을 반환받지만, 회원탈퇴(soft-deleted) 또는 retention purge(hard-deleted)된 사용자는 응답에서 제외되어 클라이언트가 `(탈퇴한 사용자)` fallback으로 표시합니다. soft-deleted 사용자 정보는 DB 복구용으로만 남기고 외부 조회를 차단하는 정책과 일치합니다.
+
+대안으로 메시지에 username을 박제(비정규화)하는 패턴도 있으나, 본 프로젝트는 username 변경 기능이 없어 비정규화 이득이 없고 정규화가 변경 범위가 작습니다.
+
 ### 2.9 설정 관리
 
 공통 설정 타입은 `internal/shared/config` 패키지에서 일괄 정의하고, 각 서비스는 이를 가져다 조합합니다.

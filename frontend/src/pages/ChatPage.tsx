@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
-import { listMessages, listRoomMembers, listJoinedRooms, ApiError } from '../api/client'
+import { batchGetUsers, listMessages, listRoomMembers, listJoinedRooms, ApiError } from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import { useWebSocket } from '../hooks/useWebSocket'
 import type { MessageInfo, WsOutgoing } from '../types'
@@ -61,7 +61,9 @@ export default function ChatPage() {
   const [input, setInput] = useState('')
   const [disconnectReason, setDisconnectReason] = useState<DisconnectReason>(null)
   const [loading, setLoading] = useState(true)
-  const [memberMap, setMemberMap] = useState<Map<string, string>>(new Map())
+  const [userMap, setUserMap] = useState<Map<string, string>>(new Map())
+  const userMapRef = useRef(userMap)
+  const [memberIds, setMemberIds] = useState<string[]>([])
   const [managerId, setManagerId] = useState<string | null>(null)
   const [roomName, setRoomName] = useState(stateRoomName)
   const [showMembers, setShowMembers] = useState(false)
@@ -93,15 +95,40 @@ export default function ChatPage() {
     if (!roomId) return
     try {
       const data = await listRoomMembers(roomId)
-      const map = new Map<string, string>()
-      for (const m of data.members ?? []) {
-        map.set(m.user_id, m.username)
-      }
-      setMemberMap(map)
+      const members = data.members ?? []
+      setMemberIds(members.map((m) => m.user_id))
+      setUserMap((prev) => {
+        const next = new Map(prev)
+        for (const m of members) next.set(m.user_id, m.username)
+        return next
+      })
     } catch {
       // non-critical
     }
   }, [roomId])
+
+  const ensureSendersLoaded = useCallback(async (msgs: MessageInfo[]) => {
+    const senderIds = [
+      ...new Set(msgs.filter((m) => m.type === 'chat').map((m) => m.sender_id)),
+    ]
+    const missing = senderIds.filter((id) => !userMapRef.current.has(id))
+    if (missing.length === 0) return
+    try {
+      const users = await batchGetUsers(missing)
+      if (users.length === 0) return
+      setUserMap((prev) => {
+        const next = new Map(prev)
+        for (const u of users) next.set(u.user_id, u.username)
+        return next
+      })
+    } catch (err) {
+      console.warn('batchGetUsers failed:', err)
+    }
+  }, [])
+
+  useEffect(() => {
+    userMapRef.current = userMap
+  }, [userMap])
 
   const fetchRoomInfo = useCallback(async () => {
     if (!roomId) return
@@ -123,6 +150,7 @@ export default function ChatPage() {
       const data = await listMessages(roomId, maxSeqRef.current)
       const syncMsgs = (data.messages ?? []) as MessageInfo[]
       if (syncMsgs.length > 0) {
+        ensureSendersLoaded(syncMsgs)
         setMessages((prev) => {
           const merged = mergeSorted(prev, syncMsgs)
           updateMaxSeq(merged)
@@ -132,12 +160,14 @@ export default function ChatPage() {
     } catch {
       // non-critical
     }
-  }, [roomId])
+  }, [roomId, ensureSendersLoaded])
 
   const onMessage = useCallback((msg: WsOutgoing) => {
     const m = toMessageInfo(msg)
     if (m.type === 'system') {
       fetchMembers()
+    } else if (!userMapRef.current.has(m.sender_id)) {
+      ensureSendersLoaded([m])
     }
     setMessages((prev) => {
       const next = insertSorted(prev, m)
@@ -146,7 +176,7 @@ export default function ChatPage() {
       }
       return next
     })
-  }, [fetchMembers])
+  }, [fetchMembers, ensureSendersLoaded])
 
   const onConflict = useCallback(() => {
     setDisconnectReason('conflict')
@@ -185,6 +215,7 @@ export default function ChatPage() {
         const msgs = (msgData.messages ?? []).sort(
           (a, b) => a.sequence_number - b.sequence_number,
         )
+        ensureSendersLoaded(msgs)
         setMessages(msgs)
         updateMaxSeq(msgs)
         setLoading(false)
@@ -198,6 +229,7 @@ export default function ChatPage() {
             if (cancelled) return
             const syncMsgs = (sync.messages ?? []) as MessageInfo[]
             if (syncMsgs.length > 0) {
+              ensureSendersLoaded(syncMsgs)
               setMessages((prev) => {
                 const merged = mergeSorted(prev, syncMsgs)
                 updateMaxSeq(merged)
@@ -246,7 +278,7 @@ export default function ChatPage() {
     setInput('')
   }
 
-  const getUsername = (senderId: string) => memberMap.get(senderId)
+  const getUsername = (senderId: string) => userMap.get(senderId) ?? '(탈퇴한 사용자)'
 
   if (disconnectReason) {
     const info = disconnectReason === 'conflict'
@@ -287,12 +319,12 @@ export default function ChatPage() {
             <span className="font-semibold text-gray-900 text-sm truncate block">
               {roomName || '채팅방'}
             </span>
-            {memberMap.size > 0 && (
+            {memberIds.length > 0 && (
               <button
                 onClick={() => setShowMembers((v) => !v)}
                 className="text-[11px] text-gray-400 hover:text-indigo-600 transition-colors"
               >
-                {memberMap.size}명 참여 중
+                {memberIds.length}명 참여 중
               </button>
             )}
           </div>
@@ -316,7 +348,7 @@ export default function ChatPage() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="px-4 py-4 border-b border-gray-200 flex items-center justify-between">
-              <span className="text-sm font-semibold text-gray-900">멤버 ({memberMap.size})</span>
+              <span className="text-sm font-semibold text-gray-900">멤버 ({memberIds.length})</span>
               <button onClick={() => setShowMembers(false)} className="text-gray-400 hover:text-gray-600">
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -324,10 +356,10 @@ export default function ChatPage() {
               </button>
             </div>
             <div className="flex-1 overflow-y-auto">
-              {Array.from(memberMap.entries()).map(([id, name]) => (
+              {memberIds.map((id) => (
                 <div key={id} className="px-4 py-3 flex items-center justify-between border-b border-gray-50">
                   <div className="flex items-center gap-2 min-w-0">
-                    <span className="text-sm text-gray-900 truncate">{name}</span>
+                    <span className="text-sm text-gray-900 truncate">{userMap.get(id) ?? '(알 수 없음)'}</span>
                     {id === userId && (
                       <span className="text-[10px] text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded font-medium shrink-0">나</span>
                     )}
