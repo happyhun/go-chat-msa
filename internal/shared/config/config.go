@@ -86,6 +86,10 @@ type DBConfig struct {
 	MongoURI    string `mapstructure:"MONGO_URI" validate:"required"`
 }
 
+type RedisConfig struct {
+	Addr string `mapstructure:"ADDR" validate:"required"`
+}
+
 type ManagerConfig struct {
 	WriteWait   time.Duration `mapstructure:"WRITE_WAIT" validate:"required"`
 	PongWait    time.Duration `mapstructure:"PONG_WAIT" validate:"required"`

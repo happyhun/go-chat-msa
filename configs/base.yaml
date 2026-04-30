@@ -37,6 +37,10 @@ DB:
   POSTGRES_URL: "" # 오버라이드 필수
   MONGO_URI: "" # 오버라이드 필수
 
+# Redis
+REDIS:
+  ADDR: "" # 오버라이드 필수
+
 # API Gateway
 API_GATEWAY:
   SERVER:
