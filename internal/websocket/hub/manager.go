@@ -39,7 +39,7 @@ type Manager struct {
 	sessionCfg  sessionConfig
 	idleTimeout time.Duration
 	store       MessageStore
-	limiter     *ratelimit.Limiter
+	limiter     *ratelimit.MemoryLimiter
 
 	registerCh   chan registerReq
 	broadcastCh  chan *Message
@@ -56,7 +56,7 @@ func NewManager(
 	rateCfg config.RateLimitConfig,
 	store MessageStore,
 ) *Manager {
-	limiter := ratelimit.New(
+	limiter := ratelimit.NewMemory(
 		rateCfg.RPS,
 		rateCfg.Burst,
 		rateCfg.TTL,

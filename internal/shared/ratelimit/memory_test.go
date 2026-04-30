@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestTokenBucketLimiter_Allow(t *testing.T) {
+func TestMemoryLimiter_Allow(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -54,7 +54,7 @@ func TestTokenBucketLimiter_Allow(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			limiter := New(tt.rps, tt.burst, tt.ttl)
+			limiter := NewMemory(tt.rps, tt.burst, tt.ttl)
 			defer limiter.Stop()
 
 			key := "user1"
@@ -72,7 +72,7 @@ func TestTokenBucketLimiter_Allow(t *testing.T) {
 	}
 }
 
-func TestTokenBucketLimiter_KeyIsolation(t *testing.T) {
+func TestMemoryLimiter_KeyIsolation(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -86,7 +86,7 @@ func TestTokenBucketLimiter_KeyIsolation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			limiter := New(10, 2, time.Minute)
+			limiter := NewMemory(10, 2, time.Minute)
 			defer limiter.Stop()
 
 			limiter.Allow("key-a")
@@ -98,7 +98,7 @@ func TestTokenBucketLimiter_KeyIsolation(t *testing.T) {
 	}
 }
 
-func TestTokenBucketLimiter_Concurrency(t *testing.T) {
+func TestMemoryLimiter_Concurrency(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -116,7 +116,7 @@ func TestTokenBucketLimiter_Concurrency(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			limiter := New(100, tt.burst, time.Hour)
+			limiter := NewMemory(100, tt.burst, time.Hour)
 			defer limiter.Stop()
 
 			var wg sync.WaitGroup

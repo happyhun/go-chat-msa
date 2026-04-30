@@ -24,8 +24,8 @@ type Router struct {
 	chatClient chatpb.ChatServiceClient
 	httpClient *http.Client
 
-	publicLimiter        *ratelimit.Limiter
-	authenticatedLimiter *ratelimit.Limiter
+	publicLimiter        *ratelimit.MemoryLimiter
+	authenticatedLimiter *ratelimit.MemoryLimiter
 
 	wg sync.WaitGroup
 }
@@ -46,12 +46,12 @@ func NewRouter(cfg *Config, userClient userpb.UserServiceClient, chatClient chat
 			Transport: tr,
 			Timeout:   cfg.APIGateway.HTTPClient.Timeout,
 		},
-		publicLimiter: ratelimit.New(
+		publicLimiter: ratelimit.NewMemory(
 			cfg.APIGateway.RateLimit.Public.RPS,
 			cfg.APIGateway.RateLimit.Public.Burst,
 			cfg.APIGateway.RateLimit.Public.TTL,
 		),
-		authenticatedLimiter: ratelimit.New(
+		authenticatedLimiter: ratelimit.NewMemory(
 			cfg.APIGateway.RateLimit.Authenticated.RPS,
 			cfg.APIGateway.RateLimit.Authenticated.Burst,
 			cfg.APIGateway.RateLimit.Authenticated.TTL,

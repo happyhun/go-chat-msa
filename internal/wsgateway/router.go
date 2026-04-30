@@ -23,8 +23,8 @@ type Router struct {
 	transport          *http.Transport
 	hashRing           *loadbalance.HashRing
 	ticketStore        *TicketStore
-	publicLimiter      *ratelimit.Limiter
-	wsEstablishLimiter *ratelimit.Limiter
+	publicLimiter      *ratelimit.MemoryLimiter
+	wsEstablishLimiter *ratelimit.MemoryLimiter
 
 	mu      sync.RWMutex
 	proxies map[string]*httputil.ReverseProxy
@@ -44,12 +44,12 @@ func NewRouter(cfg *Config, hashRing *loadbalance.HashRing) *Router {
 		transport:      tr,
 		proxies:        make(map[string]*httputil.ReverseProxy),
 		ticketStore: NewTicketStore(),
-		publicLimiter: ratelimit.New(
+		publicLimiter: ratelimit.NewMemory(
 			cfg.WSGateway.RateLimit.Public.RPS,
 			cfg.WSGateway.RateLimit.Public.Burst,
 			cfg.WSGateway.RateLimit.Public.TTL,
 		),
-		wsEstablishLimiter: ratelimit.New(
+		wsEstablishLimiter: ratelimit.NewMemory(
 			cfg.WSGateway.RateLimit.WSEstablish.RPS,
 			cfg.WSGateway.RateLimit.WSEstablish.Burst,
 			cfg.WSGateway.RateLimit.WSEstablish.TTL,
