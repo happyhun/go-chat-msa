@@ -153,7 +153,7 @@ func TestRouter_ProxyWebSocket(t *testing.T) {
 		name         string
 		ticket       string
 		roomID       string
-		setup        func(r *Router)
+		setup        func(t *testing.T, r *Router)
 		expectedCode int
 	}{
 		{
@@ -167,16 +167,16 @@ func TestRouter_ProxyWebSocket(t *testing.T) {
 		},
 		{
 			name: "Failure: 프록시 요청 시 룸 ID 누락",
-			setup: func(r *Router) {
-				r.ticketStore.Set("temp-ticket-456", "user-456", time.Minute)
+			setup: func(t *testing.T, r *Router) {
+				require.NoError(t, r.ticketStore.Set(t.Context(), "temp-ticket-456", "user-456", time.Minute))
 			},
 			ticket:       "temp-ticket-456",
 			expectedCode: http.StatusBadRequest,
 		},
 		{
 			name: "Failure: 룸 페어링을 위한 노드를 찾을 수 없음",
-			setup: func(r *Router) {
-				r.ticketStore.Set("ticket-no-node", "user-123", time.Minute)
+			setup: func(t *testing.T, r *Router) {
+				require.NoError(t, r.ticketStore.Set(t.Context(), "ticket-no-node", "user-123", time.Minute))
 				r.hashRing = loadbalance.New([]string{})
 			},
 			ticket:       "ticket-no-node",
@@ -185,8 +185,8 @@ func TestRouter_ProxyWebSocket(t *testing.T) {
 		},
 		{
 			name: "Success: 웹소켓 연결 프록시 시도",
-			setup: func(r *Router) {
-				r.ticketStore.Set("valid-ticket-123", "user-123", time.Minute)
+			setup: func(t *testing.T, r *Router) {
+				require.NoError(t, r.ticketStore.Set(t.Context(), "valid-ticket-123", "user-123", time.Minute))
 			},
 			ticket:       "valid-ticket-123",
 			roomID:       "test-room",
@@ -199,7 +199,7 @@ func TestRouter_ProxyWebSocket(t *testing.T) {
 			t.Parallel()
 			r := testRouter(t, loadbalance.New([]string{"node1"}))
 			if tt.setup != nil {
-				tt.setup(r)
+				tt.setup(t, r)
 			}
 
 			url := "/ws"

@@ -46,7 +46,7 @@ func NewRouter(cfg *Config, hashRing *loadbalance.HashRing, redisClient *redis.C
 		hashRing:       hashRing,
 		transport:      tr,
 		proxies:        make(map[string]*httputil.ReverseProxy),
-		ticketStore:    NewTicketStore(),
+		ticketStore:    NewTicketStore(redisClient),
 		publicLimiter: ratelimit.NewRedis(
 			redisClient,
 			int(math.Ceil(cfg.WSGateway.RateLimit.Public.RPS)),
@@ -65,7 +65,6 @@ func NewRouter(cfg *Config, hashRing *loadbalance.HashRing, redisClient *redis.C
 }
 
 func (r *Router) Stop() {
-	r.ticketStore.Stop()
 }
 
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
