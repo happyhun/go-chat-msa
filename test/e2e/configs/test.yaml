@@ -25,7 +25,32 @@ REDIS:
 API_GATEWAY:
   CORS:
     ALLOWED_ORIGINS: ["*"]
+  RATE_LIMIT:
+    PUBLIC:
+      RPS: 10
+      BURST: 15
+      TTL: "1h"
+    AUTHENTICATED:
+      RPS: 10
+      BURST: 30
+      TTL: "1h"
 
 WS_GATEWAY:
   CORS:
     ALLOWED_ORIGINS: ["*"]
+  RATE_LIMIT:
+    PUBLIC:
+      RPS: 10
+      BURST: 20
+      TTL: "1h"
+    WS_ESTABLISH:
+      RPS: 4
+      BURST: 10
+      TTL: "1h"
+
+WEBSOCKET:
+  RATE_LIMIT:
+    WS_MESSAGE:
+      RPS: 4
+      BURST: 10
+      TTL: "1h"
