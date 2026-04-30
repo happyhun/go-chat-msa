@@ -17,7 +17,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/mongodb"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
-	tcredis "github.com/testcontainers/testcontainers-go/modules/redis"
+	"github.com/testcontainers/testcontainers-go/modules/redis"
 	"github.com/testcontainers/testcontainers-go/network"
 	"github.com/testcontainers/testcontainers-go/wait"
 	"gopkg.in/yaml.v3"
@@ -29,7 +29,7 @@ type E2ESuite struct {
 	net               *testcontainers.DockerNetwork
 	postgres          *postgres.PostgresContainer
 	mongo             *mongodb.MongoDBContainer
-	redis             *tcredis.RedisContainer
+	redis             *redis.RedisContainer
 	userService       testcontainers.Container
 	chatService       testcontainers.Container
 	apiGateway        testcontainers.Container
@@ -215,7 +215,7 @@ func (s *E2ESuite) runMongo(ctx context.Context, cfg ServiceConfig) *mongodb.Mon
 	return c
 }
 
-func (s *E2ESuite) runRedis(ctx context.Context, cfg ServiceConfig) *tcredis.RedisContainer {
+func (s *E2ESuite) runRedis(ctx context.Context, cfg ServiceConfig) *redis.RedisContainer {
 	envMap := make(map[string]string)
 	for _, env := range cfg.Environment {
 		parts := strings.SplitN(env, "=", 2)
@@ -224,7 +224,7 @@ func (s *E2ESuite) runRedis(ctx context.Context, cfg ServiceConfig) *tcredis.Red
 		}
 	}
 
-	c, err := tcredis.Run(ctx, cfg.Image,
+	c, err := redis.Run(ctx, cfg.Image,
 		network.WithNetwork([]string{"redis"}, s.net),
 		testcontainers.WithEnv(envMap),
 	)
