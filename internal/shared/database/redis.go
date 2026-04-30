@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/redis/go-redis/extra/redisotel/v9"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -16,6 +17,15 @@ func NewRedis(addr string) (*redis.Client, error) {
 	if err := client.Ping(ctx).Err(); err != nil {
 		_ = client.Close()
 		return nil, fmt.Errorf("unable to ping redis: %w", err)
+	}
+
+	if err := redisotel.InstrumentTracing(client); err != nil {
+		_ = client.Close()
+		return nil, fmt.Errorf("unable to instrument redis tracing: %w", err)
+	}
+	if err := redisotel.InstrumentMetrics(client); err != nil {
+		_ = client.Close()
+		return nil, fmt.Errorf("unable to instrument redis metrics: %w", err)
 	}
 
 	return client, nil

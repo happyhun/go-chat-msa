@@ -68,6 +68,7 @@ func run(ctx context.Context) error {
 		return err
 	}
 	defer redisClient.Close()
+	telemetry.RegisterRedisPoolMetrics(redisClient)
 
 	hashRing := loadbalance.New(cfg.Registry.WebSocketEndpoints)
 	router := wsgateway.NewRouter(cfg, hashRing, redisClient)
