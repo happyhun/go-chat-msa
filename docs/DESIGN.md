@@ -23,6 +23,7 @@
 - 데이터:
   - PostgreSQL: `jackc/pgx/v5`
   - MongoDB: `go.mongodb.org/mongo-driver`
+  - Redis: `redis/go-redis/v9`
 - 인증/보안:
   - 토큰: `golang-jwt/jwt/v5`
   - 암호화: `golang.org/x/crypto`
@@ -137,9 +138,9 @@ DB 유출에 대비하여 원본이 아닌 SHA-256 해시만 저장합니다.
 
 WebSocket은 `Authorization` 헤더를 지원하지 않아 URL 쿼리 파라미터로 인증 정보를 전달해야 합니다. JWT를 직접 URL에 노출하면 서버 로그, 브라우저 히스토리 등에 토큰이 남는 보안 위험이 있습니다.
 
-이를 피하기 위해 연결 전에 UUID opaque token으로 30초 TTL의 일회성 티켓을 발급합니다. 티켓은 사용 즉시 삭제(`GetAndDelete`)되며, 만료 시 타이머가 자동으로 제거합니다.
+이를 피하기 위해 연결 전에 UUID opaque token으로 30초 TTL의 일회성 티켓을 발급합니다. 티켓은 Redis에 `ws:ticket:{uuid}` 키로 저장되며, 사용 즉시 원자적으로 소비됩니다. TTL 만료는 Redis가 자동 처리합니다.
 
-현재 in-memory 저장이라 ws-gateway가 단일 인스턴스일 때만 유효하며, 수평 확장 시 공유 저장소가 필요합니다.
+ws-gateway 수평 확장 시에도 모든 인스턴스가 같은 Redis를 공유하므로 티켓 발급/검증의 정합성이 보장됩니다.
 
 #### 내부 통신 시크릿
 
@@ -151,7 +152,7 @@ ws-gateway는 공개 엔드포인트(`/ws/ticket`, `/ws`)와 내부 엔드포인
 
 ### 2.3 처리율 제한 전략
 
-무차별 대입, API 오남용, 도배 등을 방어하기 위해 Token Bucket 알고리즘 기반의 처리율 제한을 적용합니다. 초과 시 429(Too Many Requests)로 거부합니다. 내부 통신 경로(`/internal/*`)는 제한 대상에서 제외합니다.
+무차별 대입, API 오남용, 도배 등을 방어하기 위해 Token Bucket 계열 알고리즘으로 처리율 제한을 적용합니다. 초과 시 429(Too Many Requests)로 거부합니다. 내부 통신 경로(`/internal/*`)는 제한 대상에서 제외합니다. 키 타입은 `string`으로 통일하고, 호출자가 용도에 맞게 키를 포맷합니다. (Client IP, User ID, `userID:roomID` 등)
 
 #### HTTP 미들웨어 (api-gateway, ws-gateway)
 
@@ -163,19 +164,17 @@ ws-gateway는 공개 엔드포인트(`/ws/ticket`, `/ws`)와 내부 엔드포인
 
 익명 정책의 클라이언트 IP는 `X-Forwarded-For` 헤더의 첫 번째 값에서 추출합니다. (운영 환경에서는 Trusted Proxy 기반 파싱 필요)
 
+다중 인스턴스 간 카운트 정합성을 보장하기 위해 `redis_rate/v10`(GCRA 알고리즘 + Lua 스크립트)을 사용합니다. Redis 장애 시 미들웨어는 fail-open(요청 통과 + warn log)으로 동작하여 일시 장애가 서비스 다운으로 번지는 것을 방지합니다.
+
 #### WebSocket 세션 (websocket-service)
 
 | 정책 | 기준 키 | 방어 목적 | RPS / Burst | TTL |
 | :--- | :--- | :--- | :--- | :--- |
 | 세션 내부 | User ID + Room ID | 도배 억제 | 2 / 5 | 1h |
 
-HTTP 미들웨어가 아닌 WebSocket `readPump` 안에서 메시지 단위로 동작합니다.
+HTTP 미들웨어가 아닌 WebSocket `readPump` 안에서 메시지 단위로 동작합니다. 같은 채팅방의 세션이 Consistent Hashing으로 한 노드에 모이는 어피니티 덕분에 노드 간 동기화가 불필요합니다.
 
-#### Token Bucket 구현
-
-키 타입은 `string`으로 통일하고, 호출자가 용도에 맞게 키를 포맷합니다. (Client IP, User ID, `userID:roomID` 등)
-
-단일 락 병목을 피하기 위해 `hash/maphash`로 키를 해싱하여 64개 샤드에 분배하고, 샤드별 `sync.Mutex`로 락 경합을 줄입니다. 비활성 버킷은 TTL 기반으로 주기적으로 정리합니다.
+메시지 hot path latency를 우선하여 인메모리 토큰 버킷을 사용합니다. 단일 락 병목을 피하기 위해 `hash/maphash`로 키를 해싱하여 64개 샤드에 분배하고, 샤드별 `sync.Mutex`로 락 경합을 줄입니다. 비활성 버킷은 TTL 기반으로 주기적으로 정리합니다.
 
 ### 2.4 데이터 모델 및 인덱스 전략
 
@@ -521,11 +520,15 @@ PK는 애플리케이션에서 UUID v7로 생성합니다. v4 대신 v7을 선�
 
 ### 5.2 메트릭
 
-OTel Metrics SDK로 계측하고 OTLP로 Alloy에 push합니다. Alloy가 Prometheus에 remote write합니다. 커스텀 미들웨어/인터셉터/래퍼로 계측합니다.
+OTel Metrics SDK로 계측하고 OTLP로 Alloy에 push합니다. Alloy가 Prometheus에 remote write합니다. 커스텀 미들웨어/인터셉터/래퍼로 계측하되, Redis는 라이브러리(`redisotel`) 자동 계측을 사용합니다.
+
+PostgreSQL/MongoDB는 메트릭 컨벤션 통일(`gochat_*` prefix, `operation`/`status` 라벨)과 트레이스의 민감 파라미터(`db.statement`에 들어가는 원본 SQL/aggregation pipeline) 노출 통제를 위해 직접 래핑합니다. Redis는 명령(GET/SET 등)이 짧고 표준 enum이라 라이브러리 자동 attribute가 그대로 노출돼도 위험이 작아 `redisotel`을 그대로 채택했습니다.
 
 - HTTP: 요청 수, 지연 시간, 상태 코드
 - gRPC: 서버/클라이언트 양쪽 요청 수, 지연 시간, 상태 코드
-- DB: 쿼리 수, 지연 시간 (PostgreSQL, MongoDB 래퍼)
+- PostgreSQL: 쿼리 수, 지연 시간, Pool stats (커스텀 래퍼)
+- MongoDB: 쿼리 수, 지연 시간, Pool stats (커스텀 래퍼)
+- Redis: Pool stats (`redisotel.InstrumentMetrics` 자동). 명령별 latency는 트레이스로 확인
 - WebSocket: 세션, 메시지, 저장 파이프라인 지표
 - User: 인증, Bcrypt 워커 풀 지표
 - Chat: 메시지 저장, 조회 지표
@@ -536,8 +539,9 @@ OTel Metrics SDK로 계측하고 OTLP로 Alloy에 push합니다. Alloy가 Promet
 
 OpenTelemetry SDK로 계측하고, `traceparent` 헤더(W3C 표준)로 서비스 간 `trace_id`를 전파합니다.
 
-- HTTP/gRPC는 OTel 미들웨어(`otelhttp`, `otelgrpc`)가 스팬을 자동 생성
-- DB 쿼리는 커스텀 래퍼로 개별 스팬 기록
+- HTTP/gRPC: OTel 미들웨어(`otelhttp`, `otelgrpc`)가 자동 스팬 생성
+- PostgreSQL/MongoDB: 커스텀 래퍼로 개별 쿼리 스팬 기록
+- Redis: `redisotel.InstrumentTracing`으로 명령별 자동 스팬 생성
 - 10% 샘플링으로 저장 비용과 부하 최소화
 - 헬스체크, 메트릭 엔드포인트 스팬은 Alloy 수집 단계에서 필터링
 

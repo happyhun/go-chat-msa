@@ -29,9 +29,9 @@ Grafana Full Stack 기반 관측성 구성. Profiles를 제외한 시그널은 G
 
 | 서비스 | Logs | Metrics | Traces |
 |--------|------|---------|--------|
-| api-gateway | HTTP | HTTP, gRPC Client | HTTP, gRPC Client |
-| ws-gateway | HTTP | HTTP, Routing | HTTP |
-| websocket-service | HTTP | HTTP, WebSocket, Persistence | HTTP, gRPC Client |
+| api-gateway | HTTP | HTTP, gRPC Client, Redis | HTTP, gRPC Client, Redis |
+| ws-gateway | HTTP | HTTP, Routing, Redis | HTTP, Redis |
+| websocket-service | HTTP | HTTP, WebSocket, Persistence, gRPC Client | HTTP, gRPC Client |
 | user-service | gRPC | gRPC Server, PostgreSQL, Domain | gRPC Server, PostgreSQL |
 | chat-service | gRPC | gRPC Server, MongoDB, Domain | gRPC Server, MongoDB |
 | retention-worker | Cron | Retention | - |
@@ -198,6 +198,28 @@ Grafana Full Stack 기반 관측성 구성. Profiles를 제외한 시그널은 G
 
 - 서비스: chat-service
 
+### Redis
+
+`redisotel.InstrumentMetrics`로 OTel semantic convention 기반 풀 메트릭이 자동 등록됩니다. 이름은 Alloy를 거치며 점→언더스코어 변환되고, 모든 메트릭에 공통 라벨 `db_system="redis"`가 부착됩니다.
+
+| 메트릭 | 타입 | 라벨 |
+|--------|------|------|
+| db_client_connections_idle_max | gauge | - |
+| db_client_connections_idle_min | gauge | - |
+| db_client_connections_max | gauge | - |
+| db_client_connections_usage | gauge | state(idle/used) |
+| db_client_connections_waits | gauge | - |
+| db_client_connections_waits_duration_nanoseconds | gauge | - |
+| db_client_connections_timeouts | gauge | - |
+| db_client_connections_hits | gauge | - |
+| db_client_connections_misses | gauge | - |
+| db_client_connections_create_time_milliseconds | histogram | status, error_type |
+| db_client_connections_use_time_milliseconds | histogram | type(command/pipeline), status, error_type |
+
+명령별(GET, SET 등) latency는 메트릭이 아닌 트레이스(`redisotel.InstrumentTracing`의 span attribute)로 확인합니다. Prometheus 컨벤션은 base unit(`_seconds`)을 권장하지만 redisotel은 `_milliseconds`/`_nanoseconds`로 노출하는 라이브러리 한계가 있습니다.
+
+- 서비스: api-gateway, ws-gateway
+
 ### Domain
 
 | 메트릭 | 타입 | 라벨 | 서비스 |
@@ -343,6 +365,7 @@ Grafana Full Stack 기반 관측성 구성. Profiles를 제외한 시그널은 G
 | HTTP 서버 | otelhttp.NewMiddleware | api-gateway, ws-gateway, websocket-service |
 | gRPC 서버 | otelgrpc.NewServerHandler | user-service, chat-service |
 | gRPC 클라이언트 | otelgrpc.NewClientHandler | api-gateway, websocket-service |
+| Redis 클라이언트 | redisotel.InstrumentTracing | api-gateway, ws-gateway |
 
 ### Manual
 
