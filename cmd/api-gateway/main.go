@@ -80,7 +80,6 @@ func run(ctx context.Context) error {
 		return err
 	}
 	defer redisClient.Close()
-	telemetry.RegisterRedisPoolMetrics(redisClient)
 
 	router := apigateway.NewRouter(cfg, userClient, chatClient, redisClient)
 
