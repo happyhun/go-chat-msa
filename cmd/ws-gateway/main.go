@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"go-chat-msa/internal/shared/config"
+	"go-chat-msa/internal/shared/database"
 	"go-chat-msa/internal/shared/logger"
 	"go-chat-msa/internal/shared/middleware"
 	"go-chat-msa/internal/shared/telemetry"
@@ -62,8 +63,14 @@ func run(ctx context.Context) error {
 		}
 	}
 
+	redisClient, err := database.NewRedis(cfg.Redis.Addr)
+	if err != nil {
+		return err
+	}
+	defer redisClient.Close()
+
 	hashRing := loadbalance.New(cfg.Registry.WebSocketEndpoints)
-	router := wsgateway.NewRouter(cfg, hashRing)
+	router := wsgateway.NewRouter(cfg, hashRing, redisClient)
 
 	return runServer(ctx, cfg, router)
 }

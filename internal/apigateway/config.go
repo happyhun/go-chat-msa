@@ -15,6 +15,7 @@ type Config struct {
 	JWT         config.JWTConfig       `mapstructure:"JWT"         validate:"required"`
 	Internal    config.InternalConfig  `mapstructure:"INTERNAL"    validate:"required"`
 	UserService config.UserConfig      `mapstructure:"USER_SERVICE" validate:"required"`
+	Redis       config.RedisConfig     `mapstructure:"REDIS"       validate:"required"`
 }
 
 type GatewayConfig struct {

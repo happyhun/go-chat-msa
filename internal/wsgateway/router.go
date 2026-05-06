@@ -2,6 +2,7 @@ package wsgateway
 
 import (
 	"log/slog"
+	"math"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -12,6 +13,8 @@ import (
 	"go-chat-msa/internal/shared/middleware"
 	"go-chat-msa/internal/shared/ratelimit"
 	"go-chat-msa/internal/wsgateway/loadbalance"
+
+	"github.com/redis/go-redis/v9"
 )
 
 type Router struct {
@@ -23,14 +26,14 @@ type Router struct {
 	transport          *http.Transport
 	hashRing           *loadbalance.HashRing
 	ticketStore        *TicketStore
-	publicLimiter      *ratelimit.Limiter
-	wsEstablishLimiter *ratelimit.Limiter
+	publicLimiter      *ratelimit.RedisLimiter
+	wsEstablishLimiter *ratelimit.RedisLimiter
 
 	mu      sync.RWMutex
 	proxies map[string]*httputil.ReverseProxy
 }
 
-func NewRouter(cfg *Config, hashRing *loadbalance.HashRing) *Router {
+func NewRouter(cfg *Config, hashRing *loadbalance.HashRing, redisClient *redis.Client) *Router {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.MaxIdleConns = cfg.WSGateway.HTTPClient.MaxIdleConns
 	tr.MaxIdleConnsPerHost = cfg.WSGateway.HTTPClient.MaxIdleConnsPerHost
@@ -43,16 +46,16 @@ func NewRouter(cfg *Config, hashRing *loadbalance.HashRing) *Router {
 		hashRing:       hashRing,
 		transport:      tr,
 		proxies:        make(map[string]*httputil.ReverseProxy),
-		ticketStore: NewTicketStore(),
-		publicLimiter: ratelimit.New(
-			cfg.WSGateway.RateLimit.Public.RPS,
+		ticketStore:    NewTicketStore(redisClient),
+		publicLimiter: ratelimit.NewRedis(
+			redisClient,
+			int(math.Ceil(cfg.WSGateway.RateLimit.Public.RPS)),
 			cfg.WSGateway.RateLimit.Public.Burst,
-			cfg.WSGateway.RateLimit.Public.TTL,
 		),
-		wsEstablishLimiter: ratelimit.New(
-			cfg.WSGateway.RateLimit.WSEstablish.RPS,
+		wsEstablishLimiter: ratelimit.NewRedis(
+			redisClient,
+			int(math.Ceil(cfg.WSGateway.RateLimit.WSEstablish.RPS)),
 			cfg.WSGateway.RateLimit.WSEstablish.Burst,
-			cfg.WSGateway.RateLimit.WSEstablish.TTL,
 		),
 	}
 
@@ -62,9 +65,6 @@ func NewRouter(cfg *Config, hashRing *loadbalance.HashRing) *Router {
 }
 
 func (r *Router) Stop() {
-	r.ticketStore.Stop()
-	r.publicLimiter.Stop()
-	r.wsEstablishLimiter.Stop()
 }
 
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {

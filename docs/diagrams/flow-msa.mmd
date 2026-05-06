@@ -33,6 +33,7 @@ flowchart TB
         direction LR
         PG[("PostgreSQL")]
         MG[("MongoDB")]
+        RD[("Redis")]
     end
 
     subgraph Observability ["Observability Layer"]
@@ -63,6 +64,8 @@ flowchart TB
 
     US --> PG
     CS --> MG
+    AGW --> RD
+    WSGW --> RD
     RW -- "Purge Cron" --> PG
 
     Alloy -. "pull: logs" .-> Services

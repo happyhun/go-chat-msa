@@ -1,61 +1,42 @@
 package wsgateway
 
 import (
-	"sync"
+	"context"
+	"errors"
+	"fmt"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
-type ticketEntry struct {
-	userID string
-	timer  *time.Timer
-}
+const ticketKeyPrefix = "ws:ticket:"
 
 type TicketStore struct {
-	mu      sync.Mutex
-	tickets map[string]ticketEntry
+	client *redis.Client
 }
 
-func NewTicketStore() *TicketStore {
-	return &TicketStore{
-		tickets: make(map[string]ticketEntry),
+func NewTicketStore(client *redis.Client) *TicketStore {
+	return &TicketStore{client: client}
+}
+
+func (s *TicketStore) Set(ctx context.Context, ticket, userID string, ttl time.Duration) error {
+	ok, err := s.client.SetNX(ctx, ticketKeyPrefix+ticket, userID, ttl).Result()
+	if err != nil {
+		return fmt.Errorf("unable to set ticket: %w", err)
 	}
-}
-
-func (s *TicketStore) Set(ticket, userID string, ttl time.Duration) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if old, ok := s.tickets[ticket]; ok {
-		old.timer.Stop()
-	}
-
-	timer := time.AfterFunc(ttl, func() {
-		s.mu.Lock()
-		delete(s.tickets, ticket)
-		s.mu.Unlock()
-	})
-	s.tickets[ticket] = ticketEntry{userID: userID, timer: timer}
-}
-
-func (s *TicketStore) GetAndDelete(ticket string) (string, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	entry, ok := s.tickets[ticket]
 	if !ok {
-		return "", false
+		return errors.New("ticket already exists")
 	}
-	entry.timer.Stop()
-	delete(s.tickets, ticket)
-	return entry.userID, true
+	return nil
 }
 
-func (s *TicketStore) Stop() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	for ticket, entry := range s.tickets {
-		entry.timer.Stop()
-		delete(s.tickets, ticket)
+func (s *TicketStore) GetAndDelete(ctx context.Context, ticket string) (string, bool, error) {
+	userID, err := s.client.GetDel(ctx, ticketKeyPrefix+ticket).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", false, nil
 	}
+	if err != nil {
+		return "", false, fmt.Errorf("unable to get and delete ticket: %w", err)
+	}
+	return userID, true, nil
 }

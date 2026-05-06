@@ -18,7 +18,7 @@ type shard struct {
 	m map[string]*bucket
 }
 
-type Limiter struct {
+type MemoryLimiter struct {
 	rps         float64
 	burst       float64
 	ttl         time.Duration
@@ -29,8 +29,8 @@ type Limiter struct {
 	wg          sync.WaitGroup
 }
 
-func New(rps float64, burst int, ttl time.Duration) *Limiter {
-	l := &Limiter{
+func NewMemory(rps float64, burst int, ttl time.Duration) *MemoryLimiter {
+	l := &MemoryLimiter{
 		rps:         rps,
 		burst:       float64(burst),
 		ttl:         ttl,
@@ -53,7 +53,7 @@ func New(rps float64, burst int, ttl time.Duration) *Limiter {
 	return l
 }
 
-func (l *Limiter) Allow(key string) bool {
+func (l *MemoryLimiter) Allow(key string) bool {
 	now := time.Now()
 	hash := maphash.String(l.seed, key)
 	s := l.shards[hash%uint64(len(l.shards))]
@@ -85,7 +85,7 @@ func (l *Limiter) Allow(key string) bool {
 	return false
 }
 
-func (l *Limiter) Stop() {
+func (l *MemoryLimiter) Stop() {
 	if l.ttl > 0 {
 		l.stopOnce.Do(func() {
 			close(l.stopJanitor)
@@ -94,7 +94,7 @@ func (l *Limiter) Stop() {
 	}
 }
 
-func (l *Limiter) janitor() {
+func (l *MemoryLimiter) janitor() {
 	defer l.wg.Done()
 
 	interval := max(min(l.ttl/2, 10*time.Minute), time.Second)
@@ -112,7 +112,7 @@ func (l *Limiter) janitor() {
 	}
 }
 
-func (l *Limiter) sweep(now time.Time) {
+func (l *MemoryLimiter) sweep(now time.Time) {
 	for _, s := range l.shards {
 		s.Lock()
 		for k, b := range s.m {

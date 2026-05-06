@@ -13,6 +13,8 @@ import (
 	"go-chat-msa/internal/shared/config"
 	"go-chat-msa/internal/wsgateway/loadbalance"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -31,6 +33,10 @@ func testConfig() *Config {
 				MaxIdleConnsPerHost: 100,
 			},
 			TicketTTL: 30 * time.Second,
+			RateLimit: RateLimitConfig{
+				Public:      config.RateLimitConfig{RPS: 1000, Burst: 1000, TTL: time.Hour},
+				WSEstablish: config.RateLimitConfig{RPS: 1000, Burst: 1000, TTL: time.Hour},
+			},
 		},
 		Internal: config.InternalConfig{
 			Secret: testInternalSecret,
@@ -41,10 +47,17 @@ func testConfig() *Config {
 	}
 }
 
+func testRouter(t *testing.T, hashRing *loadbalance.HashRing) *Router {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	return NewRouter(testConfig(), hashRing, client)
+}
+
 func TestRouter_HandleInternalBroadcast(t *testing.T) {
 	t.Parallel()
-	hashRing := loadbalance.New([]string{"node1", "node2"})
-	r := NewRouter(testConfig(), hashRing)
+	r := testRouter(t, loadbalance.New([]string{"node1", "node2"}))
 
 	tests := []struct {
 		name         string
@@ -88,8 +101,7 @@ func TestRouter_HandleInternalBroadcast(t *testing.T) {
 
 func TestRouter_HandleWSTicket(t *testing.T) {
 	t.Parallel()
-	hashRing := loadbalance.New([]string{"node1"})
-	r := NewRouter(testConfig(), hashRing)
+	r := testRouter(t, loadbalance.New([]string{"node1"}))
 
 	tests := []struct {
 		name         string
@@ -141,7 +153,7 @@ func TestRouter_ProxyWebSocket(t *testing.T) {
 		name         string
 		ticket       string
 		roomID       string
-		setup        func(r *Router)
+		setup        func(t *testing.T, r *Router)
 		expectedCode int
 	}{
 		{
@@ -155,16 +167,16 @@ func TestRouter_ProxyWebSocket(t *testing.T) {
 		},
 		{
 			name: "Failure: 프록시 요청 시 룸 ID 누락",
-			setup: func(r *Router) {
-				r.ticketStore.Set("temp-ticket-456", "user-456", time.Minute)
+			setup: func(t *testing.T, r *Router) {
+				require.NoError(t, r.ticketStore.Set(t.Context(), "temp-ticket-456", "user-456", time.Minute))
 			},
 			ticket:       "temp-ticket-456",
 			expectedCode: http.StatusBadRequest,
 		},
 		{
 			name: "Failure: 룸 페어링을 위한 노드를 찾을 수 없음",
-			setup: func(r *Router) {
-				r.ticketStore.Set("ticket-no-node", "user-123", time.Minute)
+			setup: func(t *testing.T, r *Router) {
+				require.NoError(t, r.ticketStore.Set(t.Context(), "ticket-no-node", "user-123", time.Minute))
 				r.hashRing = loadbalance.New([]string{})
 			},
 			ticket:       "ticket-no-node",
@@ -173,8 +185,8 @@ func TestRouter_ProxyWebSocket(t *testing.T) {
 		},
 		{
 			name: "Success: 웹소켓 연결 프록시 시도",
-			setup: func(r *Router) {
-				r.ticketStore.Set("valid-ticket-123", "user-123", time.Minute)
+			setup: func(t *testing.T, r *Router) {
+				require.NoError(t, r.ticketStore.Set(t.Context(), "valid-ticket-123", "user-123", time.Minute))
 			},
 			ticket:       "valid-ticket-123",
 			roomID:       "test-room",
@@ -185,10 +197,9 @@ func TestRouter_ProxyWebSocket(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			hashRing := loadbalance.New([]string{"node1"})
-			r := NewRouter(testConfig(), hashRing)
+			r := testRouter(t, loadbalance.New([]string{"node1"}))
 			if tt.setup != nil {
-				tt.setup(r)
+				tt.setup(t, r)
 			}
 
 			url := "/ws"
@@ -213,8 +224,7 @@ func TestRouter_ProxyWebSocket(t *testing.T) {
 
 func TestRouter_HandleProxyRoomRequest(t *testing.T) {
 	t.Parallel()
-	hashRing := loadbalance.New([]string{"node1"})
-	r := NewRouter(testConfig(), hashRing)
+	r := testRouter(t, loadbalance.New([]string{"node1"}))
 
 	tests := []struct {
 		name         string

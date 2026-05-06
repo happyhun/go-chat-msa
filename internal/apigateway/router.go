@@ -1,6 +1,7 @@
 package apigateway
 
 import (
+	"math"
 	"net/http"
 	"slices"
 	"sync"
@@ -10,6 +11,8 @@ import (
 	"go-chat-msa/internal/shared/httpio"
 	"go-chat-msa/internal/shared/middleware"
 	"go-chat-msa/internal/shared/ratelimit"
+
+	"github.com/redis/go-redis/v9"
 )
 
 type Router struct {
@@ -24,13 +27,13 @@ type Router struct {
 	chatClient chatpb.ChatServiceClient
 	httpClient *http.Client
 
-	publicLimiter        *ratelimit.Limiter
-	authenticatedLimiter *ratelimit.Limiter
+	publicLimiter        *ratelimit.RedisLimiter
+	authenticatedLimiter *ratelimit.RedisLimiter
 
 	wg sync.WaitGroup
 }
 
-func NewRouter(cfg *Config, userClient userpb.UserServiceClient, chatClient chatpb.ChatServiceClient) *Router {
+func NewRouter(cfg *Config, userClient userpb.UserServiceClient, chatClient chatpb.ChatServiceClient, redisClient *redis.Client) *Router {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.MaxIdleConns = cfg.APIGateway.HTTPClient.MaxIdleConns
 	tr.MaxIdleConnsPerHost = cfg.APIGateway.HTTPClient.MaxIdleConnsPerHost
@@ -46,15 +49,15 @@ func NewRouter(cfg *Config, userClient userpb.UserServiceClient, chatClient chat
 			Transport: tr,
 			Timeout:   cfg.APIGateway.HTTPClient.Timeout,
 		},
-		publicLimiter: ratelimit.New(
-			cfg.APIGateway.RateLimit.Public.RPS,
+		publicLimiter: ratelimit.NewRedis(
+			redisClient,
+			int(math.Ceil(cfg.APIGateway.RateLimit.Public.RPS)),
 			cfg.APIGateway.RateLimit.Public.Burst,
-			cfg.APIGateway.RateLimit.Public.TTL,
 		),
-		authenticatedLimiter: ratelimit.New(
-			cfg.APIGateway.RateLimit.Authenticated.RPS,
+		authenticatedLimiter: ratelimit.NewRedis(
+			redisClient,
+			int(math.Ceil(cfg.APIGateway.RateLimit.Authenticated.RPS)),
 			cfg.APIGateway.RateLimit.Authenticated.Burst,
-			cfg.APIGateway.RateLimit.Authenticated.TTL,
 		),
 	}
 
@@ -74,8 +77,6 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Router) Stop() {
-	r.publicLimiter.Stop()
-	r.authenticatedLimiter.Stop()
 }
 
 func (r *Router) Wait() {

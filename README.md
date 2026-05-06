@@ -12,7 +12,7 @@ MSA로 설계했고, 관측성 확보를 위해 OTel 기반 Grafana 풀스택을
 |:---|:---|
 | 언어 | Go 1.26 |
 | 통신 | `net/http`, `gorilla/websocket`, `google.golang.org/grpc` |
-| 데이터베이스 | PostgreSQL 17 , MongoDB 8.0 |
+| 데이터베이스 | PostgreSQL 17, MongoDB 8.0, Redis 7 |
 | 인증 | `golang-jwt/jwt/v5` (HS256), `golang.org/x/crypto` (Bcrypt), Refresh Token Rotation |
 | 부하분산 | `buraksezer/consistent` (Consistent Hashing) |
 | 관측성 | OpenTelemetry, Grafana, Prometheus, Loki, Tempo, Pyroscope |
@@ -91,6 +91,7 @@ flowchart TB
         direction LR
         PG[("PostgreSQL")]
         MG[("MongoDB")]
+        RD[("Redis")]
     end
 
     subgraph Observability ["Observability Layer"]
@@ -121,6 +122,8 @@ flowchart TB
 
     US --> PG
     CS --> MG
+    AGW --> RD
+    WSGW --> RD
     RW -- "Purge Cron" --> PG
 
     Alloy -. "pull: logs" .-> Services

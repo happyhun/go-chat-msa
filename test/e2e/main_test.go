@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/go-connections/nat"
 	"github.com/stretchr/testify/suite"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/mongodb"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
+	"github.com/testcontainers/testcontainers-go/modules/redis"
 	"github.com/testcontainers/testcontainers-go/network"
 	"github.com/testcontainers/testcontainers-go/wait"
 	"gopkg.in/yaml.v3"
@@ -29,6 +29,7 @@ type E2ESuite struct {
 	net               *testcontainers.DockerNetwork
 	postgres          *postgres.PostgresContainer
 	mongo             *mongodb.MongoDBContainer
+	redis             *redis.RedisContainer
 	userService       testcontainers.Container
 	chatService       testcontainers.Container
 	apiGateway        testcontainers.Container
@@ -59,7 +60,7 @@ func (s *E2ESuite) TearDownSuite() {
 
 	containers := []testcontainers.Container{
 		s.websocketService1, s.websocketService2, s.apiGateway, s.wsGateway,
-		s.chatService, s.userService, s.mongo, s.postgres,
+		s.chatService, s.userService, s.mongo, s.postgres, s.redis,
 	}
 
 	for _, c := range containers {
@@ -122,7 +123,7 @@ func (s *E2ESuite) startCompose(ctx context.Context) {
 	s.Require().NoError(err)
 
 	requiredServices := []string{
-		"postgres", "mongo",
+		"postgres", "mongo", "redis",
 		"postgres-migrate", "mongo-migrate",
 		"user-service", "chat-service", "api-gateway",
 		"websocket-service-1", "websocket-service-2",
@@ -140,6 +141,7 @@ func (s *E2ESuite) startCompose(ctx context.Context) {
 
 	s.postgres = s.runPostgres(ctx, config.Services["postgres"])
 	s.mongo = s.runMongo(ctx, config.Services["mongo"])
+	s.redis = s.runRedis(ctx, config.Services["redis"])
 
 	_ = s.runService(ctx, "postgres-migrate", config.Services["postgres-migrate"], configDir)
 	_ = s.runService(ctx, "mongo-migrate", config.Services["mongo-migrate"], configDir)
@@ -207,6 +209,23 @@ func (s *E2ESuite) runMongo(ctx context.Context, cfg ServiceConfig) *mongodb.Mon
 
 	c, err := mongodb.Run(ctx, cfg.Image,
 		network.WithNetwork([]string{"mongo"}, s.net),
+		testcontainers.WithEnv(envMap),
+	)
+	s.Require().NoError(err)
+	return c
+}
+
+func (s *E2ESuite) runRedis(ctx context.Context, cfg ServiceConfig) *redis.RedisContainer {
+	envMap := make(map[string]string)
+	for _, env := range cfg.Environment {
+		parts := strings.SplitN(env, "=", 2)
+		if len(parts) == 2 {
+			envMap[parts[0]] = parts[1]
+		}
+	}
+
+	c, err := redis.Run(ctx, cfg.Image,
+		network.WithNetwork([]string{"redis"}, s.net),
 		testcontainers.WithEnv(envMap),
 	)
 	s.Require().NoError(err)
@@ -336,7 +355,7 @@ func (s *E2ESuite) buildDockerImage(ctx context.Context, buildCtx, dockerfile, t
 }
 
 func (s *E2ESuite) getEndpoint(ctx context.Context, c testcontainers.Container, port string) string {
-	endpoint, err := c.PortEndpoint(ctx, nat.Port(port), "http")
+	endpoint, err := c.PortEndpoint(ctx, port, "http")
 	s.Require().NoError(err)
 	return endpoint
 }

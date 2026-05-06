@@ -23,6 +23,9 @@ DB:
   POSTGRES_URL: "postgres://postgres@postgres:5432/go_chat?sslmode=disable"
   MONGO_URI: "mongodb://mongo:27017"
 
+REDIS:
+  ADDR: "redis:6379"
+
 API_GATEWAY:
   CORS:
     ALLOWED_ORIGINS: ["*"]

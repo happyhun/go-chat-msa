@@ -54,6 +54,21 @@ services:
     networks:
       - go-chat-net
 
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    environment:
+      - TZ=Asia/Seoul
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - go-chat-net
+
   postgres-migrate:
     image: migrate/migrate:v4.19.1
     container_name: postgres-migrate
@@ -205,6 +220,8 @@ services:
         condition: service_healthy
       chat-service:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       - APP_ENV=dev
     ports:
@@ -236,6 +253,8 @@ services:
         condition: service_started
       websocket-service-2:
         condition: service_started
+      redis:
+        condition: service_healthy
     environment:
       - APP_ENV=dev
     ports:

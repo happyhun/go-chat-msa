@@ -14,6 +14,7 @@ type Config struct {
 	Registry  ServiceRegistry        `mapstructure:"REGISTRY"   validate:"required"`
 	JWT       config.JWTConfig       `mapstructure:"JWT"        validate:"required"`
 	Internal  config.InternalConfig  `mapstructure:"INTERNAL"   validate:"required"`
+	Redis     config.RedisConfig     `mapstructure:"REDIS"      validate:"required"`
 }
 
 type WSGatewayConfig struct {

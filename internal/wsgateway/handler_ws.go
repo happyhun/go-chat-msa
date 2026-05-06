@@ -1,6 +1,7 @@
 package wsgateway
 
 import (
+	"log/slog"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -23,7 +24,11 @@ func (r *Router) handleCreateWSTicket(w http.ResponseWriter, req *http.Request) 
 	}
 
 	ticket := uuid.NewString()
-	r.ticketStore.Set(ticket, userID, r.config.WSGateway.TicketTTL)
+	if err := r.ticketStore.Set(req.Context(), ticket, userID, r.config.WSGateway.TicketTTL); err != nil {
+		slog.ErrorContext(req.Context(), "failed to set ticket", "error", err)
+		httpio.WriteProblem(req.Context(), w, http.StatusInternalServerError, "failed to issue ticket")
+		return
+	}
 
 	httpio.WriteJSON(req.Context(), w, http.StatusOK, TicketResponse{Ticket: ticket})
 }
@@ -35,7 +40,12 @@ func (r *Router) proxyWebSocket(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	userID, ok := r.ticketStore.GetAndDelete(ticket)
+	userID, ok, err := r.ticketStore.GetAndDelete(req.Context(), ticket)
+	if err != nil {
+		slog.ErrorContext(req.Context(), "failed to validate ticket", "error", err)
+		httpio.WriteProblem(req.Context(), w, http.StatusInternalServerError, "failed to validate ticket")
+		return
+	}
 	if !ok {
 		httpio.WriteProblem(req.Context(), w, http.StatusUnauthorized, "invalid or expired ticket")
 		return
