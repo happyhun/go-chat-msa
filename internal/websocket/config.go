@@ -8,12 +8,12 @@ import (
 
 type Config struct {
 	config.AppConfig `mapstructure:",squash"`
-	Telemetry config.TelemetryConfig `mapstructure:"TELEMETRY"`
-	Port      config.PortConfig      `mapstructure:"PORT"      validate:"required"`
-	Registry  ServiceRegistry        `mapstructure:"REGISTRY"  validate:"required"`
-	JWT       config.JWTConfig       `mapstructure:"JWT"       validate:"required"`
-	Redis     config.RedisConfig     `mapstructure:"REDIS"     validate:"required"`
-	WS        WebSocketConfig        `mapstructure:"WEBSOCKET" validate:"required"`
+	Telemetry        config.TelemetryConfig `mapstructure:"TELEMETRY"`
+	Port             config.PortConfig      `mapstructure:"PORT"      validate:"required"`
+	Registry         ServiceRegistry        `mapstructure:"REGISTRY"  validate:"required"`
+	JWT              config.JWTConfig       `mapstructure:"JWT"       validate:"required"`
+	Redis            config.RedisConfig     `mapstructure:"REDIS"     validate:"required"`
+	WS               WebSocketConfig        `mapstructure:"WEBSOCKET" validate:"required"`
 }
 
 type WebSocketConfig struct {

@@ -433,7 +433,7 @@ Kafka의 ZooKeeper/KRaft + 자체 메시지 protocol, K8s의 etcd + workload, Is
 
 #### 다이어그램
 
-[정적 vs 동적 라우팅 비교](diagrams/flow-ws-routing.mmd), [멤버십 동기화 시퀀스](diagrams/seq-membership-sync.mmd), [self-check + 503 변환](diagrams/seq-owner-self-check.mmd), [스케일아웃 시 rebalance](diagrams/flow-rebalance.mmd).
+[정적 vs 동적 라우팅 비교](diagrams/flow-ws-routing.mmd), [멤버십 동기화 시퀀스](diagrams/seq-membership-sync.mmd), [self-check + 503 변환](diagrams/seq-owner-self-check.mmd), [스케일아웃 시 rebalance](diagrams/seq-rebalance.mmd).
 
 ### 3.4 WebSocket 계층 구조
 

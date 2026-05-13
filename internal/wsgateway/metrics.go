@@ -9,9 +9,9 @@ import (
 )
 
 var (
-	wsgatewayMeter    = otel.Meter("go-chat-msa/wsgateway")
-	routedTotal       metric.Int64Counter
-	misdirectedTotal  metric.Int64Counter
+	wsgatewayMeter   = otel.Meter("go-chat-msa/wsgateway")
+	routedTotal      metric.Int64Counter
+	misdirectedTotal metric.Int64Counter
 )
 
 func init() {

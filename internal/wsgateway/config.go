@@ -8,12 +8,12 @@ import (
 
 type Config struct {
 	config.AppConfig `mapstructure:",squash"`
-	Telemetry config.TelemetryConfig `mapstructure:"TELEMETRY"`
-	Port      config.PortConfig      `mapstructure:"PORT"       validate:"required"`
-	WSGateway WSGatewayConfig        `mapstructure:"WS_GATEWAY" validate:"required"`
-	JWT       config.JWTConfig       `mapstructure:"JWT"        validate:"required"`
-	Internal  config.InternalConfig  `mapstructure:"INTERNAL"   validate:"required"`
-	Redis     config.RedisConfig     `mapstructure:"REDIS"      validate:"required"`
+	Telemetry        config.TelemetryConfig `mapstructure:"TELEMETRY"`
+	Port             config.PortConfig      `mapstructure:"PORT"       validate:"required"`
+	WSGateway        WSGatewayConfig        `mapstructure:"WS_GATEWAY" validate:"required"`
+	JWT              config.JWTConfig       `mapstructure:"JWT"        validate:"required"`
+	Internal         config.InternalConfig  `mapstructure:"INTERNAL"   validate:"required"`
+	Redis            config.RedisConfig     `mapstructure:"REDIS"      validate:"required"`
 }
 
 type WSGatewayConfig struct {
