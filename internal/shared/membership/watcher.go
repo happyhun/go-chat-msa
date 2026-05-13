@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 )
 
 const (
@@ -78,9 +80,11 @@ func (w *Watcher) Run(ctx context.Context) error {
 
 func (w *Watcher) runReconcile(ctx context.Context) {
 	if err := w.reconcile(ctx); err != nil {
+		membershipReconcileTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("status", "error")))
 		slog.WarnContext(ctx, "membership reconcile failed (fail-open)", "error", err)
 		return
 	}
+	membershipReconcileTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("status", "ok")))
 	w.notify()
 }
 

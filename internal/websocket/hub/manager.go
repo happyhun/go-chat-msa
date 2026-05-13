@@ -281,7 +281,9 @@ func (m *Manager) scheduleRebalanceClose(ctx context.Context, room string) {
 		slog.InfoContext(ctx, "rebalance close fired", "room_id", room, "jitter_ms", jitter.Milliseconds())
 		if err := m.ForceCloseRoom(ctx, room); err != nil {
 			slog.WarnContext(ctx, "rebalance close failed", "room_id", room, "error", err)
+			return
 		}
+		rebalanceEvictionsTotal.Add(ctx, 1)
 	})
 	m.rebalanceTimersMu.Lock()
 	m.rebalanceTimers = append(m.rebalanceTimers, timer)

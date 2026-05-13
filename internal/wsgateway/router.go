@@ -133,6 +133,7 @@ func (r *Router) getOrCreateProxy(targetAddr string) (*httputil.ReverseProxy, bo
 			return nil
 		}
 		r.watcher.ForceReconcile()
+		misdirectedTotal.Add(resp.Request.Context(), 1)
 		slog.WarnContext(resp.Request.Context(), "misdirected request converted to 503",
 			"target", targetAddr, "path", resp.Request.URL.Path)
 		resp.StatusCode = http.StatusServiceUnavailable

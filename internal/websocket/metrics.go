@@ -16,6 +16,7 @@ var (
 	persistenceRetryOldestAge      metric.Float64Gauge
 	persistenceRetrySaveTotal      metric.Int64Counter
 	persistenceRetryQueueFullTotal metric.Int64Counter
+	ownerRejectedTotal             metric.Int64Counter
 )
 
 func init() {
@@ -49,5 +50,11 @@ func init() {
 	)
 	if err != nil {
 		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_persistence_retry_queue_full", "error", err)
+	}
+	ownerRejectedTotal, err = wsMeter.Int64Counter("gochat_websocket_owner_rejected",
+		metric.WithDescription("self-check에서 owner 아닌 요청을 거절한 횟수"),
+	)
+	if err != nil {
+		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_websocket_owner_rejected", "error", err)
 	}
 }

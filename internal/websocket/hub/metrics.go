@@ -26,6 +26,7 @@ var (
 	persistDroppedTotal           metric.Int64Counter
 	fanoutDuration                metric.Float64Histogram
 	egressDuration                metric.Float64Histogram
+	rebalanceEvictionsTotal       metric.Int64Counter
 )
 
 func init() {
@@ -116,6 +117,12 @@ func init() {
 	)
 	if err != nil {
 		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_ws_egress_duration_seconds", "error", err)
+	}
+	rebalanceEvictionsTotal, err = hubMeter.Int64Counter("gochat_ws_rebalance_evictions",
+		metric.WithDescription("owner 재검사로 close된 룸 수"),
+	)
+	if err != nil {
+		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_ws_rebalance_evictions", "error", err)
 	}
 }
 
