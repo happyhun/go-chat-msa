@@ -187,8 +187,9 @@ func Load[T any](configPath, baseName, overrideName string) (*T, error) {
 		}
 	}
 
-	v.AutomaticEnv()
+	v.SetEnvPrefix("APP")
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.AutomaticEnv()
 
 	var cfg T
 	if err := v.Unmarshal(&cfg); err != nil {
