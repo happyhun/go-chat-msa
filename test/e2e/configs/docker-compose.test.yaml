@@ -28,8 +28,8 @@ services:
 
   redis:
     image: redis:7-alpine
-    # 개발/e2e: KEA (모든 이벤트). 운영 권장: --notify-keyspace-events K$gx (keyspace + SET/generic/expired)
-    command: ["redis-server", "--notify-keyspace-events", "KEA"]
+    # 멤버십 watcher가 구독하는 이벤트만 활성화: K(keyspace) + $(SET) + g(DEL) + x(expired)
+    command: ["redis-server", "--notify-keyspace-events", "K$gx"]
     environment:
       - TZ=Asia/Seoul
     healthcheck:

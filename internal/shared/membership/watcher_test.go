@@ -46,7 +46,7 @@ func newRedisClient(t *testing.T) *redis.Client {
 	t.Helper()
 	ctx := context.Background()
 	c, err := tcredis.Run(ctx, "redis:7-alpine",
-		testcontainers.WithCmdArgs("--notify-keyspace-events", "KEA"),
+		testcontainers.WithCmdArgs("--notify-keyspace-events", "K$gx"),
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = c.Terminate(ctx) })

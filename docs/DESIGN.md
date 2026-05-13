@@ -444,7 +444,7 @@ Kafka의 ZooKeeper/KRaft + 자체 메시지 protocol, K8s의 etcd + workload, Is
 
 #### Redis keyspace notification 옵션
 
-Watcher는 `__keyspace@<db>__:wss:member:*` 채널을 구독하므로 Redis가 keyspace 채널로 SET/DEL/expired 이벤트를 발행하도록 설정되어야 합니다. 개발/e2e 환경은 디버깅 편의를 위해 `KEA`(모든 이벤트)로 두고, 운영에서는 필요한 이벤트만 켜는 `K$gx`(keyspace + String 명령 + generic + expired) 쪽이 부담이 적습니다. compose 파일에는 두 옵션을 주석으로 함께 남겨두었습니다.
+Watcher는 `__keyspace@<db>__:wss:member:*` 채널을 구독하고 Registry가 SET/DEL을 발행하며 TTL 만료가 expired 이벤트를 만듭니다. Redis는 `K$gx`로 keyspace 이벤트의 String 명령(SET)·generic 명령(DEL)·expired 카테고리만 켜면 충분하므로 dev/e2e/운영 모두 같은 옵션을 사용합니다. 필요 이상 활성화하면 다른 키의 명령 이벤트까지 채널로 흘러 잡음이 됩니다.
 
 #### 다이어그램
 
