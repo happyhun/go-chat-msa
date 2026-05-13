@@ -56,9 +56,6 @@ type Manager struct {
 	persistCh    chan *Message
 	listRoomsCh  chan chan []string
 
-	rebalanceTimersMu sync.Mutex
-	rebalanceTimers   []*time.Timer
-
 	workerWG    sync.WaitGroup
 	stoppedCh   chan struct{}
 	stoppedOnce sync.Once
@@ -99,7 +96,6 @@ func (m *Manager) Run(ctx context.Context) {
 	hubDoneCh := make(chan *Hub, hubDoneBufferSize)
 
 	defer func() {
-		m.stopRebalanceTimers()
 		m.limiter.Stop()
 		close(m.persistCh)
 		m.workerWG.Wait()
@@ -274,7 +270,7 @@ func (m *Manager) reconcileOwnership(ctx context.Context, ring OwnerRing, addr s
 
 func (m *Manager) scheduleRebalanceClose(ctx context.Context, room string) {
 	jitter := time.Duration(rand.Int64N(int64(maxRebalanceJitter)))
-	timer := time.AfterFunc(jitter, func() {
+	time.AfterFunc(jitter, func() {
 		if ctx.Err() != nil {
 			return
 		}
@@ -285,18 +281,6 @@ func (m *Manager) scheduleRebalanceClose(ctx context.Context, room string) {
 		}
 		rebalanceEvictionsTotal.Add(ctx, 1)
 	})
-	m.rebalanceTimersMu.Lock()
-	m.rebalanceTimers = append(m.rebalanceTimers, timer)
-	m.rebalanceTimersMu.Unlock()
-}
-
-func (m *Manager) stopRebalanceTimers() {
-	m.rebalanceTimersMu.Lock()
-	defer m.rebalanceTimersMu.Unlock()
-	for _, t := range m.rebalanceTimers {
-		t.Stop()
-	}
-	m.rebalanceTimers = nil
 }
 
 func (m *Manager) ForceCloseRoom(ctx context.Context, roomID string) error {
