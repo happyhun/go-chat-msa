@@ -404,7 +404,9 @@ WebSocket Service를 다중 인스턴스로 운영할 때, 같은 방의 메시�
 
 WS Gateway가 `room_id` 기반 Consistent Hashing으로 대상 WebSocket Service 노드를 결정합니다. 일반 해시(`hash(roomID) % nodeCount`)는 노드가 추가되거나 제거될 때 모든 키의 할당이 뒤바뀌어 전체 재연결이 필요하지만, Consistent Hashing은 영향받는 키가 `1/N` 수준으로 최소화됩니다. Consistent Hashing은 결정적이므로 같은 노드 목록이면 어떤 Gateway 인스턴스에서도 동일한 결과가 보장됩니다.
 
-**노드 목록은 동적**입니다. WebSocket Service 인스턴스가 부팅 시 Redis(`wss:member:{addr}` 키, TTL 30s)에 자기 주소를 등록하고 10초마다 EXPIRE로 갱신합니다. WS Gateway는 keyspace notification + 30초 SCAN 안전망으로 멤버 변경을 watch하고 자기 hash ring을 자동 동기화합니다. K8s 환경에서 HPA 스케일아웃 시 신규 파드가 자연 ring에 포함되고, 사라진 파드는 TTL 만료로 자동 제거됩니다.
+**노드 목록은 동적**입니다. WebSocket Service 인스턴스가 부팅 시 Redis(`wss:member:{addr}` 키, TTL 30s)에 자기 주소를 등록하고 10초마다 `SET key value EX ttl`로 갱신합니다. 단순 `EXPIRE`만 호출하면 키가 이미 만료된 경우 false만 반환하고 재등록이 되지 않으므로, heartbeat는 항상 lease refresh로 봅니다. WS Gateway는 keyspace notification + 30초 SCAN 안전망으로 멤버 변경을 watch하고 자기 hash ring을 자동 동기화합니다. K8s 환경에서 HPA 스케일아웃 시 신규 파드가 자연 ring에 포함되고, 사라진 파드는 TTL 만료로 자동 제거됩니다.
+
+빠른 재시작 시 이전 프로세스의 정리가 새 프로세스의 lease를 지우는 사고를 막기 위해 lease token(프로세스별 무작위 값)을 도입했습니다. Redis value에 token을 함께 저장하고, 종료 시 단순 `DEL`이 아닌 compare-and-delete Lua로 자기 token이 맞을 때만 삭제합니다.
 
 흐름과 정합성 패턴은 §3.3 분산 라우팅 정합성에서 다룹니다.
 
@@ -415,6 +417,10 @@ WS Gateway가 `room_id` 기반 Consistent Hashing으로 대상 WebSocket Service
 **per-connection self-check + 503 변환**: WebSocket Service는 Upgrade 직전에 `hashRing.Locate(roomID) != myAddr`이면 **HTTP 421 Misdirected Request**를 응답합니다. WS Gateway는 `proxy.ModifyResponse`로 421을 가로채 자기 Watcher의 `ForceReconcile()`을 호출하고 클라이언트에 **503 Service Unavailable**을 반환합니다. **서버 측 재시도는 없습니다**. 클라이언트의 jittered backoff(1~30초)가 ring이 갱신된 후 재접속을 수행합니다. Cascading retry storm을 피하고 retry 정책을 클라이언트 한 곳에 응축하기 위한 fast fail 설계입니다.
 
 **주기적 owner 재검사 + jitter rebalance**: 각 WebSocket Service의 Manager는 10초 ticker와 멤버십 변경 이벤트로 자기 보유 룸들을 재검사합니다. `ring.Locate(R) != myAddr`인 룸은 `time.AfterFunc(0~10초 jitter)`로 close하여, 스케일아웃 시 다수 룸이 동시에 끊겨 클라이언트 reconnect 트래픽이 폭증하는 thundering herd를 분산합니다.
+
+**Hash ring 동시성**: HashRing은 라이브러리의 thread-safe `Add/Remove`를 호출하지만, `Set`은 여러 add/remove를 묶은 composite operation이므로 그 자체로는 원자적이지 않습니다. 중간 상태에서 `Locate`가 wrong owner를 반환할 가능성을 막기 위해 wrapper에 `sync.RWMutex`를 두고 `Set`은 Lock, `Locate`는 RLock으로 보호합니다.
+
+**빈 멤버 정책**: Watcher가 SCAN 결과로 멤버 0개를 받으면 Redis 일시 장애일 가능성이 있으므로 기존 ring을 유지합니다(warn 로그). 실제 멤버 수는 `Watcher.HasMembers()`로 별도 노출하여 readiness probe가 직접 활용할 수 있게 했습니다. ring을 보수적으로 유지하면서 정확한 카운트는 별도 채널로 노출하는 분리.
 
 게이트웨이만 검증하지 않고 백엔드가 자체 검증하는 양측 확인 패턴은 stateful + 어피니티 기반 분산 시스템의 표준입니다. Kafka(`NOT_LEADER_OR_FOLLOWER`), Cassandra(coordinator forward), Redis Cluster(`MOVED`), MongoDB sharded(`StaleConfigException`), CockroachDB(`NotLeaseHolderError`) 모두 동일한 패턴입니다. 백엔드가 진실의 원천이므로 게이트웨이의 stale 메타데이터를 자체 검증으로 정정합니다.
 
@@ -430,6 +436,10 @@ WS Gateway가 `room_id` 기반 Consistent Hashing으로 대상 WebSocket Service
 | 선택한 도구 | 어피니티 + hub-local fanout | Redis pub/sub + SCAN 안전망 |
 
 Kafka의 ZooKeeper/KRaft + 자체 메시지 protocol, K8s의 etcd + workload, Istio의 control plane + sidecar와 같은 보편적 분리입니다.
+
+#### Redis keyspace notification 옵션
+
+Watcher는 `__keyspace@<db>__:wss:member:*` 채널을 구독하므로 Redis가 keyspace 채널로 SET/DEL/expired 이벤트를 발행하도록 설정되어야 합니다. 개발/e2e 환경은 디버깅 편의를 위해 `KEA`(모든 이벤트)로 두고, 운영에서는 필요한 이벤트만 켜는 `K$gx`(keyspace + String 명령 + generic + expired) 쪽이 부담이 적습니다. compose 파일에는 두 옵션을 주석으로 함께 남겨두었습니다.
 
 #### 다이어그램
 

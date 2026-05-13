@@ -13,18 +13,19 @@ sequenceDiagram
     end
 
     Note over Reg1, Ring: 1. 부팅 시 등록 및 초기 reconcile
-    Reg1->>Redis: SET wss:member:addr EX 30
+    Reg1->>Reg1: lease token 생성 (random 16B hex)
+    Reg1->>Redis: SET wss:member:addr {token} EX 30
     Watcher->>Redis: PSUBSCRIBE __keyspace@0__:wss:member:*
     Watcher->>Redis: SCAN wss:member:*
-    Redis-->>Watcher: 현재 멤버 목록
+    Redis-->>Watcher: 현재 멤버 목록 (dedupe)
     Watcher->>Ring: Set(addrs)
 
-    Note over Reg1, Ring: 2. 정상 운영 (heartbeat + keyspace 이벤트)
+    Note over Reg1, Ring: 2. 정상 운영 (heartbeat = lease refresh)
     loop 10초마다
-        Reg1->>Redis: EXPIRE wss:member:addr 30
+        Reg1->>Redis: SET wss:member:addr {token} EX 30
     end
 
-    Reg1->>Redis: SET (또는 신규 인스턴스 SET)
+    Note over Reg1, Ring: 신규 인스턴스 SET 또는 멤버 변경
     Redis-->>Watcher: keyspace notification
     Watcher->>Redis: SCAN
     Redis-->>Watcher: 현재 멤버 목록
@@ -37,8 +38,9 @@ sequenceDiagram
         Watcher->>Ring: Set(addrs)
     end
 
-    Note over Reg1, Ring: 4. graceful 종료
-    Reg1->>Redis: DEL wss:member:addr
+    Note over Reg1, Ring: 4. graceful 종료 (compare-and-delete)
+    Reg1->>Redis: EVAL "if GET == token then DEL" addr {token}
+    Note over Redis: 자기 token이 맞을 때만 삭제
     Redis-->>Watcher: keyspace notification (del)
     Watcher->>Redis: SCAN
     Watcher->>Ring: Set(addrs - removed)

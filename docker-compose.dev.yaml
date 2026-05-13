@@ -57,6 +57,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: redis
+    # 개발/e2e: KEA (모든 이벤트). 운영 권장: --notify-keyspace-events K$gx (keyspace + SET/generic/expired)
     command: ["redis-server", "--notify-keyspace-events", "KEA"]
     environment:
       - TZ=Asia/Seoul
