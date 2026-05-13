@@ -12,14 +12,16 @@ type Config struct {
 	Port      config.PortConfig      `mapstructure:"PORT"      validate:"required"`
 	Registry  ServiceRegistry        `mapstructure:"REGISTRY"  validate:"required"`
 	JWT       config.JWTConfig       `mapstructure:"JWT"       validate:"required"`
+	Redis     config.RedisConfig     `mapstructure:"REDIS"     validate:"required"`
 	WS        WebSocketConfig        `mapstructure:"WEBSOCKET" validate:"required"`
 }
 
 type WebSocketConfig struct {
-	Server     config.HTTPWSServerConfig `mapstructure:"SERVER" validate:"required"`
-	Manager    config.ManagerConfig      `mapstructure:"MANAGER" validate:"required"`
-	GRPCClient config.GRPCClientConfig   `mapstructure:"GRPC_CLIENT" validate:"required"`
-	RateLimit  RateLimitConfig           `mapstructure:"RATE_LIMIT" validate:"required"`
+	AdvertisedAddr string                    `mapstructure:"ADVERTISED_ADDR" validate:"required"`
+	Server         config.HTTPWSServerConfig `mapstructure:"SERVER" validate:"required"`
+	Manager        config.ManagerConfig      `mapstructure:"MANAGER" validate:"required"`
+	GRPCClient     config.GRPCClientConfig   `mapstructure:"GRPC_CLIENT" validate:"required"`
+	RateLimit      RateLimitConfig           `mapstructure:"RATE_LIMIT" validate:"required"`
 }
 
 type RateLimitConfig struct {

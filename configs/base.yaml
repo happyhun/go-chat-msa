@@ -91,6 +91,7 @@ WS_GATEWAY:
 
 # WebSocket Service
 WEBSOCKET:
+  ADVERTISED_ADDR: "" # 오버라이드 필수
   SERVER:
     READ_HEADER_TIMEOUT: "10s"
   MANAGER:
