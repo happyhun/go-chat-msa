@@ -9,8 +9,12 @@ import (
 	"testing"
 	"time"
 
+	"sync/atomic"
+
 	"go-chat-msa/internal/shared/auth"
 	"go-chat-msa/internal/shared/config"
+	"go-chat-msa/internal/shared/httpio"
+	"go-chat-msa/internal/shared/membership"
 	"go-chat-msa/internal/wsgateway/loadbalance"
 
 	"github.com/alicebob/miniredis/v2"
@@ -18,6 +22,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type fakeRingRefresher struct {
+	calls atomic.Int32
+}
+
+func (f *fakeRingRefresher) ForceReconcile() {
+	f.calls.Add(1)
+}
 
 const testInternalSecret = "test-internal-secret"
 
@@ -52,7 +64,16 @@ func testRouter(t *testing.T, hashRing *loadbalance.HashRing) *Router {
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
-	return NewRouter(testConfig(), hashRing, client)
+	watcher := membership.NewWatcher(client, "wss:member:", hashRing)
+	return NewRouter(testConfig(), hashRing, watcher, client)
+}
+
+func testRouterWithRefresher(t *testing.T, hashRing *loadbalance.HashRing, refresher RingRefresher) *Router {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	return NewRouter(testConfig(), hashRing, refresher, client)
 }
 
 func TestRouter_HandleInternalBroadcast(t *testing.T) {
@@ -174,14 +195,14 @@ func TestRouter_ProxyWebSocket(t *testing.T) {
 			expectedCode: http.StatusBadRequest,
 		},
 		{
-			name: "Failure: 룸 페어링을 위한 노드를 찾을 수 없음",
+			name: "Failure: 룸 페어링을 위한 노드를 찾을 수 없음 (부팅 race, ring 미초기화)",
 			setup: func(t *testing.T, r *Router) {
 				require.NoError(t, r.ticketStore.Set(t.Context(), "ticket-no-node", "user-123", time.Minute))
 				r.hashRing = loadbalance.New([]string{})
 			},
 			ticket:       "ticket-no-node",
 			roomID:       "test-room",
-			expectedCode: http.StatusInternalServerError,
+			expectedCode: http.StatusServiceUnavailable,
 		},
 		{
 			name: "Success: 웹소켓 연결 프록시 시도",
@@ -256,4 +277,39 @@ func TestRouter_HandleProxyRoomRequest(t *testing.T) {
 			assert.Equal(t, tt.expectedCode, w.Code)
 		})
 	}
+}
+
+func TestRouter_MisdirectedConvertedToServiceUnavailable(t *testing.T) {
+	t.Parallel()
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		httpio.WriteProblem(r.Context(), w, http.StatusMisdirectedRequest, "not the owner of this room")
+	}))
+	t.Cleanup(backend.Close)
+
+	backendAddr := strings.TrimPrefix(backend.URL, "http://")
+	refresher := &fakeRingRefresher{}
+	r := testRouterWithRefresher(t, loadbalance.New([]string{backendAddr}), refresher)
+
+	proxy, ok := r.getOrCreateProxy(backendAddr)
+	require.True(t, ok)
+
+	req := httptest.NewRequest("GET", "/ws?room_id=room-1", nil)
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code,
+		"wss의 421 응답을 503으로 변환")
+	assert.Equal(t, "application/problem+json", w.Header().Get("Content-Type"),
+		"problem+json content-type 유지")
+	assert.Equal(t, int32(1), refresher.calls.Load(),
+		"misdirect 응답에서 ForceReconcile이 호출되어야 함")
+
+	var problem httpio.ProblemDetail
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &problem),
+		"body가 problem+json 포맷이어야 함")
+	assert.Equal(t, http.StatusServiceUnavailable, problem.Status,
+		"body의 status도 503으로 일치해야 함 (backend의 421 body 잔재 방지)")
+	assert.Equal(t, http.StatusText(http.StatusServiceUnavailable), problem.Title)
+	assert.NotEmpty(t, problem.Detail)
 }

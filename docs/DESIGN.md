@@ -404,7 +404,53 @@ WebSocket Service를 다중 인스턴스로 운영할 때, 같은 방의 메시�
 
 WS Gateway가 `room_id` 기반 Consistent Hashing으로 대상 WebSocket Service 노드를 결정합니다. 일반 해시(`hash(roomID) % nodeCount`)는 노드가 추가되거나 제거될 때 모든 키의 할당이 뒤바뀌어 전체 재연결이 필요하지만, Consistent Hashing은 영향받는 키가 `1/N` 수준으로 최소화됩니다. Consistent Hashing은 결정적이므로 같은 노드 목록이면 어떤 Gateway 인스턴스에서도 동일한 결과가 보장됩니다.
 
-### 3.3 WebSocket 계층 구조
+**노드 목록은 동적**입니다. WebSocket Service 인스턴스가 부팅 시 Redis(`wss:member:{addr}` 키, TTL 30s)에 자기 주소를 등록하고 10초마다 `SET key value EX ttl`로 갱신합니다. 단순 `EXPIRE`만 호출하면 키가 이미 만료된 경우 false만 반환하고 재등록이 되지 않으므로, heartbeat는 항상 lease refresh로 봅니다. WS Gateway는 keyspace notification + 30초 SCAN 안전망으로 멤버 변경을 watch하고 자기 hash ring을 자동 동기화합니다. K8s 환경에서 HPA 스케일아웃 시 신규 파드가 자연 ring에 포함되고, 사라진 파드는 TTL 만료로 자동 제거됩니다.
+
+빠른 재시작 시 이전 프로세스의 정리가 새 프로세스의 lease를 지우는 사고를 막기 위해 lease token(프로세스별 무작위 값)을 도입했습니다. Redis value에 token을 함께 저장하고, 종료 시 단순 `DEL`이 아닌 compare-and-delete Lua로 자기 token이 맞을 때만 삭제합니다.
+
+흐름과 정합성 패턴은 §3.3 분산 라우팅 정합성에서 다룹니다.
+
+### 3.3 분산 라우팅 정합성
+
+동적 멤버십은 eventual consistency입니다. WS Gateway의 ring과 WebSocket Service의 ring이 멤버십 변경 직후 일시적으로 불일치하여 요청이 잘못된 노드로 라우팅될 수 있습니다. 두 가지 안전망과 클라이언트 재시도로 정합성을 보장합니다.
+
+**per-connection self-check + 503 변환**: WebSocket Service는 Upgrade 직전에 `hashRing.Locate(roomID) != myAddr`이면 **HTTP 421 Misdirected Request**를 응답합니다. WS Gateway는 `proxy.ModifyResponse`로 421을 가로채 자기 Watcher의 `ForceReconcile()`을 호출하고 클라이언트에 **503 Service Unavailable**을 반환합니다. **서버 측 재시도는 없습니다**. 클라이언트의 jittered backoff(1~30초)가 ring이 갱신된 후 재접속을 수행합니다. Cascading retry storm을 피하고 retry 정책을 클라이언트 한 곳에 응축하기 위한 fast fail 설계입니다.
+
+**주기적 owner 재검사 + jitter rebalance**: 각 WebSocket Service의 Manager는 10초 ticker와 멤버십 변경 이벤트로 자기 보유 룸들을 재검사합니다. `ring.Locate(R) != myAddr`인 룸은 `time.AfterFunc(0~10초 jitter)`로 close하여, 스케일아웃 시 다수 룸이 동시에 끊겨 클라이언트 reconnect 트래픽이 폭증하는 thundering herd를 분산합니다.
+
+**Hash ring 동시성**: HashRing은 라이브러리의 thread-safe `Add/Remove`를 호출하지만, `Set`은 여러 add/remove를 묶은 composite operation이므로 그 자체로는 원자적이지 않습니다. 중간 상태에서 `Locate`가 wrong owner를 반환할 가능성을 막기 위해 wrapper에 `sync.RWMutex`를 두고 `Set`은 Lock, `Locate`는 RLock으로 보호합니다.
+
+**빈 멤버 정책**: Watcher가 SCAN 결과로 멤버 0개를 받으면 Redis 일시 장애일 가능성이 있으므로 기존 ring을 유지합니다(warn 로그). 이때 두 가지 상태가 분리되어 노출됩니다.
+
+- `HashRing.Len()` — 현재 라우팅 가능한 cached ring 크기. 빈 SCAN으로 유지된 경우에도 0이 아닐 수 있음.
+- `Watcher.HasObservedMembers()` — 마지막 reconcile에서 실제로 멤버를 1개 이상 보았는지. 빈 SCAN 직후엔 false.
+
+readiness 게이트는 보통 후자(`HasObservedMembers`) 기준이 안전합니다. 실제 멤버십 저장소에 등록된 인스턴스가 없다면 새 트래픽을 받지 않는 게 맞기 때문입니다. ring을 보수적으로 유지하는 것과 readiness 판단은 분리된 결정.
+
+게이트웨이만 검증하지 않고 백엔드가 자체 검증하는 양측 확인 패턴은 stateful + 어피니티 기반 분산 시스템의 표준입니다. Kafka(`NOT_LEADER_OR_FOLLOWER`), Cassandra(coordinator forward), Redis Cluster(`MOVED`), MongoDB sharded(`StaleConfigException`), CockroachDB(`NotLeaseHolderError`) 모두 동일한 패턴입니다. 백엔드가 진실의 원천이므로 게이트웨이의 stale 메타데이터를 자체 검증으로 정정합니다.
+
+#### Control Plane vs Data Plane 분리
+
+같은 Redis 인프라를 멤버십 동기화(control plane)에는 keyspace notification + SCAN으로, 메시지 broadcast(data plane)에는 어피니티 + 로컬 fanout으로 사용합니다. 트래픽 특성과 정합성 요구가 다릅니다.
+
+| 측면 | 메시지 broadcast (data plane) | 멤버십 동기화 (control plane) |
+|---|---|---|
+| 트래픽 | 초당 수천~수만, 지속적 | 분당 1회 미만, 스케일 이벤트 시 |
+| 정합성 요구 | at-most-once 손실 = UX 직접 영향 | lag 허용, SCAN reconcile로 자가 치유 |
+| 순서 보장 | 룸 내 sequence 단조 증가 필수 | 무관 (snapshot만 정확하면 됨) |
+| 선택한 도구 | 어피니티 + hub-local fanout | Redis pub/sub + SCAN 안전망 |
+
+Kafka의 ZooKeeper/KRaft + 자체 메시지 protocol, K8s의 etcd + workload, Istio의 control plane + sidecar와 같은 보편적 분리입니다.
+
+#### Redis keyspace notification 옵션
+
+Watcher는 `__keyspace@<db>__:wss:member:*` 채널을 구독하고 Registry가 SET/DEL을 발행하며 TTL 만료가 expired 이벤트를 만듭니다. Redis는 `K$gx`로 keyspace 이벤트의 String 명령(SET)·generic 명령(DEL)·expired 카테고리만 켜면 충분하므로 dev/e2e/운영 모두 같은 옵션을 사용합니다. 필요 이상 활성화하면 다른 키의 명령 이벤트까지 채널로 흘러 잡음이 됩니다.
+
+#### 다이어그램
+
+[정적 vs 동적 라우팅 비교](diagrams/flow-ws-routing.mmd), [멤버십 동기화 시퀀스](diagrams/seq-membership-sync.mmd), [self-check + 503 변환](diagrams/seq-owner-self-check.mmd), [스케일아웃 시 rebalance](diagrams/seq-rebalance.mmd).
+
+### 3.4 WebSocket 계층 구조
 
 WebSocket Service는 세션 관리, 브로드캐스트, 메시지 저장 등 책임이 다양합니다. 단일 계층에서 처리하면 상태 관리와 동시성 제어가 복잡해지므로, 책임별로 계층을 분리하고 의존 방향을 위에서 아래로 제한했습니다.
 
@@ -437,14 +483,14 @@ Manager와 Hub는 Actor 모델을 따릅니다. 각각 단일 고루틴의 `sele
 - **콜백 함수**: 부모가 정의한 함수를 클로저로 감싸 자식에게 주입 (Manager의 처리율 제한기 → Session)
 - **인터페이스 추상화**: 구현체가 아닌 인터페이스에 의존 (Router의 메시지 저장소 구현체 → Hub)
 
-### 3.4 Bcrypt 워커 풀
+### 3.5 Bcrypt 워커 풀
 
 Bcrypt는 brute force 방어를 위해 높은 연산 비용을 요구하는 해시 알고리즘입니다. 제한 없이 고루틴을 생성하면 CPU 경합이 증가하고, 해싱 작업보다 컨텍스트 스위칭에 시간을 소비하면서 개별 요청의 레이턴시가 증가합니다. 워커 풀로 동시 해싱 수를 코어 수로 제한하여 이를 방지합니다.
 
 - 워커 수를 `runtime.GOMAXPROCS(0)`로 고정하여 CPU 바운드 작업의 동시성을 제한
 - 대기열이 꽉 차면 즉시 `ErrQueueFull`을 반환해 연쇄 장애 방지
 
-### 3.5 비동기 배치 저장
+### 3.6 비동기 배치 저장
 
 메시지를 브로드캐스트와 동시에 저장하면, 저장 지연이 브로드캐스트 처리량에 영향을 줍니다. 브로드캐스트와 저장을 분리하여, 실시간 전송은 즉시 처리하고 저장은 배치 워커 풀을 통해 비동기로 처리합니다.
 
@@ -453,7 +499,7 @@ Bcrypt는 brute force 방어를 위해 높은 연산 비용을 요구하는 해�
 - 애플리케이션에서 순서를 부여하므로 워커 간 DB 저장 순서는 무관
 - 서버 종료 시 채널과 큐에 남은 배치를 모두 플러시하여 유실 최소화
 
-### 3.6 PK로 UUID v7 앱 생성
+### 3.7 PK로 UUID v7 앱 생성
 
 PK는 애플리케이션에서 UUID v7로 생성합니다. v4 대신 v7을 선택하고, DB 생성 대신 앱 생성을 선택한 이유는 다음과 같습니다.
 

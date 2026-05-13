@@ -9,6 +9,7 @@ import (
 	userpb "go-chat-msa/api/proto/user/v1"
 	"go-chat-msa/internal/shared/httpio"
 	"go-chat-msa/internal/websocket/hub"
+	"go-chat-msa/internal/wsgateway/loadbalance"
 
 	"github.com/gorilla/websocket"
 )
@@ -22,12 +23,20 @@ type Router struct {
 	mux      *http.ServeMux
 	upgrader websocket.Upgrader
 
+	advertisedAddr string
+	hashRing       *loadbalance.HashRing
+
 	userClient userpb.UserServiceClient
 	manager    *hub.Manager
 	store      *chatStoreAdapter
 }
 
-func NewRouter(chatClient chatpb.ChatServiceClient, userClient userpb.UserServiceClient, cfg WebSocketConfig) *Router {
+func NewRouter(
+	chatClient chatpb.ChatServiceClient,
+	userClient userpb.UserServiceClient,
+	cfg WebSocketConfig,
+	hashRing *loadbalance.HashRing,
+) *Router {
 	store := newChatStoreAdapter(chatClient, cfg.GRPCClient.Timeout)
 
 	upgrader := websocket.Upgrader{
@@ -40,11 +49,13 @@ func NewRouter(chatClient chatpb.ChatServiceClient, userClient userpb.UserServic
 	}
 
 	r := &Router{
-		mux:        http.NewServeMux(),
-		upgrader:   upgrader,
-		userClient: userClient,
-		manager:    hub.NewManager(cfg.Manager, cfg.RateLimit.WSMessage, store),
-		store:      store,
+		mux:            http.NewServeMux(),
+		upgrader:       upgrader,
+		advertisedAddr: cfg.AdvertisedAddr,
+		hashRing:       hashRing,
+		userClient:     userClient,
+		manager:        hub.NewManager(cfg.Manager, cfg.RateLimit.WSMessage, store),
+		store:          store,
 	}
 
 	r.registerRoutes()
@@ -59,6 +70,10 @@ func (r *Router) RunManager(ctx context.Context) {
 	})
 	r.manager.Run(ctx)
 	wg.Wait()
+}
+
+func (r *Router) WatchOwnership(ctx context.Context, events <-chan struct{}) {
+	r.manager.WatchOwnership(ctx, r.hashRing, r.advertisedAddr, events)
 }
 
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {

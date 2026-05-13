@@ -1,0 +1,52 @@
+sequenceDiagram
+    autonumber
+
+    box WebSocket Service 1
+        participant Reg1 as Registry
+    end
+
+    participant Redis as Redis
+
+    box WS Gateway / WebSocket Service 2
+        participant Watcher as Membership Watcher
+        participant Ring as Hash Ring
+    end
+
+    Note over Reg1, Ring: 1. 부팅 시 등록 및 초기 reconcile
+    Reg1->>Reg1: lease token 생성 (random 16B hex)
+    Reg1->>Redis: SET wss:member:addr {token} EX 30
+    Watcher->>Redis: PSUBSCRIBE __keyspace@0__:wss:member:*
+    Watcher->>Redis: SCAN wss:member:*
+    Redis-->>Watcher: 현재 멤버 목록 (dedupe)
+    Watcher->>Ring: Set(addrs)
+
+    Note over Reg1, Ring: 2. 정상 운영 (heartbeat = lease refresh)
+    loop 10초마다
+        Reg1->>Redis: SET wss:member:addr {token} EX 30
+    end
+
+    Note over Reg1, Ring: 신규 인스턴스 SET 또는 멤버 변경
+    Redis-->>Watcher: keyspace notification
+    Watcher->>Redis: SCAN
+    Redis-->>Watcher: 현재 멤버 목록
+    Watcher->>Ring: Set(addrs)
+
+    Note over Reg1, Ring: 3. 30초 ticker 안전망 (notification 누락 대비)
+    loop 30초마다
+        Watcher->>Redis: SCAN
+        Redis-->>Watcher: 현재 멤버 목록
+        Watcher->>Ring: Set(addrs)
+    end
+
+    Note over Reg1, Ring: 4. graceful 종료 (compare-and-delete)
+    Reg1->>Redis: EVAL "if GET == token then DEL" addr {token}
+    Note over Redis: 자기 token이 맞을 때만 삭제
+    Redis-->>Watcher: keyspace notification (del)
+    Watcher->>Redis: SCAN
+    Watcher->>Ring: Set(addrs - removed)
+
+    Note over Reg1, Ring: 5. ungraceful (heartbeat 누락 30초 후 자동 expire)
+    Note over Redis: TTL 만료 → expired 이벤트
+    Redis-->>Watcher: keyspace notification (expired)
+    Watcher->>Redis: SCAN
+    Watcher->>Ring: Set(addrs - expired)

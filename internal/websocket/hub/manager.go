@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"maps"
+	"math/rand/v2"
+	"slices"
 	"sync"
 	"time"
 
@@ -20,7 +23,13 @@ const (
 	persistBufferSize   = 10000
 	persistBatchSize    = 500
 	persistFlushTimeout = 100 * time.Millisecond
+	ownerCheckInterval  = 10 * time.Second
+	maxRebalanceJitter  = 10 * time.Second
 )
+
+type OwnerRing interface {
+	Locate(roomID string) string
+}
 
 type registerReq struct {
 	ctx    context.Context
@@ -31,8 +40,8 @@ type registerReq struct {
 }
 
 type forceCloseReq struct {
-	roomID string
-	doneCh chan struct{}
+	roomID   string
+	resultCh chan bool
 }
 
 type Manager struct {
@@ -45,6 +54,7 @@ type Manager struct {
 	broadcastCh  chan *Message
 	forceCloseCh chan forceCloseReq
 	persistCh    chan *Message
+	listRoomsCh  chan chan []string
 
 	workerWG    sync.WaitGroup
 	stoppedCh   chan struct{}
@@ -75,6 +85,7 @@ func NewManager(
 		broadcastCh:  make(chan *Message, broadcastBufferSize),
 		forceCloseCh: make(chan forceCloseReq),
 		persistCh:    make(chan *Message, persistBufferSize),
+		listRoomsCh:  make(chan chan []string),
 		stoppedCh:    make(chan struct{}),
 		limiter:      limiter,
 	}
@@ -140,13 +151,16 @@ func (m *Manager) Run(ctx context.Context) {
 				hubsActive.Add(ctx, -1)
 				h.forceClose()
 			}
-			close(req.doneCh)
+			req.resultCh <- ok
 
 		case h := <-hubDoneCh:
 			if hubs[h.roomID] == h {
 				delete(hubs, h.roomID)
 				hubsActive.Add(ctx, -1)
 			}
+
+		case respCh := <-m.listRoomsCh:
+			respCh <- slices.Collect(maps.Keys(hubs))
 
 		case <-ctx.Done():
 			return
@@ -221,19 +235,71 @@ func (m *Manager) Broadcast(ctx context.Context, msg *Message) error {
 	}
 }
 
-func (m *Manager) ForceCloseRoom(ctx context.Context, roomID string) error {
-	req := forceCloseReq{roomID: roomID, doneCh: make(chan struct{})}
+func (m *Manager) WatchOwnership(ctx context.Context, ring OwnerRing, addr string, events <-chan struct{}) {
+	ticker := time.NewTicker(ownerCheckInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		case <-events:
+		}
+		m.reconcileOwnership(ctx, ring, addr)
+	}
+}
+
+func (m *Manager) reconcileOwnership(ctx context.Context, ring OwnerRing, addr string) {
+	respCh := make(chan []string, 1)
+	select {
+	case m.listRoomsCh <- respCh:
+	case <-m.stoppedCh:
+		return
+	case <-ctx.Done():
+		return
+	}
+
+	rooms := <-respCh
+	for _, room := range rooms {
+		if ring.Locate(room) != addr {
+			m.scheduleRebalanceClose(ctx, room)
+		}
+	}
+}
+
+func (m *Manager) scheduleRebalanceClose(ctx context.Context, room string) {
+	jitter := time.Duration(rand.Int64N(int64(maxRebalanceJitter)))
+	time.AfterFunc(jitter, func() {
+		if ctx.Err() != nil {
+			return
+		}
+		closed, err := m.ForceCloseRoom(ctx, room)
+		if err != nil {
+			slog.WarnContext(ctx, "rebalance close failed", "room_id", room, "error", err)
+			return
+		}
+		if !closed {
+			return
+		}
+		slog.InfoContext(ctx, "rebalance close fired", "room_id", room, "jitter_ms", jitter.Milliseconds())
+		rebalanceEvictionsTotal.Add(ctx, 1)
+	})
+}
+
+func (m *Manager) ForceCloseRoom(ctx context.Context, roomID string) (bool, error) {
+	req := forceCloseReq{roomID: roomID, resultCh: make(chan bool, 1)}
 	select {
 	case m.forceCloseCh <- req:
 		select {
-		case <-req.doneCh:
-			return nil
+		case closed := <-req.resultCh:
+			return closed, nil
 		case <-ctx.Done():
-			return ctx.Err()
+			return false, ctx.Err()
 		}
 	case <-m.stoppedCh:
-		return errors.New("manager stopped")
+		return false, errors.New("manager stopped")
 	case <-ctx.Done():
-		return ctx.Err()
+		return false, ctx.Err()
 	}
 }

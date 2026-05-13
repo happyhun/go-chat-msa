@@ -57,6 +57,9 @@ services:
   redis:
     image: redis:7-alpine
     container_name: redis
+    # 멤버십 watcher가 구독하는 이벤트만 활성화: K(keyspace) + $(SET) + g(DEL) + x(expired)
+    # Compose 변수 보간을 피하려고 $는 $$로 escape (실제 redis 인자는 K$gx)
+    command: ["redis-server", "--notify-keyspace-events", "K$$gx"]
     environment:
       - TZ=Asia/Seoul
     ports:
@@ -160,8 +163,11 @@ services:
     depends_on:
       chat-service:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       - APP_ENV=dev
+      - APP_WEBSOCKET_ADVERTISED_ADDR=websocket-service-1:8081
     ports:
       - "8081:8081"
     volumes:
@@ -189,8 +195,11 @@ services:
     depends_on:
       chat-service:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       - APP_ENV=dev
+      - APP_WEBSOCKET_ADVERTISED_ADDR=websocket-service-2:8081
     ports:
       - "8082:8081"
     volumes:

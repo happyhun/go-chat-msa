@@ -71,6 +71,7 @@ export default function ChatPage() {
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const maxSeqRef = useRef<number>(0)
+  const lastSyncRef = useRef<number>(0)
   const autoScrollRef = useRef(true)
 
   const updateMaxSeq = (msgs: MessageInfo[]) => {
@@ -162,12 +163,24 @@ export default function ChatPage() {
     }
   }, [roomId, ensureSendersLoaded])
 
+  const syncMissedThrottled = useCallback(() => {
+    const now = Date.now()
+    if (now - lastSyncRef.current < 1000) return
+    lastSyncRef.current = now
+    syncMissed()
+  }, [syncMissed])
+
   const onMessage = useCallback((msg: WsOutgoing) => {
     const m = toMessageInfo(msg)
     if (m.type === 'system') {
       fetchMembers()
-    } else if (!userMapRef.current.has(m.sender_id)) {
-      ensureSendersLoaded([m])
+    } else {
+      if (maxSeqRef.current > 0 && m.sequence_number > maxSeqRef.current + 1) {
+        syncMissedThrottled()
+      }
+      if (!userMapRef.current.has(m.sender_id)) {
+        ensureSendersLoaded([m])
+      }
     }
     setMessages((prev) => {
       const next = insertSorted(prev, m)
@@ -176,7 +189,7 @@ export default function ChatPage() {
       }
       return next
     })
-  }, [fetchMembers, ensureSendersLoaded])
+  }, [fetchMembers, ensureSendersLoaded, syncMissedThrottled])
 
   const onConflict = useCallback(() => {
     setDisconnectReason('conflict')

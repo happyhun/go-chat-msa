@@ -8,14 +8,14 @@ import (
 
 type Config struct {
 	config.AppConfig `mapstructure:",squash"`
-	Telemetry   config.TelemetryConfig `mapstructure:"TELEMETRY"`
-	Port        config.PortConfig      `mapstructure:"PORT"        validate:"required"`
-	APIGateway  GatewayConfig          `mapstructure:"API_GATEWAY" validate:"required"`
-	Registry    ServiceRegistry        `mapstructure:"REGISTRY"    validate:"required"`
-	JWT         config.JWTConfig       `mapstructure:"JWT"         validate:"required"`
-	Internal    config.InternalConfig  `mapstructure:"INTERNAL"    validate:"required"`
-	UserService config.UserConfig      `mapstructure:"USER_SERVICE" validate:"required"`
-	Redis       config.RedisConfig     `mapstructure:"REDIS"       validate:"required"`
+	Telemetry        config.TelemetryConfig `mapstructure:"TELEMETRY"`
+	Port             config.PortConfig      `mapstructure:"PORT"        validate:"required"`
+	APIGateway       GatewayConfig          `mapstructure:"API_GATEWAY" validate:"required"`
+	Registry         ServiceRegistry        `mapstructure:"REGISTRY"    validate:"required"`
+	JWT              config.JWTConfig       `mapstructure:"JWT"         validate:"required"`
+	Internal         config.InternalConfig  `mapstructure:"INTERNAL"    validate:"required"`
+	UserService      config.UserConfig      `mapstructure:"USER_SERVICE" validate:"required"`
+	Redis            config.RedisConfig     `mapstructure:"REDIS"       validate:"required"`
 }
 
 type GatewayConfig struct {
@@ -32,10 +32,9 @@ type RateLimitConfig struct {
 }
 
 type ServiceRegistry struct {
-	UserService        config.HostConfig `mapstructure:"USER_SERVICE" validate:"required"`
-	ChatService        config.HostConfig `mapstructure:"CHAT_SERVICE" validate:"required"`
-	WSGateway          config.HostConfig `mapstructure:"WS_GATEWAY" validate:"required"`
-	WebSocketEndpoints []string          `mapstructure:"WEBSOCKET_ENDPOINTS" validate:"required"`
+	UserService config.HostConfig `mapstructure:"USER_SERVICE" validate:"required"`
+	ChatService config.HostConfig `mapstructure:"CHAT_SERVICE" validate:"required"`
+	WSGateway   config.HostConfig `mapstructure:"WS_GATEWAY" validate:"required"`
 }
 
 func (c *Config) UserAddr() string {

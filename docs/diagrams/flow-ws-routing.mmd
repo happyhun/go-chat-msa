@@ -5,19 +5,38 @@ flowchart TB
         direction TB
         Router["Router"]
         Hashring["Consistent Hashing"]
-        Config[/"Service Registry"/]
+        Watcher_G["Membership Watcher"]
     end
 
     subgraph WS_Cluster ["WebSocket Service Cluster"]
-        direction LR
-        WSS1["WebSocket Service 1"]
-        WSS2["WebSocket Service 2"]
+        direction TB
+        subgraph WSS1 ["WebSocket Service 1"]
+            Reg1["Registry (self heartbeat)"]
+            Watcher1["Membership Watcher"]
+            Ring1["Hash Ring (self-check)"]
+        end
+        subgraph WSS2 ["WebSocket Service 2"]
+            Reg2["Registry (self heartbeat)"]
+            Watcher2["Membership Watcher"]
+            Ring2["Hash Ring (self-check)"]
+        end
     end
+
+    Redis[("Redis<br/>wss:member:*")]
 
     Client == "WS Upgrade" ==> Router
 
-    Config -- "시작 시 초기화" --> Hashring
-    Router -- "1. Room ID로 노드 조회" --> Hashring
-    Hashring -- "2. 타겟 노드 반환" --> Router
+    Reg1 -- "SET + EXPIRE" --> Redis
+    Reg2 -- "SET + EXPIRE" --> Redis
 
-    Router == "3. 프록시 연결" ==> WS_Cluster
+    Redis -- "keyspace notify + SCAN" --> Watcher_G
+    Redis -- "keyspace notify + SCAN" --> Watcher1
+    Redis -- "keyspace notify + SCAN" --> Watcher2
+
+    Watcher_G -- "ring.Set(addrs)" --> Hashring
+    Watcher1 -- "ring.Set(addrs)" --> Ring1
+    Watcher2 -- "ring.Set(addrs)" --> Ring2
+
+    Router -- "Locate(roomID)" --> Hashring
+    Router == "프록시" ==> WSS1
+    Router == "프록시" ==> WSS2

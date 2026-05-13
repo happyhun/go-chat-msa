@@ -9,6 +9,7 @@ import (
 	userpb "go-chat-msa/api/proto/user/v1"
 	"go-chat-msa/internal/apigateway/mocks"
 	"go-chat-msa/internal/shared/config"
+	"go-chat-msa/internal/wsgateway/loadbalance"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -23,12 +24,14 @@ func TestRouter_ServeHTTP(t *testing.T) {
 	type mockBehavior func(m *mocks.MockUserServiceClient)
 
 	tests := []struct {
-		name         string
-		queryParams  string
-		userID       string
-		mockBehavior mockBehavior
-		expectedCode int
-		expectedBody string
+		name           string
+		queryParams    string
+		userID         string
+		mockBehavior   mockBehavior
+		hashRingAddrs  []string
+		advertisedAddr string
+		expectedCode   int
+		expectedBody   string
 	}{
 		{
 			name:         "Failure: 유저 식별 헤더(X-User-ID) 누락",
@@ -70,6 +73,18 @@ func TestRouter_ServeHTTP(t *testing.T) {
 			expectedCode: http.StatusInternalServerError,
 			expectedBody: "failed to verify room membership",
 		},
+		{
+			name:        "Failure: 룸 owner가 아닌 경우 self-check 거절 (421)",
+			queryParams: "?room_id=room-1",
+			userID:      "user-1",
+			mockBehavior: func(m *mocks.MockUserServiceClient) {
+				m.EXPECT().VerifyRoomMember(mock.Anything, mock.Anything).Return(nil, nil)
+			},
+			hashRingAddrs:  []string{"other-wss:8081"},
+			advertisedAddr: "me-wss:8081",
+			expectedCode:   http.StatusMisdirectedRequest,
+			expectedBody:   "not the owner of this room",
+		},
 	}
 
 	for _, tt := range tests {
@@ -80,7 +95,9 @@ func TestRouter_ServeHTTP(t *testing.T) {
 			mockUserClient := mocks.NewMockUserServiceClient(t)
 			tt.mockBehavior(mockUserClient)
 
-			router := NewRouter(mockChatClient, mockUserClient, createTestConfig())
+			cfg := createTestConfig()
+			cfg.AdvertisedAddr = tt.advertisedAddr
+			router := NewRouter(mockChatClient, mockUserClient, cfg, loadbalance.New(tt.hashRingAddrs))
 
 			req, err := http.NewRequest("GET", "/ws"+tt.queryParams, nil)
 			require.NoError(t, err)

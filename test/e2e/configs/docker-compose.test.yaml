@@ -28,6 +28,9 @@ services:
 
   redis:
     image: redis:7-alpine
+    # 멤버십 watcher가 구독하는 이벤트만 활성화: K(keyspace) + $(SET) + g(DEL) + x(expired)
+    # Compose 변수 보간을 피하려고 $는 $$로 escape (실제 redis 인자는 K$gx)
+    command: ["redis-server", "--notify-keyspace-events", "K$$gx"]
     environment:
       - TZ=Asia/Seoul
     healthcheck:
@@ -165,11 +168,14 @@ services:
         SERVICE_NAME: websocket-service
     environment:
       - APP_ENV=test
+      - APP_WEBSOCKET_ADVERTISED_ADDR=websocket-service-1:8081
     volumes:
       - ../../../configs/base.yaml:/app/configs/base.yaml:ro
       - ./test.yaml:/app/configs/test.yaml:ro
     depends_on:
       chat-service:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     healthcheck:
       test: [ "CMD-SHELL", "wget -q -O /dev/null http://localhost:8081/health || exit 1" ]
@@ -186,11 +192,14 @@ services:
         SERVICE_NAME: websocket-service
     environment:
       - APP_ENV=test
+      - APP_WEBSOCKET_ADVERTISED_ADDR=websocket-service-2:8081
     volumes:
       - ../../../configs/base.yaml:/app/configs/base.yaml:ro
       - ./test.yaml:/app/configs/test.yaml:ro
     depends_on:
       chat-service:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     healthcheck:
       test: [ "CMD-SHELL", "wget -q -O /dev/null http://localhost:8081/health || exit 1" ]

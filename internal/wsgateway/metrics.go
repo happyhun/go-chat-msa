@@ -9,8 +9,9 @@ import (
 )
 
 var (
-	wsgatewayMeter = otel.Meter("go-chat-msa/wsgateway")
-	routedTotal    metric.Int64Counter
+	wsgatewayMeter   = otel.Meter("go-chat-msa/wsgateway")
+	routedTotal      metric.Int64Counter
+	misdirectedTotal metric.Int64Counter
 )
 
 func init() {
@@ -20,5 +21,11 @@ func init() {
 	)
 	if err != nil {
 		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_wsgateway_routed", "error", err)
+	}
+	misdirectedTotal, err = wsgatewayMeter.Int64Counter("gochat_wsgateway_misdirected",
+		metric.WithDescription("wss로부터 421 응답을 받아 503으로 변환한 횟수"),
+	)
+	if err != nil {
+		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_wsgateway_misdirected", "error", err)
 	}
 }

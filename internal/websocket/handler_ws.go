@@ -38,6 +38,15 @@ func (r *Router) serveWebSocket(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	owner := r.hashRing.Locate(roomID)
+	if owner != r.advertisedAddr {
+		ownerRejectedTotal.Add(req.Context(), 1)
+		slog.WarnContext(req.Context(), "self-check rejected request",
+			"room_id", roomID, "expected_owner", owner, "my_addr", r.advertisedAddr)
+		httpio.WriteProblem(req.Context(), w, http.StatusMisdirectedRequest, "not the owner of this room")
+		return
+	}
+
 	conn, err := r.upgrader.Upgrade(w, req, nil)
 	if err != nil {
 		slog.ErrorContext(req.Context(), "WebSocket upgrade failed", "error", err, "room_id", roomID, "user_id", userID)

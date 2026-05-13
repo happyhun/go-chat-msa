@@ -11,10 +11,13 @@ import (
 	"time"
 
 	"go-chat-msa/internal/shared/config"
+	"go-chat-msa/internal/shared/database"
 	"go-chat-msa/internal/shared/logger"
+	"go-chat-msa/internal/shared/membership"
 	"go-chat-msa/internal/shared/middleware"
 	"go-chat-msa/internal/shared/telemetry"
 	"go-chat-msa/internal/websocket"
+	"go-chat-msa/internal/wsgateway/loadbalance"
 
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -25,6 +28,12 @@ import (
 
 	chatpb "go-chat-msa/api/proto/chat/v1"
 	userpb "go-chat-msa/api/proto/user/v1"
+)
+
+const (
+	membershipKeyPrefix = "wss:member:"
+	membershipTTL       = 30 * time.Second
+	membershipHeartbeat = 10 * time.Second
 )
 
 func main() {
@@ -74,9 +83,22 @@ func run(ctx context.Context) error {
 	}
 	defer cleanupClients()
 
-	router := websocket.NewRouter(chatClient, userClient, cfg.WS)
+	redisClient, err := database.NewRedis(cfg.Redis.Addr)
+	if err != nil {
+		return err
+	}
+	defer redisClient.Close()
 
-	return runServer(ctx, cfg, router)
+	hashRing := loadbalance.New(nil)
+	registry, err := membership.NewRegistry(redisClient, membershipKeyPrefix, cfg.WS.AdvertisedAddr, membershipTTL, membershipHeartbeat)
+	if err != nil {
+		return err
+	}
+	watcher := membership.NewWatcher(redisClient, membershipKeyPrefix, hashRing)
+
+	router := websocket.NewRouter(chatClient, userClient, cfg.WS, hashRing)
+
+	return runServer(ctx, cfg, router, registry, watcher)
 }
 
 func loadConfig() (*websocket.Config, error) {
@@ -121,7 +143,13 @@ func initClients(cfg *websocket.Config) (chatpb.ChatServiceClient, userpb.UserSe
 	return chatpb.NewChatServiceClient(chatConn), userpb.NewUserServiceClient(userConn), cleanupClients, nil
 }
 
-func runServer(ctx context.Context, cfg *websocket.Config, router *websocket.Router) error {
+func runServer(
+	ctx context.Context,
+	cfg *websocket.Config,
+	router *websocket.Router,
+	registry *membership.Registry,
+	watcher *membership.Watcher,
+) error {
 	mux := http.NewServeMux()
 
 	mux.Handle("/", otelhttp.NewMiddleware("websocket-service",
@@ -145,7 +173,20 @@ func runServer(ctx context.Context, cfg *websocket.Config, router *websocket.Rou
 	eg, ctx := errgroup.WithContext(ctx)
 
 	eg.Go(func() error {
+		return registry.Run(ctx)
+	})
+
+	eg.Go(func() error {
+		return watcher.Run(ctx)
+	})
+
+	eg.Go(func() error {
 		router.RunManager(ctx)
+		return nil
+	})
+
+	eg.Go(func() error {
+		router.WatchOwnership(ctx, watcher.Events())
 		return nil
 	})
 
@@ -174,4 +215,3 @@ func runServer(ctx context.Context, cfg *websocket.Config, router *websocket.Rou
 
 	return eg.Wait()
 }
-
