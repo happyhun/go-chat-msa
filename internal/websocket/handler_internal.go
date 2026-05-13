@@ -63,7 +63,7 @@ func (r *Router) handleForceCloseRoom(w http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-	if err := r.manager.ForceCloseRoom(req.Context(), roomID); err != nil {
+	if _, err := r.manager.ForceCloseRoom(req.Context(), roomID); err != nil {
 		slog.ErrorContext(req.Context(), "Manager.ForceCloseRoom failed", "error", err, "room_id", roomID)
 		httpio.WriteProblem(req.Context(), w, http.StatusInternalServerError, "failed to force close room")
 		return

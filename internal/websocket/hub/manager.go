@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"math/rand/v2"
 	"maps"
+	"math/rand/v2"
 	"slices"
 	"sync"
 	"time"
@@ -40,8 +40,8 @@ type registerReq struct {
 }
 
 type forceCloseReq struct {
-	roomID string
-	doneCh chan struct{}
+	roomID   string
+	resultCh chan bool
 }
 
 type Manager struct {
@@ -151,7 +151,7 @@ func (m *Manager) Run(ctx context.Context) {
 				hubsActive.Add(ctx, -1)
 				h.forceClose()
 			}
-			close(req.doneCh)
+			req.resultCh <- ok
 
 		case h := <-hubDoneCh:
 			if hubs[h.roomID] == h {
@@ -274,28 +274,32 @@ func (m *Manager) scheduleRebalanceClose(ctx context.Context, room string) {
 		if ctx.Err() != nil {
 			return
 		}
-		slog.InfoContext(ctx, "rebalance close fired", "room_id", room, "jitter_ms", jitter.Milliseconds())
-		if err := m.ForceCloseRoom(ctx, room); err != nil {
+		closed, err := m.ForceCloseRoom(ctx, room)
+		if err != nil {
 			slog.WarnContext(ctx, "rebalance close failed", "room_id", room, "error", err)
 			return
 		}
+		if !closed {
+			return
+		}
+		slog.InfoContext(ctx, "rebalance close fired", "room_id", room, "jitter_ms", jitter.Milliseconds())
 		rebalanceEvictionsTotal.Add(ctx, 1)
 	})
 }
 
-func (m *Manager) ForceCloseRoom(ctx context.Context, roomID string) error {
-	req := forceCloseReq{roomID: roomID, doneCh: make(chan struct{})}
+func (m *Manager) ForceCloseRoom(ctx context.Context, roomID string) (bool, error) {
+	req := forceCloseReq{roomID: roomID, resultCh: make(chan bool, 1)}
 	select {
 	case m.forceCloseCh <- req:
 		select {
-		case <-req.doneCh:
-			return nil
+		case closed := <-req.resultCh:
+			return closed, nil
 		case <-ctx.Done():
-			return ctx.Err()
+			return false, ctx.Err()
 		}
 	case <-m.stoppedCh:
-		return errors.New("manager stopped")
+		return false, errors.New("manager stopped")
 	case <-ctx.Done():
-		return ctx.Err()
+		return false, ctx.Err()
 	}
 }

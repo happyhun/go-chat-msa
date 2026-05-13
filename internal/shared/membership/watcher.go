@@ -27,6 +27,8 @@ type Watcher struct {
 	ring      RingUpdater
 	forceCh   chan struct{}
 	events    chan struct{}
+
+	lastAddrs map[string]struct{}
 }
 
 func NewWatcher(client *redis.Client, keyPrefix string, ring RingUpdater) *Watcher {
@@ -94,9 +96,33 @@ func (w *Watcher) reconcile(ctx context.Context) error {
 		return err
 	}
 	w.ring.Set(addrs)
-	slog.InfoContext(ctx, "membership ring reconciled",
-		"members", addrs, "count", len(addrs))
+	if w.membershipChanged(addrs) {
+		slog.InfoContext(ctx, "membership ring reconciled",
+			"members", addrs, "count", len(addrs))
+	}
 	return nil
+}
+
+func (w *Watcher) membershipChanged(addrs []string) bool {
+	if len(addrs) != len(w.lastAddrs) {
+		w.lastAddrs = toSet(addrs)
+		return true
+	}
+	for _, a := range addrs {
+		if _, ok := w.lastAddrs[a]; !ok {
+			w.lastAddrs = toSet(addrs)
+			return true
+		}
+	}
+	return false
+}
+
+func toSet(addrs []string) map[string]struct{} {
+	out := make(map[string]struct{}, len(addrs))
+	for _, a := range addrs {
+		out[a] = struct{}{}
+	}
+	return out
 }
 
 func (w *Watcher) scanMembers(ctx context.Context) ([]string, error) {

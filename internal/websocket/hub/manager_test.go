@@ -208,8 +208,9 @@ func TestManager_ForceCloseRoom(t *testing.T) {
 		defer cancel()
 		go manager.Run(ctx)
 
-		err := manager.ForceCloseRoom(t.Context(), "none")
+		closed, err := manager.ForceCloseRoom(t.Context(), "none")
 		assert.NoError(t, err)
+		assert.False(t, closed, "존재하지 않는 방은 close되지 않음")
 	})
 
 	t.Run("Success: 활성화된 방 강제 종료", func(t *testing.T) {
@@ -221,8 +222,9 @@ func TestManager_ForceCloseRoom(t *testing.T) {
 
 		_ = manager.Broadcast(t.Context(), &Message{RoomID: "r2", SenderID: "sys", Type: "system"})
 		time.Sleep(50 * time.Millisecond)
-		err := manager.ForceCloseRoom(t.Context(), "r2")
+		closed, err := manager.ForceCloseRoom(t.Context(), "r2")
 		assert.NoError(t, err)
+		assert.True(t, closed, "활성 방은 close됨")
 	})
 }
 
