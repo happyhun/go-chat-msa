@@ -2,6 +2,7 @@ package loadbalance
 
 import (
 	"strconv"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -168,6 +169,56 @@ func TestHashRing_Set(t *testing.T) {
 			tt.run(t)
 		})
 	}
+}
+
+func TestHashRing_Len(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		addrs    []string
+		expected int
+	}{
+		{name: "Success: 빈 ring", addrs: nil, expected: 0},
+		{name: "Success: 멤버 3개", addrs: []string{"ws-1", "ws-2", "ws-3"}, expected: 3},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ring := New(tt.addrs)
+			assert.Equal(t, tt.expected, ring.Len())
+		})
+	}
+}
+
+func TestHashRing_SetLocateConcurrent(t *testing.T) {
+	t.Parallel()
+
+	ring := New([]string{"ws-1", "ws-2"})
+
+	rounds := 200
+	var wg sync.WaitGroup
+
+	wg.Go(func() {
+		for i := range rounds {
+			if i%2 == 0 {
+				ring.Set([]string{"ws-1", "ws-2", "ws-3"})
+			} else {
+				ring.Set([]string{"ws-1", "ws-2"})
+			}
+		}
+	})
+
+	wg.Go(func() {
+		for i := range rounds {
+			roomID := "room-" + strconv.Itoa(i)
+			got := ring.Locate(roomID)
+			assert.NotEmpty(t, got, "Locate는 항상 멤버를 반환해야 함")
+		}
+	})
+
+	wg.Wait()
 }
 
 func TestHasher_Sum64(t *testing.T) {
