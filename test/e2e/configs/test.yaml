@@ -7,7 +7,6 @@ REGISTRY:
     HOST: "chat-service"
   WS_GATEWAY:
     HOST: "ws-gateway"
-  WEBSOCKET_ENDPOINTS: ["websocket-service-1:8081", "websocket-service-2:8081"]
 
 JWT:
   SECRET: "e2e_secret"

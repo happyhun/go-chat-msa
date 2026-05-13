@@ -11,6 +11,7 @@ import (
 
 	"go-chat-msa/internal/shared/auth"
 	"go-chat-msa/internal/shared/config"
+	"go-chat-msa/internal/shared/membership"
 	"go-chat-msa/internal/wsgateway/loadbalance"
 
 	"github.com/alicebob/miniredis/v2"
@@ -52,7 +53,8 @@ func testRouter(t *testing.T, hashRing *loadbalance.HashRing) *Router {
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
-	return NewRouter(testConfig(), hashRing, client)
+	watcher := membership.NewWatcher(client, "wss:member:", hashRing)
+	return NewRouter(testConfig(), hashRing, watcher, client)
 }
 
 func TestRouter_HandleInternalBroadcast(t *testing.T) {
@@ -256,4 +258,26 @@ func TestRouter_HandleProxyRoomRequest(t *testing.T) {
 			assert.Equal(t, tt.expectedCode, w.Code)
 		})
 	}
+}
+
+func TestRouter_MisdirectedConvertedToServiceUnavailable(t *testing.T) {
+	t.Parallel()
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusMisdirectedRequest)
+	}))
+	t.Cleanup(backend.Close)
+
+	backendAddr := strings.TrimPrefix(backend.URL, "http://")
+	r := testRouter(t, loadbalance.New([]string{backendAddr}))
+
+	proxy, ok := r.getOrCreateProxy(backendAddr)
+	require.True(t, ok)
+
+	req := httptest.NewRequest("GET", "/ws?room_id=room-1", nil)
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code,
+		"wss의 421 응답을 503으로 변환")
 }

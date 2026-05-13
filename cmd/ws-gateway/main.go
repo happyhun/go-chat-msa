@@ -13,6 +13,7 @@ import (
 	"go-chat-msa/internal/shared/config"
 	"go-chat-msa/internal/shared/database"
 	"go-chat-msa/internal/shared/logger"
+	"go-chat-msa/internal/shared/membership"
 	"go-chat-msa/internal/shared/middleware"
 	"go-chat-msa/internal/shared/telemetry"
 	"go-chat-msa/internal/wsgateway"
@@ -21,6 +22,8 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"golang.org/x/sync/errgroup"
 )
+
+const membershipKeyPrefix = "wss:member:"
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -69,10 +72,11 @@ func run(ctx context.Context) error {
 	}
 	defer redisClient.Close()
 
-	hashRing := loadbalance.New(cfg.Registry.WebSocketEndpoints)
-	router := wsgateway.NewRouter(cfg, hashRing, redisClient)
+	hashRing := loadbalance.New(nil)
+	watcher := membership.NewWatcher(redisClient, membershipKeyPrefix, hashRing)
+	router := wsgateway.NewRouter(cfg, hashRing, watcher, redisClient)
 
-	return runServer(ctx, cfg, router)
+	return runServer(ctx, cfg, router, watcher)
 }
 
 func loadConfig() (*wsgateway.Config, error) {
@@ -82,7 +86,7 @@ func loadConfig() (*wsgateway.Config, error) {
 	return config.Load[wsgateway.Config]("configs", "base", env)
 }
 
-func runServer(ctx context.Context, cfg *wsgateway.Config, router *wsgateway.Router) error {
+func runServer(ctx context.Context, cfg *wsgateway.Config, router *wsgateway.Router, watcher *membership.Watcher) error {
 	mux := http.NewServeMux()
 
 	mux.Handle("/", otelhttp.NewMiddleware("ws-gateway",
@@ -104,6 +108,10 @@ func runServer(ctx context.Context, cfg *wsgateway.Config, router *wsgateway.Rou
 	}
 
 	eg, ctx := errgroup.WithContext(ctx)
+
+	eg.Go(func() error {
+		return watcher.Run(ctx)
+	})
 
 	eg.Go(func() error {
 		slog.InfoContext(ctx, "Starting WebSocket Gateway", "port", cfg.Port.WSGateway, "env", cfg.Env)

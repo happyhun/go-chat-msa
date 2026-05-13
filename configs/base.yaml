@@ -23,7 +23,6 @@ REGISTRY:
     HOST: "" # 오버라이드 필수
   WS_GATEWAY:
     HOST: "" # 오버라이드 필수
-  WEBSOCKET_ENDPOINTS: [] # 오버라이드 필수
 
 # Security
 JWT:

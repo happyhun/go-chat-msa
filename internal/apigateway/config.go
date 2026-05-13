@@ -32,10 +32,9 @@ type RateLimitConfig struct {
 }
 
 type ServiceRegistry struct {
-	UserService        config.HostConfig `mapstructure:"USER_SERVICE" validate:"required"`
-	ChatService        config.HostConfig `mapstructure:"CHAT_SERVICE" validate:"required"`
-	WSGateway          config.HostConfig `mapstructure:"WS_GATEWAY" validate:"required"`
-	WebSocketEndpoints []string          `mapstructure:"WEBSOCKET_ENDPOINTS" validate:"required"`
+	UserService config.HostConfig `mapstructure:"USER_SERVICE" validate:"required"`
+	ChatService config.HostConfig `mapstructure:"CHAT_SERVICE" validate:"required"`
+	WSGateway   config.HostConfig `mapstructure:"WS_GATEWAY" validate:"required"`
 }
 
 func (c *Config) UserAddr() string {

@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"go-chat-msa/internal/shared/httpio"
+	"go-chat-msa/internal/shared/membership"
 	"go-chat-msa/internal/shared/middleware"
 	"go-chat-msa/internal/shared/ratelimit"
 	"go-chat-msa/internal/wsgateway/loadbalance"
@@ -25,6 +26,7 @@ type Router struct {
 	mux                *http.ServeMux
 	transport          *http.Transport
 	hashRing           *loadbalance.HashRing
+	watcher            *membership.Watcher
 	ticketStore        *TicketStore
 	publicLimiter      *ratelimit.RedisLimiter
 	wsEstablishLimiter *ratelimit.RedisLimiter
@@ -33,7 +35,7 @@ type Router struct {
 	proxies map[string]*httputil.ReverseProxy
 }
 
-func NewRouter(cfg *Config, hashRing *loadbalance.HashRing, redisClient *redis.Client) *Router {
+func NewRouter(cfg *Config, hashRing *loadbalance.HashRing, watcher *membership.Watcher, redisClient *redis.Client) *Router {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.MaxIdleConns = cfg.WSGateway.HTTPClient.MaxIdleConns
 	tr.MaxIdleConnsPerHost = cfg.WSGateway.HTTPClient.MaxIdleConnsPerHost
@@ -44,6 +46,7 @@ func NewRouter(cfg *Config, hashRing *loadbalance.HashRing, redisClient *redis.C
 		internalSecret: cfg.Internal.Secret,
 		mux:            http.NewServeMux(),
 		hashRing:       hashRing,
+		watcher:        watcher,
 		transport:      tr,
 		proxies:        make(map[string]*httputil.ReverseProxy),
 		ticketStore:    NewTicketStore(redisClient),
@@ -124,6 +127,18 @@ func (r *Router) getOrCreateProxy(targetAddr string) (*httputil.ReverseProxy, bo
 	proxy = httputil.NewSingleHostReverseProxy(targetURL)
 	proxy.Transport = r.transport
 	proxy.FlushInterval = -1
+
+	proxy.ModifyResponse = func(resp *http.Response) error {
+		if resp.StatusCode != http.StatusMisdirectedRequest {
+			return nil
+		}
+		r.watcher.ForceReconcile()
+		slog.WarnContext(resp.Request.Context(), "misdirected request converted to 503",
+			"target", targetAddr, "path", resp.Request.URL.Path)
+		resp.StatusCode = http.StatusServiceUnavailable
+		resp.Status = http.StatusText(http.StatusServiceUnavailable)
+		return nil
+	}
 
 	proxy.ErrorHandler = func(rw http.ResponseWriter, req *http.Request, err error) {
 		slog.ErrorContext(req.Context(), "Reverse proxy failed", "error", err, "target", targetAddr, "path", req.URL.Path)
