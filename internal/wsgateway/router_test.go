@@ -13,6 +13,7 @@ import (
 
 	"go-chat-msa/internal/shared/auth"
 	"go-chat-msa/internal/shared/config"
+	"go-chat-msa/internal/shared/httpio"
 	"go-chat-msa/internal/shared/membership"
 	"go-chat-msa/internal/wsgateway/loadbalance"
 
@@ -281,8 +282,8 @@ func TestRouter_HandleProxyRoomRequest(t *testing.T) {
 func TestRouter_MisdirectedConvertedToServiceUnavailable(t *testing.T) {
 	t.Parallel()
 
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusMisdirectedRequest)
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		httpio.WriteProblem(r.Context(), w, http.StatusMisdirectedRequest, "not the owner of this room")
 	}))
 	t.Cleanup(backend.Close)
 
@@ -299,6 +300,16 @@ func TestRouter_MisdirectedConvertedToServiceUnavailable(t *testing.T) {
 
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code,
 		"wss의 421 응답을 503으로 변환")
+	assert.Equal(t, "application/problem+json", w.Header().Get("Content-Type"),
+		"problem+json content-type 유지")
 	assert.Equal(t, int32(1), refresher.calls.Load(),
 		"misdirect 응답에서 ForceReconcile이 호출되어야 함")
+
+	var problem httpio.ProblemDetail
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &problem),
+		"body가 problem+json 포맷이어야 함")
+	assert.Equal(t, http.StatusServiceUnavailable, problem.Status,
+		"body의 status도 503으로 일치해야 함 (backend의 421 body 잔재 방지)")
+	assert.Equal(t, http.StatusText(http.StatusServiceUnavailable), problem.Title)
+	assert.NotEmpty(t, problem.Detail)
 }

@@ -1,12 +1,16 @@
 package wsgateway
 
 import (
+	"bytes"
+	"encoding/json"
+	"io"
 	"log/slog"
 	"math"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"slices"
+	"strconv"
 	"sync"
 
 	"go-chat-msa/internal/shared/httpio"
@@ -141,8 +145,23 @@ func (r *Router) getOrCreateProxy(targetAddr string) (*httputil.ReverseProxy, bo
 		misdirectedTotal.Add(resp.Request.Context(), 1)
 		slog.WarnContext(resp.Request.Context(), "misdirected request converted to 503",
 			"target", targetAddr, "path", resp.Request.URL.Path)
+
+		body, err := json.Marshal(httpio.ProblemDetail{
+			Type:   "about:blank",
+			Title:  http.StatusText(http.StatusServiceUnavailable),
+			Status: http.StatusServiceUnavailable,
+			Detail: "membership stale, please retry",
+		})
+		if err != nil {
+			return err
+		}
+		_ = resp.Body.Close()
 		resp.StatusCode = http.StatusServiceUnavailable
 		resp.Status = http.StatusText(http.StatusServiceUnavailable)
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+		resp.ContentLength = int64(len(body))
+		resp.Header.Set("Content-Type", "application/problem+json")
+		resp.Header.Set("Content-Length", strconv.Itoa(len(body)))
 		return nil
 	}
 
