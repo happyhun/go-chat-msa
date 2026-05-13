@@ -10,13 +10,18 @@ import (
 	"sync"
 
 	"go-chat-msa/internal/shared/httpio"
-	"go-chat-msa/internal/shared/membership"
 	"go-chat-msa/internal/shared/middleware"
 	"go-chat-msa/internal/shared/ratelimit"
 	"go-chat-msa/internal/wsgateway/loadbalance"
 
 	"github.com/redis/go-redis/v9"
 )
+
+// RingRefresher는 백엔드의 misdirect 응답을 받았을 때 ring을 즉시
+// 갱신하도록 트리거하는 인터페이스. *membership.Watcher가 만족.
+type RingRefresher interface {
+	ForceReconcile()
+}
 
 type Router struct {
 	config         *Config
@@ -26,7 +31,7 @@ type Router struct {
 	mux                *http.ServeMux
 	transport          *http.Transport
 	hashRing           *loadbalance.HashRing
-	watcher            *membership.Watcher
+	watcher            RingRefresher
 	ticketStore        *TicketStore
 	publicLimiter      *ratelimit.RedisLimiter
 	wsEstablishLimiter *ratelimit.RedisLimiter
@@ -35,7 +40,7 @@ type Router struct {
 	proxies map[string]*httputil.ReverseProxy
 }
 
-func NewRouter(cfg *Config, hashRing *loadbalance.HashRing, watcher *membership.Watcher, redisClient *redis.Client) *Router {
+func NewRouter(cfg *Config, hashRing *loadbalance.HashRing, watcher RingRefresher, redisClient *redis.Client) *Router {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.MaxIdleConns = cfg.WSGateway.HTTPClient.MaxIdleConns
 	tr.MaxIdleConnsPerHost = cfg.WSGateway.HTTPClient.MaxIdleConnsPerHost

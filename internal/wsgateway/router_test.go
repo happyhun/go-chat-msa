@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"sync/atomic"
+
 	"go-chat-msa/internal/shared/auth"
 	"go-chat-msa/internal/shared/config"
 	"go-chat-msa/internal/shared/membership"
@@ -19,6 +21,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type fakeRingRefresher struct {
+	calls atomic.Int32
+}
+
+func (f *fakeRingRefresher) ForceReconcile() {
+	f.calls.Add(1)
+}
 
 const testInternalSecret = "test-internal-secret"
 
@@ -55,6 +65,14 @@ func testRouter(t *testing.T, hashRing *loadbalance.HashRing) *Router {
 	t.Cleanup(func() { _ = client.Close() })
 	watcher := membership.NewWatcher(client, "wss:member:", hashRing)
 	return NewRouter(testConfig(), hashRing, watcher, client)
+}
+
+func testRouterWithRefresher(t *testing.T, hashRing *loadbalance.HashRing, refresher RingRefresher) *Router {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	return NewRouter(testConfig(), hashRing, refresher, client)
 }
 
 func TestRouter_HandleInternalBroadcast(t *testing.T) {
@@ -269,7 +287,8 @@ func TestRouter_MisdirectedConvertedToServiceUnavailable(t *testing.T) {
 	t.Cleanup(backend.Close)
 
 	backendAddr := strings.TrimPrefix(backend.URL, "http://")
-	r := testRouter(t, loadbalance.New([]string{backendAddr}))
+	refresher := &fakeRingRefresher{}
+	r := testRouterWithRefresher(t, loadbalance.New([]string{backendAddr}), refresher)
 
 	proxy, ok := r.getOrCreateProxy(backendAddr)
 	require.True(t, ok)
@@ -280,4 +299,6 @@ func TestRouter_MisdirectedConvertedToServiceUnavailable(t *testing.T) {
 
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code,
 		"wss의 421 응답을 503으로 변환")
+	assert.Equal(t, int32(1), refresher.calls.Load(),
+		"misdirect 응답에서 ForceReconcile이 호출되어야 함")
 }

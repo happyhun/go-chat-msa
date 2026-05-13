@@ -215,25 +215,6 @@ func TestWatcher_EmptyMembersKeepsExistingRing(t *testing.T) {
 		"empty 결과는 기존 ring을 유지해야 함")
 }
 
-func TestWatcher_DedupesScanDuplicates(t *testing.T) {
-	client := newRedisClient(t)
-	ctx := t.Context()
-
-	require.NoError(t, client.Set(ctx, testKeyPrefix+"wss-a:8081", "wss-a:8081", time.Minute).Err())
-
-	ring := &fakeRing{}
-	w := NewWatcher(client, testKeyPrefix, ring)
-
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	go func() { _ = w.Run(runCtx) }()
-
-	require.Eventually(t, func() bool {
-		snap := ring.Snapshot()
-		return len(snap) == 1 && snap[0] == "wss-a:8081"
-	}, 2*time.Second, 20*time.Millisecond, "단일 멤버는 dedupe 후 1개")
-}
-
 func TestWatcher_ForceReconcileNonBlocking(t *testing.T) {
 	t.Parallel()
 

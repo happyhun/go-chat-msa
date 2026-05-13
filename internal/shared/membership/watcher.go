@@ -152,25 +152,33 @@ func toSet(addrs []string) map[string]struct{} {
 func (w *Watcher) scanMembers(ctx context.Context) ([]string, error) {
 	var cursor uint64
 	pattern := w.keyPrefix + "*"
-	seen := make(map[string]struct{}, 8)
+	collected := make([]string, 0, 8)
 	for {
 		keys, next, err := w.client.Scan(ctx, cursor, pattern, scanCount).Result()
 		if err != nil {
 			return nil, fmt.Errorf("scan members: %w", err)
 		}
-		for _, k := range keys {
-			seen[strings.TrimPrefix(k, w.keyPrefix)] = struct{}{}
-		}
+		collected = append(collected, keys...)
 		cursor = next
 		if cursor == 0 {
 			break
 		}
 	}
-	addrs := make([]string, 0, len(seen))
-	for a := range seen {
-		addrs = append(addrs, a)
+	return dedupeMemberKeys(collected, w.keyPrefix), nil
+}
+
+// dedupeMemberKeys는 prefix를 제거하고 중복을 제외한 멤버 주소 목록을 반환한다.
+// Redis SCAN은 같은 키를 여러 번 반환할 수 있어 명시적 dedupe가 필요하다.
+func dedupeMemberKeys(keys []string, prefix string) []string {
+	seen := make(map[string]struct{}, len(keys))
+	for _, k := range keys {
+		seen[strings.TrimPrefix(k, prefix)] = struct{}{}
 	}
-	return addrs, nil
+	out := make([]string, 0, len(seen))
+	for a := range seen {
+		out = append(out, a)
+	}
+	return out
 }
 
 func (w *Watcher) notify() {
