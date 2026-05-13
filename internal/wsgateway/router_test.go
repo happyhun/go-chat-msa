@@ -195,14 +195,14 @@ func TestRouter_ProxyWebSocket(t *testing.T) {
 			expectedCode: http.StatusBadRequest,
 		},
 		{
-			name: "Failure: 룸 페어링을 위한 노드를 찾을 수 없음",
+			name: "Failure: 룸 페어링을 위한 노드를 찾을 수 없음 (부팅 race, ring 미초기화)",
 			setup: func(t *testing.T, r *Router) {
 				require.NoError(t, r.ticketStore.Set(t.Context(), "ticket-no-node", "user-123", time.Minute))
 				r.hashRing = loadbalance.New([]string{})
 			},
 			ticket:       "ticket-no-node",
 			roomID:       "test-room",
-			expectedCode: http.StatusInternalServerError,
+			expectedCode: http.StatusServiceUnavailable,
 		},
 		{
 			name: "Success: 웹소켓 연결 프록시 시도",

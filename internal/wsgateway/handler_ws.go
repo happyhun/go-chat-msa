@@ -59,7 +59,7 @@ func (r *Router) proxyWebSocket(w http.ResponseWriter, req *http.Request) {
 
 	targetAddr := r.hashRing.Locate(roomID)
 	if targetAddr == "" {
-		httpio.WriteProblem(req.Context(), w, http.StatusInternalServerError, "failed to locate websocket server")
+		httpio.WriteProblem(req.Context(), w, http.StatusServiceUnavailable, "ring not ready, please retry")
 		return
 	}
 	routedTotal.Add(req.Context(), 1, metric.WithAttributes(attribute.String("endpoint", targetAddr)))
