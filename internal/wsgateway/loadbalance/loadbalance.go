@@ -43,6 +43,29 @@ func (r *HashRing) Locate(roomID string) string {
 	return found.String()
 }
 
+func (r *HashRing) Set(addrs []string) {
+	desired := make(map[string]struct{}, len(addrs))
+	for _, a := range addrs {
+		desired[a] = struct{}{}
+	}
+
+	current := make(map[string]struct{})
+	for _, m := range r.hash.GetMembers() {
+		current[m.String()] = struct{}{}
+	}
+
+	for a := range desired {
+		if _, ok := current[a]; !ok {
+			r.hash.Add(member(a))
+		}
+	}
+	for a := range current {
+		if _, ok := desired[a]; !ok {
+			r.hash.Remove(a)
+		}
+	}
+}
+
 func (h hasher) Sum64(data []byte) uint64 {
 	return xxhash.Sum64(data)
 }

@@ -94,6 +94,82 @@ func TestHashRing_Locate(t *testing.T) {
 	}
 }
 
+func ringMembers(ring *HashRing) []string {
+	ms := ring.hash.GetMembers()
+	out := make([]string, len(ms))
+	for i, m := range ms {
+		out[i] = m.String()
+	}
+	return out
+}
+
+func TestHashRing_Set(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		run  func(t *testing.T)
+	}{
+		{
+			name: "Success: 빈 ring을 Set으로 채움",
+			run: func(t *testing.T) {
+				ring := New(nil)
+				ring.Set([]string{"ws-1", "ws-2"})
+				assert.ElementsMatch(t, []string{"ws-1", "ws-2"}, ringMembers(ring))
+			},
+		},
+		{
+			name: "Success: Set으로 멤버 교체 (diff 적용)",
+			run: func(t *testing.T) {
+				ring := New([]string{"ws-1", "ws-2"})
+				ring.Set([]string{"ws-2", "ws-3"})
+				assert.ElementsMatch(t, []string{"ws-2", "ws-3"}, ringMembers(ring))
+			},
+		},
+		{
+			name: "Success: 동일 멤버를 Set하면 변화 없음",
+			run: func(t *testing.T) {
+				ring := New([]string{"ws-1", "ws-2"})
+				ring.Set([]string{"ws-1", "ws-2"})
+				assert.ElementsMatch(t, []string{"ws-1", "ws-2"}, ringMembers(ring))
+			},
+		},
+		{
+			name: "Success: 빈 슬라이스 Set으로 모든 멤버 제거",
+			run: func(t *testing.T) {
+				ring := New([]string{"ws-1", "ws-2"})
+				ring.Set([]string{})
+				assert.Empty(t, ringMembers(ring))
+			},
+		},
+		{
+			name: "Success: 모든 멤버 제거 후 Locate는 빈 문자열",
+			run: func(t *testing.T) {
+				ring := New([]string{"ws-1"})
+				ring.Set(nil)
+				assert.Empty(t, ring.Locate("room"))
+			},
+		},
+		{
+			name: "Success: Set 후에도 Locate는 일관된 결과",
+			run: func(t *testing.T) {
+				ring := New([]string{"ws-1", "ws-2", "ws-3"})
+				before := ring.Locate("room-x")
+				ring.Set([]string{"ws-1", "ws-2", "ws-3"})
+				after := ring.Locate("room-x")
+				assert.Equal(t, before, after)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tt.run(t)
+		})
+	}
+}
+
 func TestHasher_Sum64(t *testing.T) {
 	t.Parallel()
 
