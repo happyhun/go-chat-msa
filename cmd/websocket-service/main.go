@@ -183,6 +183,11 @@ func runServer(
 	})
 
 	eg.Go(func() error {
+		router.WatchOwnership(ctx, watcher.Events())
+		return nil
+	})
+
+	eg.Go(func() error {
 		slog.InfoContext(ctx, "Starting WebSocket Service", "port", cfg.Port.WebSocket, "env", cfg.Env)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			return err

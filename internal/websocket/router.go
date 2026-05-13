@@ -72,6 +72,10 @@ func (r *Router) RunManager(ctx context.Context) {
 	wg.Wait()
 }
 
+func (r *Router) WatchOwnership(ctx context.Context, events <-chan struct{}) {
+	r.manager.WatchOwnership(ctx, r.hashRing, r.advertisedAddr, events)
+}
+
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	r.mux.ServeHTTP(w, req)
 }

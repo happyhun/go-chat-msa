@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"math/rand/v2"
+	"maps"
+	"slices"
 	"sync"
 	"time"
 
@@ -20,7 +23,13 @@ const (
 	persistBufferSize   = 10000
 	persistBatchSize    = 500
 	persistFlushTimeout = 100 * time.Millisecond
+	ownerCheckInterval  = 10 * time.Second
+	maxRebalanceJitter  = 10 * time.Second
 )
+
+type OwnerRing interface {
+	Locate(roomID string) string
+}
 
 type registerReq struct {
 	ctx    context.Context
@@ -45,6 +54,10 @@ type Manager struct {
 	broadcastCh  chan *Message
 	forceCloseCh chan forceCloseReq
 	persistCh    chan *Message
+	listRoomsCh  chan chan []string
+
+	rebalanceTimersMu sync.Mutex
+	rebalanceTimers   []*time.Timer
 
 	workerWG    sync.WaitGroup
 	stoppedCh   chan struct{}
@@ -75,6 +88,7 @@ func NewManager(
 		broadcastCh:  make(chan *Message, broadcastBufferSize),
 		forceCloseCh: make(chan forceCloseReq),
 		persistCh:    make(chan *Message, persistBufferSize),
+		listRoomsCh:  make(chan chan []string),
 		stoppedCh:    make(chan struct{}),
 		limiter:      limiter,
 	}
@@ -85,6 +99,7 @@ func (m *Manager) Run(ctx context.Context) {
 	hubDoneCh := make(chan *Hub, hubDoneBufferSize)
 
 	defer func() {
+		m.stopRebalanceTimers()
 		m.limiter.Stop()
 		close(m.persistCh)
 		m.workerWG.Wait()
@@ -147,6 +162,9 @@ func (m *Manager) Run(ctx context.Context) {
 				delete(hubs, h.roomID)
 				hubsActive.Add(ctx, -1)
 			}
+
+		case respCh := <-m.listRoomsCh:
+			respCh <- slices.Collect(maps.Keys(hubs))
 
 		case <-ctx.Done():
 			return
@@ -219,6 +237,64 @@ func (m *Manager) Broadcast(ctx context.Context, msg *Message) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+func (m *Manager) WatchOwnership(ctx context.Context, ring OwnerRing, addr string, events <-chan struct{}) {
+	ticker := time.NewTicker(ownerCheckInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		case <-events:
+		}
+		m.reconcileOwnership(ctx, ring, addr)
+	}
+}
+
+func (m *Manager) reconcileOwnership(ctx context.Context, ring OwnerRing, addr string) {
+	respCh := make(chan []string, 1)
+	select {
+	case m.listRoomsCh <- respCh:
+	case <-m.stoppedCh:
+		return
+	case <-ctx.Done():
+		return
+	}
+
+	rooms := <-respCh
+	for _, room := range rooms {
+		if ring.Locate(room) != addr {
+			m.scheduleRebalanceClose(ctx, room)
+		}
+	}
+}
+
+func (m *Manager) scheduleRebalanceClose(ctx context.Context, room string) {
+	jitter := time.Duration(rand.Int64N(int64(maxRebalanceJitter)))
+	timer := time.AfterFunc(jitter, func() {
+		if ctx.Err() != nil {
+			return
+		}
+		slog.InfoContext(ctx, "rebalance close fired", "room_id", room, "jitter_ms", jitter.Milliseconds())
+		if err := m.ForceCloseRoom(ctx, room); err != nil {
+			slog.WarnContext(ctx, "rebalance close failed", "room_id", room, "error", err)
+		}
+	})
+	m.rebalanceTimersMu.Lock()
+	m.rebalanceTimers = append(m.rebalanceTimers, timer)
+	m.rebalanceTimersMu.Unlock()
+}
+
+func (m *Manager) stopRebalanceTimers() {
+	m.rebalanceTimersMu.Lock()
+	defer m.rebalanceTimersMu.Unlock()
+	for _, t := range m.rebalanceTimers {
+		t.Stop()
+	}
+	m.rebalanceTimers = nil
 }
 
 func (m *Manager) ForceCloseRoom(ctx context.Context, roomID string) error {
