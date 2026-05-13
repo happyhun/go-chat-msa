@@ -420,7 +420,12 @@ WS Gateway가 `room_id` 기반 Consistent Hashing으로 대상 WebSocket Service
 
 **Hash ring 동시성**: HashRing은 라이브러리의 thread-safe `Add/Remove`를 호출하지만, `Set`은 여러 add/remove를 묶은 composite operation이므로 그 자체로는 원자적이지 않습니다. 중간 상태에서 `Locate`가 wrong owner를 반환할 가능성을 막기 위해 wrapper에 `sync.RWMutex`를 두고 `Set`은 Lock, `Locate`는 RLock으로 보호합니다.
 
-**빈 멤버 정책**: Watcher가 SCAN 결과로 멤버 0개를 받으면 Redis 일시 장애일 가능성이 있으므로 기존 ring을 유지합니다(warn 로그). 실제 멤버 수는 `Watcher.HasMembers()`로 별도 노출하여 readiness probe가 직접 활용할 수 있게 했습니다. ring을 보수적으로 유지하면서 정확한 카운트는 별도 채널로 노출하는 분리.
+**빈 멤버 정책**: Watcher가 SCAN 결과로 멤버 0개를 받으면 Redis 일시 장애일 가능성이 있으므로 기존 ring을 유지합니다(warn 로그). 이때 두 가지 상태가 분리되어 노출됩니다.
+
+- `HashRing.Len()` — 현재 라우팅 가능한 cached ring 크기. 빈 SCAN으로 유지된 경우에도 0이 아닐 수 있음.
+- `Watcher.HasObservedMembers()` — 마지막 reconcile에서 실제로 멤버를 1개 이상 보았는지. 빈 SCAN 직후엔 false.
+
+readiness 게이트는 보통 후자(`HasObservedMembers`) 기준이 안전합니다. 실제 멤버십 저장소에 등록된 인스턴스가 없다면 새 트래픽을 받지 않는 게 맞기 때문입니다. ring을 보수적으로 유지하는 것과 readiness 판단은 분리된 결정.
 
 게이트웨이만 검증하지 않고 백엔드가 자체 검증하는 양측 확인 패턴은 stateful + 어피니티 기반 분산 시스템의 표준입니다. Kafka(`NOT_LEADER_OR_FOLLOWER`), Cassandra(coordinator forward), Redis Cluster(`MOVED`), MongoDB sharded(`StaleConfigException`), CockroachDB(`NotLeaseHolderError`) 모두 동일한 패턴입니다. 백엔드가 진실의 원천이므로 게이트웨이의 stale 메타데이터를 자체 검증으로 정정합니다.
 

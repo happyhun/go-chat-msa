@@ -45,7 +45,12 @@ func NewWatcher(client *redis.Client, keyPrefix string, ring RingUpdater) *Watch
 
 func (w *Watcher) Events() <-chan struct{} { return w.events }
 
-func (w *Watcher) HasMembers() bool {
+// HasObservedMembers는 마지막 reconcile에서 SCAN으로 1개 이상의 멤버를 본 적이
+// 있는지를 반환한다. 빈 SCAN 결과로 ring을 유지한 경우에도 false다.
+// 라우팅 가능 여부는 ring.Len() > 0으로 확인하고, 실제 멤버십 저장소에
+// 등록된 멤버 존재 여부는 이 메서드로 확인한다. readiness 게이트는 보통
+// 후자 기준이 더 안전하다.
+func (w *Watcher) HasObservedMembers() bool {
 	return w.lastMemberCount.Load() > 0
 }
 

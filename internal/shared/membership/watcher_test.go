@@ -202,14 +202,14 @@ func TestWatcher_EmptyMembersKeepsExistingRing(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return contains(ring.Snapshot(), "wss-temp:8081")
 	}, 2*time.Second, 20*time.Millisecond, "초기 reconcile로 멤버 1개 반영")
-	require.True(t, w.HasMembers())
+	require.True(t, w.HasObservedMembers())
 
 	require.NoError(t, client.Del(ctx, testKeyPrefix+"wss-temp:8081").Err())
 	w.ForceReconcile()
 
 	require.Eventually(t, func() bool {
-		return !w.HasMembers()
-	}, 2*time.Second, 20*time.Millisecond, "Redis가 비어 HasMembers는 false")
+		return !w.HasObservedMembers()
+	}, 2*time.Second, 20*time.Millisecond, "Redis가 비어 HasObservedMembers는 false")
 
 	assert.True(t, contains(ring.Snapshot(), "wss-temp:8081"),
 		"empty 결과는 기존 ring을 유지해야 함")
