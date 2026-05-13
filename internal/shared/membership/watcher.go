@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -28,7 +29,8 @@ type Watcher struct {
 	forceCh   chan struct{}
 	events    chan struct{}
 
-	lastAddrs map[string]struct{}
+	lastAddrs       map[string]struct{}
+	lastMemberCount atomic.Int32
 }
 
 func NewWatcher(client *redis.Client, keyPrefix string, ring RingUpdater) *Watcher {
@@ -42,6 +44,10 @@ func NewWatcher(client *redis.Client, keyPrefix string, ring RingUpdater) *Watch
 }
 
 func (w *Watcher) Events() <-chan struct{} { return w.events }
+
+func (w *Watcher) HasMembers() bool {
+	return w.lastMemberCount.Load() > 0
+}
 
 func (w *Watcher) ForceReconcile() {
 	select {
@@ -57,7 +63,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 	pubsub := w.client.PSubscribe(ctx, pattern)
 	defer func() { _ = pubsub.Close() }()
 
-	if err := w.reconcile(ctx); err != nil {
+	if _, err := w.reconcile(ctx); err != nil {
 		slog.WarnContext(ctx, "membership initial reconcile failed (fail-open)",
 			"error", err)
 	}
@@ -81,26 +87,39 @@ func (w *Watcher) Run(ctx context.Context) error {
 }
 
 func (w *Watcher) runReconcile(ctx context.Context) {
-	if err := w.reconcile(ctx); err != nil {
+	result, err := w.reconcile(ctx)
+	if err != nil {
 		membershipReconcileTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("status", "error")))
 		slog.WarnContext(ctx, "membership reconcile failed (fail-open)", "error", err)
 		return
 	}
-	membershipReconcileTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("status", "ok")))
+	membershipReconcileTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("status", result)))
+	if result == "empty_skipped" {
+		return
+	}
 	w.notify()
 }
 
-func (w *Watcher) reconcile(ctx context.Context) error {
+func (w *Watcher) reconcile(ctx context.Context) (string, error) {
 	addrs, err := w.scanMembers(ctx)
 	if err != nil {
-		return err
+		return "", err
 	}
+
+	w.lastMemberCount.Store(int32(len(addrs)))
+
+	if len(addrs) == 0 && len(w.lastAddrs) > 0 {
+		slog.WarnContext(ctx, "membership reconcile returned empty members, keeping existing ring",
+			"previous_count", len(w.lastAddrs))
+		return "empty_skipped", nil
+	}
+
 	w.ring.Set(addrs)
 	if w.membershipChanged(addrs) {
 		slog.InfoContext(ctx, "membership ring reconciled",
 			"members", addrs, "count", len(addrs))
 	}
-	return nil
+	return "ok", nil
 }
 
 func (w *Watcher) membershipChanged(addrs []string) bool {
@@ -128,19 +147,23 @@ func toSet(addrs []string) map[string]struct{} {
 func (w *Watcher) scanMembers(ctx context.Context) ([]string, error) {
 	var cursor uint64
 	pattern := w.keyPrefix + "*"
-	addrs := make([]string, 0, 8)
+	seen := make(map[string]struct{}, 8)
 	for {
 		keys, next, err := w.client.Scan(ctx, cursor, pattern, scanCount).Result()
 		if err != nil {
 			return nil, fmt.Errorf("scan members: %w", err)
 		}
 		for _, k := range keys {
-			addrs = append(addrs, strings.TrimPrefix(k, w.keyPrefix))
+			seen[strings.TrimPrefix(k, w.keyPrefix)] = struct{}{}
 		}
 		cursor = next
 		if cursor == 0 {
 			break
 		}
+	}
+	addrs := make([]string, 0, len(seen))
+	for a := range seen {
+		addrs = append(addrs, a)
 	}
 	return addrs, nil
 }

@@ -116,6 +116,7 @@ func TestWatcher_KeyspaceNotificationOnExpire(t *testing.T) {
 	client := newRedisClient(t)
 	ctx := t.Context()
 
+	require.NoError(t, client.Set(ctx, testKeyPrefix+"wss-stable:8081", "wss-stable:8081", time.Minute).Err())
 	require.NoError(t, client.Set(ctx, testKeyPrefix+"wss-tmp:8081", "wss-tmp:8081", 500*time.Millisecond).Err())
 
 	ring := &fakeRing{}
@@ -127,12 +128,13 @@ func TestWatcher_KeyspaceNotificationOnExpire(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		snap := ring.Snapshot()
-		return len(snap) == 1
-	}, time.Second, 20*time.Millisecond)
+		return len(snap) == 2
+	}, time.Second, 20*time.Millisecond, "초기 reconcile로 두 멤버 반영")
 
 	require.Eventually(t, func() bool {
-		return len(ring.Snapshot()) == 0
-	}, 3*time.Second, 50*time.Millisecond, "expired 이벤트 또는 다음 reconcile에서 ring에서 제거")
+		snap := ring.Snapshot()
+		return len(snap) == 1 && snap[0] == "wss-stable:8081"
+	}, 3*time.Second, 50*time.Millisecond, "expired 이벤트 또는 다음 reconcile에서 wss-tmp 제거")
 }
 
 func TestWatcher_ForceReconcile(t *testing.T) {
@@ -182,6 +184,74 @@ func TestWatcher_CrossInstance(t *testing.T) {
 		s2 := ring2.Snapshot()
 		return contains(s1, "wss-shared:8081") && contains(s2, "wss-shared:8081")
 	}, 2*time.Second, 20*time.Millisecond, "두 Watcher가 같은 Redis에서 동일 멤버 관찰")
+}
+
+func TestWatcher_EmptyMembersKeepsExistingRing(t *testing.T) {
+	client := newRedisClient(t)
+	ctx := t.Context()
+
+	require.NoError(t, client.Set(ctx, testKeyPrefix+"wss-temp:8081", "wss-temp:8081", time.Minute).Err())
+
+	ring := &fakeRing{}
+	w := NewWatcher(client, testKeyPrefix, ring)
+
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() { _ = w.Run(runCtx) }()
+
+	require.Eventually(t, func() bool {
+		return contains(ring.Snapshot(), "wss-temp:8081")
+	}, 2*time.Second, 20*time.Millisecond, "초기 reconcile로 멤버 1개 반영")
+	require.True(t, w.HasMembers())
+
+	require.NoError(t, client.Del(ctx, testKeyPrefix+"wss-temp:8081").Err())
+	w.ForceReconcile()
+
+	require.Eventually(t, func() bool {
+		return !w.HasMembers()
+	}, 2*time.Second, 20*time.Millisecond, "Redis가 비어 HasMembers는 false")
+
+	assert.True(t, contains(ring.Snapshot(), "wss-temp:8081"),
+		"empty 결과는 기존 ring을 유지해야 함")
+}
+
+func TestWatcher_DedupesScanDuplicates(t *testing.T) {
+	client := newRedisClient(t)
+	ctx := t.Context()
+
+	require.NoError(t, client.Set(ctx, testKeyPrefix+"wss-a:8081", "wss-a:8081", time.Minute).Err())
+
+	ring := &fakeRing{}
+	w := NewWatcher(client, testKeyPrefix, ring)
+
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() { _ = w.Run(runCtx) }()
+
+	require.Eventually(t, func() bool {
+		snap := ring.Snapshot()
+		return len(snap) == 1 && snap[0] == "wss-a:8081"
+	}, 2*time.Second, 20*time.Millisecond, "단일 멤버는 dedupe 후 1개")
+}
+
+func TestWatcher_ForceReconcileNonBlocking(t *testing.T) {
+	t.Parallel()
+
+	w := NewWatcher(nil, testKeyPrefix, &fakeRing{})
+
+	done := make(chan struct{})
+	go func() {
+		for range 100 {
+			w.ForceReconcile()
+		}
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("ForceReconcile이 block됨")
+	}
 }
 
 func contains(ss []string, target string) bool {
