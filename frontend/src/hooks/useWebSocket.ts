@@ -5,6 +5,13 @@ import { createWsTicket } from '../api/client'
 const MAX_RECONNECT_ATTEMPTS = 20
 const BASE_DELAY_MS = 1000
 const MAX_DELAY_MS = 30000
+const MAX_SEND_QUEUE_SIZE = 50
+
+type OutboundMessage = {
+  content: string
+  client_msg_id: string
+  type: string
+}
 
 interface UseWebSocketOptions {
   roomId: string
@@ -21,6 +28,7 @@ export function useWebSocket({ roomId, onMessage, onConflict, onReconnected, onG
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
   const mountedRef = useRef(true)
   const shouldReconnectRef = useRef(true)
+  const sendQueueRef = useRef<OutboundMessage[]>([])
 
   const onMessageRef = useRef(onMessage)
   const onConflictRef = useRef(onConflict)
@@ -65,6 +73,11 @@ export function useWebSocket({ roomId, onMessage, onConflict, onReconnected, onG
         setConnected(true)
         const wasReconnect = attemptRef.current > 0
         attemptRef.current = 0
+        const queued = sendQueueRef.current
+        sendQueueRef.current = []
+        for (const msg of queued) {
+          ws.send(JSON.stringify(msg))
+        }
         if (wasReconnect) {
           onReconnectedRef.current?.()
         }
@@ -122,15 +135,18 @@ export function useWebSocket({ roomId, onMessage, onConflict, onReconnected, onG
   }, [connectOnce])
 
   const send = useCallback((content: string) => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return
-    const clientMsgId = crypto.randomUUID()
-    wsRef.current.send(
-      JSON.stringify({
-        content,
-        client_msg_id: clientMsgId,
-        type: 'chat',
-      }),
-    )
+    const msg: OutboundMessage = {
+      content,
+      client_msg_id: crypto.randomUUID(),
+      type: 'chat',
+    }
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(msg))
+      return
+    }
+    if (sendQueueRef.current.length < MAX_SEND_QUEUE_SIZE) {
+      sendQueueRef.current.push(msg)
+    }
   }, [])
 
   const disconnect = useCallback(() => {
