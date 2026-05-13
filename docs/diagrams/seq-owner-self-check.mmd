@@ -1,0 +1,40 @@
+sequenceDiagram
+    autonumber
+
+    participant Client as Client
+    participant Gateway as WS Gateway
+    participant Ring_G as Gateway Ring
+    participant WSS as WebSocket Service
+    participant Ring_W as WSS Ring
+    participant Watcher_G as Gateway Watcher
+
+    Note over Client, Watcher_G: 정상 경로 — ring 동기화 완료
+
+    Client->>Gateway: GET /ws?room_id=R&ticket=T
+    Gateway->>Ring_G: Locate(R)
+    Ring_G-->>Gateway: WSS addr
+    Gateway->>WSS: 프록시 (Upgrade)
+    WSS->>Ring_W: Locate(R)
+    Ring_W-->>WSS: WSS addr (== self)
+    WSS-->>Gateway: 101 Switching Protocols
+    Gateway-->>Client: hijack 후 양방향 터널
+
+    Note over Client, Watcher_G: 이상 경로 — 멤버십 lag (Gateway 정보 stale)
+
+    Client->>Gateway: GET /ws?room_id=R&ticket=T
+    Gateway->>Ring_G: Locate(R)
+    Ring_G-->>Gateway: WSS-A addr (stale)
+    Gateway->>WSS: 프록시 (WSS-A)
+    WSS->>Ring_W: Locate(R)
+    Ring_W-->>WSS: WSS-B addr (≠ self)
+    WSS-->>Gateway: HTTP 421 Misdirected Request
+
+    Note over Gateway: ModifyResponse가 421을 503으로 변환
+    Gateway->>Watcher_G: ForceReconcile()
+    Watcher_G->>Watcher_G: SCAN + ring.Set (백그라운드)
+    Gateway-->>Client: 503 Service Unavailable
+
+    Note over Client: server-side retry 없음 — 클라가 jittered backoff
+    Client->>Client: scheduleReconnect (1~30s)
+    Client->>Gateway: 재접속 (새 ring 반영 후)
+    Note right of Gateway: 정상 경로로 복구

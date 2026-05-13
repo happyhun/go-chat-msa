@@ -1,0 +1,38 @@
+sequenceDiagram
+    autonumber
+
+    Note over WSS_A, Manager: 스케일아웃: WSS-C 신규 추가
+    participant WSS_A as WSS A (기존 owner)
+    participant Watcher as A의 Watcher
+    participant Manager as A의 Manager
+    participant Hub as A의 Hub (room R)
+    participant Client as Client
+    participant WSS_C as WSS C (새 owner)
+
+    Note over WSS_A, WSS_C: 1. 멤버십 변경 감지
+    WSS_C->>WSS_C: SET wss:member:C (부팅 시)
+    Watcher->>Watcher: keyspace notification 수신
+    Watcher->>Watcher: SCAN + ring.Set([A, B, C])
+    Watcher->>Manager: events 채널 신호
+
+    Note over WSS_A, WSS_C: 2. owner 재검사 (즉시 + 10초 ticker 안전망)
+    Manager->>Manager: reconcileOwnership 호출
+    Manager->>Manager: listRoomsCh로 hubs 스냅샷
+    loop 각 보유 룸
+        Manager->>Manager: ring.Locate(R) vs self
+        alt mismatched (R의 새 owner = C)
+            Manager->>Manager: scheduleRebalanceClose(R, jitter[0~10s])
+        end
+    end
+
+    Note over WSS_A, WSS_C: 3. jitter 만료 후 강제 close (thundering herd 방지)
+    Note over Manager: time.AfterFunc(jitter)
+    Manager->>Hub: ForceCloseRoom(R)
+    Hub->>Client: WebSocket close (모든 session)
+
+    Note over WSS_A, WSS_C: 4. 클라이언트 자율 reconnect
+    Client->>Client: ws.onclose → jittered backoff (1~30s)
+    Client->>WSS_C: 재접속 (새 ring으로 라우팅됨)
+    WSS_C->>WSS_C: self-check 통과 (R의 owner = C)
+    WSS_C-->>Client: 정상 연결
+    Note right of WSS_C: 송신 큐(disconnect 동안)는 replay,<br/>seq gap은 catch-up API로 보충

@@ -151,6 +151,8 @@ Grafana Full Stack 기반 관측성 구성. Profiles를 제외한 시그널은 G
 | gochat_ws_broadcast_channel_depth | histogram | - |
 | gochat_ws_fanout_duration_seconds | histogram | - |
 | gochat_ws_egress_duration_seconds | histogram | - |
+| gochat_ws_rebalance_evictions_total | counter | - |
+| gochat_websocket_owner_rejected_total | counter | - |
 
 - 서비스: websocket-service
 
@@ -236,6 +238,8 @@ Grafana Full Stack 기반 관측성 구성. Profiles를 제외한 시그널은 G
 | gochat_hasher_queue_depth | gauge | - | user-service |
 | gochat_hasher_queue_full_total | counter | - | user-service |
 | gochat_wsgateway_routed_total | counter | endpoint | ws-gateway |
+| gochat_wsgateway_misdirected_total | counter | - | ws-gateway |
+| gochat_membership_reconcile_total | counter | status | ws-gateway, websocket-service |
 | gochat_retention_duration_seconds | histogram | - | retention-worker |
 | gochat_retention_purged_total | counter | kind, status | retention-worker |
 
