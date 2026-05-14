@@ -24,11 +24,16 @@ import (
 )
 
 type fakeRingRefresher struct {
-	calls atomic.Int32
+	calls    atomic.Int32
+	observed bool
 }
 
 func (f *fakeRingRefresher) ForceReconcile() {
 	f.calls.Add(1)
+}
+
+func (f *fakeRingRefresher) HasObservedMembers() bool {
+	return f.observed
 }
 
 const testInternalSecret = "test-internal-secret"

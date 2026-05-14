@@ -83,6 +83,7 @@ services:
     healthcheck:
       test: [ "CMD-SHELL", "/bin/grpc_health_probe -addr=127.0.0.1:50051 || exit 1" ]
       interval: 5s
+    stop_grace_period: 30s
     networks:
       - go-chat-net
 
@@ -106,6 +107,7 @@ services:
     healthcheck:
       test: [ "CMD-SHELL", "/bin/grpc_health_probe -addr=127.0.0.1:50052 || exit 1" ]
       interval: 5s
+    stop_grace_period: 30s
     networks:
       - go-chat-net
 
@@ -129,8 +131,9 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: [ "CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/health || exit 1" ]
+      test: [ "CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/ready || exit 1" ]
       interval: 5s
+    stop_grace_period: 30s
     networks:
       - go-chat-net
 
@@ -154,8 +157,9 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: [ "CMD-SHELL", "wget -q -O /dev/null http://localhost:8088/health || exit 1" ]
+      test: [ "CMD-SHELL", "wget -q -O /dev/null http://localhost:8088/ready || exit 1" ]
       interval: 5s
+    stop_grace_period: 30s
     networks:
       - go-chat-net
 
@@ -178,8 +182,9 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: [ "CMD-SHELL", "wget -q -O /dev/null http://localhost:8081/health || exit 1" ]
+      test: [ "CMD-SHELL", "wget -q -O /dev/null http://localhost:8081/ready || exit 1" ]
       interval: 5s
+    stop_grace_period: 30s
     networks:
       - go-chat-net
 
@@ -202,8 +207,9 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: [ "CMD-SHELL", "wget -q -O /dev/null http://localhost:8081/health || exit 1" ]
+      test: [ "CMD-SHELL", "wget -q -O /dev/null http://localhost:8081/ready || exit 1" ]
       interval: 5s
+    stop_grace_period: 30s
     networks:
       - go-chat-net
 

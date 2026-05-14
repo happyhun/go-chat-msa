@@ -18,6 +18,7 @@ import (
 	"go-chat-msa/internal/shared/middleware"
 	"go-chat-msa/internal/shared/telemetry"
 
+	"go.mongodb.org/mongo-driver/mongo/readpref"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
@@ -105,11 +106,12 @@ func run(ctx context.Context) error {
 
 	healthServer := health.NewServer()
 	grpc_health_v1.RegisterHealthServer(grpcServer, healthServer)
-	healthServer.SetServingStatus("chat.v1.ChatService", grpc_health_v1.HealthCheckResponse_SERVING)
+	setChatServingStatus(healthServer, grpc_health_v1.HealthCheckResponse_SERVING)
+	go reportMongoHealth(ctx, healthServer, mongoClient)
 
 	reflection.Register(grpcServer)
 
-	return runServer(ctx, cfg, grpcServer)
+	return runServer(ctx, cfg, grpcServer, healthServer)
 }
 
 func loadConfig() (*chat.Config, error) {
@@ -119,7 +121,7 @@ func loadConfig() (*chat.Config, error) {
 	return config.Load[chat.Config]("configs", "base", env)
 }
 
-func runServer(ctx context.Context, cfg *chat.Config, grpcServer *grpc.Server) error {
+func runServer(ctx context.Context, cfg *chat.Config, grpcServer *grpc.Server, healthServer *health.Server) error {
 	lis, err := net.Listen("tcp", ":"+cfg.Port.ChatGRPC)
 	if err != nil {
 		return err
@@ -135,10 +137,46 @@ func runServer(ctx context.Context, cfg *chat.Config, grpcServer *grpc.Server) e
 	eg.Go(func() error {
 		<-ctx.Done()
 		slog.InfoContext(ctx, "Shutting down Chat Service...")
+		setChatServingStatus(healthServer, grpc_health_v1.HealthCheckResponse_NOT_SERVING)
 		grpcServer.GracefulStop()
 		slog.InfoContext(ctx, "Chat Service stopped gracefully")
 		return nil
 	})
 
 	return eg.Wait()
+}
+
+func reportMongoHealth(ctx context.Context, healthServer *health.Server, mongoClient interface {
+	Ping(context.Context, *readpref.ReadPref) error
+}) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	update := func() {
+		pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+
+		status := grpc_health_v1.HealthCheckResponse_SERVING
+		if err := mongoClient.Ping(pingCtx, nil); err != nil {
+			status = grpc_health_v1.HealthCheckResponse_NOT_SERVING
+			slog.WarnContext(ctx, "mongo health ping failed", "error", err)
+		}
+		setChatServingStatus(healthServer, status)
+	}
+
+	update()
+	for {
+		select {
+		case <-ctx.Done():
+			setChatServingStatus(healthServer, grpc_health_v1.HealthCheckResponse_NOT_SERVING)
+			return
+		case <-ticker.C:
+			update()
+		}
+	}
+}
+
+func setChatServingStatus(healthServer *health.Server, status grpc_health_v1.HealthCheckResponse_ServingStatus) {
+	healthServer.SetServingStatus("", status)
+	healthServer.SetServingStatus("chat.v1.ChatService", status)
 }
