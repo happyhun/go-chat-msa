@@ -6,8 +6,8 @@ metadata:
     app.kubernetes.io/name: gochat-config-files
     app.kubernetes.io/component: config
 data:
-  k8s-local.yaml: |
-    ENV: "k8s-local"
+  k8s-dev.yaml: |
+    ENV: "k8s-dev"
 
     TELEMETRY:
       OTEL_ENDPOINT: "alloy:4318"
@@ -20,3 +20,42 @@ data:
     WS_GATEWAY:
       CORS:
         ALLOWED_ORIGINS: ["*"]
+  k8s-test.yaml: |
+    ENV: "k8s-test"
+
+    TELEMETRY:
+      OTEL_ENDPOINT: "alloy:4318"
+      PYROSCOPE_ENDPOINT: "http://pyroscope:4040"
+
+    API_GATEWAY:
+      CORS:
+        ALLOWED_ORIGINS: ["*"]
+      RATE_LIMIT:
+        PUBLIC:
+          RPS: 10
+          BURST: 15
+          TTL: "1h"
+        AUTHENTICATED:
+          RPS: 10
+          BURST: 30
+          TTL: "1h"
+
+    WS_GATEWAY:
+      CORS:
+        ALLOWED_ORIGINS: ["*"]
+      RATE_LIMIT:
+        PUBLIC:
+          RPS: 10
+          BURST: 20
+          TTL: "1h"
+        WS_ESTABLISH:
+          RPS: 4
+          BURST: 10
+          TTL: "1h"
+
+    WEBSOCKET:
+      RATE_LIMIT:
+        WS_MESSAGE:
+          RPS: 4
+          BURST: 10
+          TTL: "1h"

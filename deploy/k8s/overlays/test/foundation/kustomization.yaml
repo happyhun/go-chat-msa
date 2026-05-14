@@ -1,0 +1,38 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: go-chat-test
+
+resources:
+  - ../../../base
+
+patches:
+  - path: patches/test-config.yaml
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: mongo
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: mongo
+      spec:
+        template:
+          spec:
+            containers:
+              - name: mongo
+                env:
+                  - name: GLIBC_TUNABLES
+                    value: glibc.pthread.rseq=1
+
+patchesStrategicMerge:
+  - delete-non-foundation.yaml
+
+labels:
+  - includeSelectors: true
+    includeTemplates: true
+    pairs:
+      app.kubernetes.io/part-of: go-chat-msa
+      app.kubernetes.io/instance: go-chat-test

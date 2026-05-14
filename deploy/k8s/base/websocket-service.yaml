@@ -60,8 +60,12 @@ spec:
               value: $(POD_IP):8081
           volumeMounts:
             - name: config-files
-              mountPath: /app/configs/k8s-local.yaml
-              subPath: k8s-local.yaml
+              mountPath: /app/configs/k8s-dev.yaml
+              subPath: k8s-dev.yaml
+              readOnly: true
+            - name: config-files
+              mountPath: /app/configs/k8s-test.yaml
+              subPath: k8s-test.yaml
               readOnly: true
           startupProbe:
             httpGet:

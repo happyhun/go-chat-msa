@@ -6,7 +6,7 @@ metadata:
     app.kubernetes.io/name: gochat-config
     app.kubernetes.io/component: config
 data:
-  APP_ENV: k8s-local
+  APP_ENV: k8s-dev
   APP_REGISTRY_USER_SERVICE_HOST: user-service
   APP_REGISTRY_CHAT_SERVICE_HOST: chat-service
   APP_REGISTRY_WS_GATEWAY_HOST: ws-gateway

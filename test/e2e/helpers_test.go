@@ -34,6 +34,10 @@ func (e *HTTPError) Error() string {
 }
 
 func (s *E2ESuite) cleanupDatabases(ctx context.Context) {
+	if s.isKubernetes() {
+		s.cleanupKubernetesDatabases(ctx)
+		return
+	}
 	s.cleanupPostgres(ctx)
 	s.cleanupMongo(ctx)
 }
