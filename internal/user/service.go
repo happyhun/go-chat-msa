@@ -257,9 +257,7 @@ func (s *Service) PurgeExpiredTokens(ctx context.Context) {
 			slog.InfoContext(ctx, "Token purge goroutine stopped")
 			return
 		case <-ticker.C:
-			if err := s.queries.DeleteExpiredRefreshTokens(ctx); err != nil {
-				slog.ErrorContext(ctx, "failed to purge expired tokens", "error", err)
-			}
+			_ = s.PurgeExpiredTokensOnce(ctx)
 		}
 	}
 }
