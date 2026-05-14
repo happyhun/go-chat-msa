@@ -1,28 +1,38 @@
 # Local Kubernetes Baseline
 
-이 디렉터리는 Phase 2 로컬 Kubernetes baseline을 위한 첫 manifest 묶음이다. 목표는 `kind` 클러스터에서 장기 실행 서비스와 local data layer를 올리고, Ingress와 probe가 최소 smoke 수준으로 동작하는지 확인하는 것이다.
+이 디렉터리는 Phase 2 로컬 Kubernetes baseline을 위한 manifest와 bootstrap 절차를 담는다. 목표는 `kind` 클러스터에서 data layer, migration, observability, app rollout 순서를 명시하고, Ingress/probe/관측성 smoke를 확인하는 것이다.
+
+이 README는 임시 local smoke runbook이다. bootstrap script, 루트 README, 운영 runbook으로 실행 절차가 흡수되어 중복 문서가 되면 제거한다.
 
 ## Scope
 
 - `deploy/k8s/base`: 공통 manifest
-- `deploy/k8s/overlays/local`: local namespace와 dev image tag overlay
+- `deploy/k8s/overlays/local`: local aggregate overlay
+- `deploy/k8s/overlays/local/{foundation,observability,migrations,apps}`: bootstrap phase overlay
 - local data layer: Postgres, MongoDB, Redis
+- migration Jobs: postgres-migrate, mongo-migrate
+- observability stack: Alloy, Prometheus, Grafana, Loki, Tempo, Pyroscope
 - app Deployments: api-gateway, ws-gateway, websocket-service, user-service, chat-service, frontend
 - suspended CronJobs: retention-job, user-token-purge-job
 
-이번 baseline에는 migration bootstrap 자동화, observability stack, k6, HPA, rollout/drain 검증을 포함하지 않는다. DB schema가 필요한 기능 테스트는 migration bootstrap 작업 이후에 다룬다.
+이번 baseline에는 k6, HPA, rollout/drain 검증을 포함하지 않는다.
 
 ## Static Checks
 
 ```bash
+bash -n deploy/k8s/scripts/bootstrap-local.sh
 kubectl kustomize deploy/k8s/base
 kubectl kustomize deploy/k8s/overlays/local
+kubectl kustomize deploy/k8s/overlays/local/foundation
+kubectl kustomize deploy/k8s/overlays/local/observability
+kubectl kustomize deploy/k8s/overlays/local/migrations
+kubectl kustomize deploy/k8s/overlays/local/apps
 kubectl apply --dry-run=client -k deploy/k8s/overlays/local
 ```
 
 `kubectl apply --dry-run=client`는 OpenAPI discovery를 위해 실행 가능한 cluster context가 필요하다. 클러스터가 없으면 `kubectl kustomize`까지만 로컬 정적 확인으로 본다.
 
-## Local Smoke
+## Local Bootstrap
 
 ```bash
 kind create cluster --name go-chat --config deploy/k8s/local-kind.yaml
@@ -47,18 +57,10 @@ docker build -t go-chat-msa/frontend:dev ./frontend
 kind load docker-image --name go-chat go-chat-msa/frontend:dev
 ```
 
-```bash
-kubectl apply -k deploy/k8s/overlays/local
+`deploy/k8s/overlays/local` aggregate overlay는 정적 렌더링 확인용이다. 실제 local bootstrap은 migration과 observability 순서가 중요하므로 script를 사용한다.
 
-kubectl -n go-chat rollout status deploy/postgres
-kubectl -n go-chat rollout status deploy/mongo
-kubectl -n go-chat rollout status deploy/redis
-kubectl -n go-chat rollout status deploy/user-service
-kubectl -n go-chat rollout status deploy/chat-service
-kubectl -n go-chat rollout status deploy/api-gateway
-kubectl -n go-chat rollout status deploy/websocket-service
-kubectl -n go-chat rollout status deploy/ws-gateway
-kubectl -n go-chat rollout status deploy/frontend
+```bash
+bash deploy/k8s/scripts/bootstrap-local.sh
 ```
 
 Ingress는 `local-kind.yaml`에서 host port `30080`으로 열어 둔다.
@@ -67,13 +69,33 @@ Ingress는 `local-kind.yaml`에서 host port `30080`으로 열어 둔다.
 curl -i http://localhost:30080/
 curl -i http://localhost:30080/api/health
 curl -i http://localhost:30080/ws-api/health
+curl -i http://localhost:30080/api/ready
+curl -i http://localhost:30080/ws-api/ready
 ```
 
 `/ws`는 이 브랜치에서 full WebSocket scenario까지 검증하지 않는다. 티켓 발급과 실제 upgrade 흐름은 후속 smoke/e2e 단계에서 검증한다.
 
+Grafana는 Ingress에 연결하지 않는다. 로컬에서는 port-forward로 접근한다.
+
+```bash
+kubectl -n go-chat port-forward svc/grafana 3000:3000
+```
+
+Prometheus metric smoke:
+
+```bash
+kubectl -n go-chat port-forward svc/prometheus 9090:9090
+curl -G 'http://localhost:9090/api/v1/query' --data-urlencode 'query=gochat_build_info'
+curl -G 'http://localhost:9090/api/v1/query' --data-urlencode 'query=gochat_http_requests_total'
+curl -G 'http://localhost:9090/api/v1/query' --data-urlencode 'query=gochat_grpc_requests_total'
+curl -G 'http://localhost:9090/api/v1/query' --data-urlencode 'query=sum(gochat_ws_connections_active)'
+```
+
 ## Notes
 
-- app image에는 `configs/base.yaml`만 포함한다. local overlay는 `APP_ENV=k8s-local`과 `/app/configs/k8s-local.yaml` ConfigMap mount로 dev observability endpoint를 끄고, 필요한 값을 K8s Secret/ConfigMap env로 override한다.
+- app image에는 `configs/base.yaml`만 포함한다. local overlay는 `APP_ENV=k8s-local`과 `/app/configs/k8s-local.yaml` ConfigMap mount로 필요한 값을 K8s Secret/ConfigMap env로 override한다.
+- local bootstrap은 app rollout 전에 observability stack을 먼저 올린다. app telemetry endpoint는 `alloy:4318`, Pyroscope endpoint는 `http://pyroscope:4040`이다.
+- migration ConfigMap은 script가 `db/migrations/postgres`, `db/migrations/mongo`에서 생성한다. migration Job 실패 시 app rollout을 진행하지 않는다.
 - `user-token-purge-job`과 `retention-job`은 `suspend: true`다. `user-service` 안에 token purge loop가 아직 남아 있으므로, scheduled responsibility 전환은 다음 앱 보정 작업에서 결정한다.
-- local data layer manifest는 개발 검증용이며 운영 승격 대상이 아니다.
+- local data layer와 observability storage는 개발 검증용이며 운영 승격 대상이 아니다.
 - local overlay는 MongoDB 8.0과 Linux kernel 6.19 조합의 startup crash를 피하기 위해 `GLIBC_TUNABLES=glibc.pthread.rseq=1`를 주입한다.
