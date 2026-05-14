@@ -375,10 +375,13 @@ YAML 키는 환경변수로 오버라이드할 수 있습니다. viper의 `SetEn
 
 각 서비스는 `errgroup`으로 종료 순서를 관리하며, HTTP/gRPC 서버의 표준 graceful shutdown을 따릅니다. WebSocket Service는 세션과 영속화 파이프라인 때문에 종료 순서가 가장 정교합니다.
 
-1. 종료 신호를 받으면 HTTP 서버가 새 연결 수신을 중단하고 진행 중인 요청 완료를 기다립니다.
-2. Manager가 모든 Hub에 종료를 전파합니다. 각 Hub는 세션의 남은 메시지를 밀어낸 후 소켓을 닫습니다.
-3. Manager가 영속화 채널을 닫고, 배치 워커가 큐에 남은 메시지를 전부 DB에 반영할 때까지 기다립니다.
-4. gRPC 연결과 텔레메트리 수집기를 정리합니다.
+1. 종료 신호를 받으면 HTTP 서버가 새 연결 수신을 중단하고 진행 중인 HTTP 요청 완료를 기다립니다.
+2. Manager가 모든 Hub에 drain을 지시합니다. Hub는 신규 register/broadcast를 거절하고, 이미 `broadcastCh`에 들어온 메시지를 계속 fan-out합니다.
+3. Hub가 fan-out한 메시지는 ack 가능한 persistence task로 Manager의 배치 워커에 전달됩니다. Hub는 `broadcastCh`가 비고 `pendingPersist == 0`이 될 때까지, 또는 `shutdown_timeout`이 만료될 때까지 기다립니다.
+4. Manager는 모든 Hub가 멈춘 뒤 `persistCh`를 닫고, 배치 워커와 retry worker가 남은 저장 작업을 처리하도록 기다립니다.
+5. gRPC 연결과 텔레메트리 수집기를 정리합니다.
+
+Go `http.Server.Shutdown`은 WebSocket처럼 hijack된 연결을 기다리지 않으므로, WebSocket drain은 HTTP 서버가 아니라 Hub/Manager 레벨에서 별도로 수행합니다. Timeout이 발생하면 종료는 계속 진행하지만 `gochat_ws_persist_drain_total{status="timeout"}`와 duration metric을 남겨 0-loss 보장이 깨진 상황을 관측 가능하게 합니다.
 
 ---
 
@@ -425,6 +428,8 @@ WS Gateway가 `room_id` 기반 Consistent Hashing으로 대상 WebSocket Service
 
 **주기적 owner 재검사 + jitter rebalance**: 각 WebSocket Service의 Manager는 10초 ticker와 멤버십 변경 이벤트로 자기 보유 룸들을 재검사합니다. `ring.Locate(R) != myAddr`인 룸은 `time.AfterFunc(0~10초 jitter)`로 close하여, 스케일아웃 시 다수 룸이 동시에 끊겨 클라이언트 reconnect 트래픽이 폭증하는 thundering herd를 분산합니다.
 
+**rebalance close 전 persist drain**: owner가 바뀐 방은 기존 owner의 Hub가 바로 소켓을 닫지 않습니다. 먼저 신규 ingress를 막고, 이미 fan-out한 메시지의 chat-service 저장 ack를 기다립니다. 이 대기가 없으면 새 owner가 `GetLastSequenceNumber`를 너무 이르게 호출해 같은 sequence number를 다시 발급할 수 있습니다. Drain은 무한 대기하지 않고 `shutdown_timeout` 안에서만 보장하며, timeout은 metric/log로 남깁니다.
+
 **Hash ring 동시성**: HashRing은 라이브러리의 thread-safe `Add/Remove`를 호출하지만, `Set`은 여러 add/remove를 묶은 composite operation이므로 그 자체로는 원자적이지 않습니다. 중간 상태에서 `Locate`가 wrong owner를 반환할 가능성을 막기 위해 wrapper에 `sync.RWMutex`를 두고 `Set`은 Lock, `Locate`는 RLock으로 보호합니다.
 
 **빈 멤버 정책**: Watcher가 SCAN 결과로 멤버 0개를 받으면 Redis 일시 장애일 가능성이 있으므로 기존 ring을 유지합니다(warn 로그). 이때 두 가지 상태가 분리되어 노출됩니다.
@@ -432,7 +437,17 @@ WS Gateway가 `room_id` 기반 Consistent Hashing으로 대상 WebSocket Service
 - `HashRing.Len()` — 현재 라우팅 가능한 cached ring 크기. 빈 SCAN으로 유지된 경우에도 0이 아닐 수 있음.
 - `Watcher.HasObservedMembers()` — 마지막 reconcile에서 실제로 멤버를 1개 이상 보았는지. 빈 SCAN 직후엔 false.
 
-readiness 게이트는 보통 후자(`HasObservedMembers`) 기준이 안전합니다. 실제 멤버십 저장소에 등록된 인스턴스가 없다면 새 트래픽을 받지 않는 게 맞기 때문입니다. ring을 보수적으로 유지하는 것과 readiness 판단은 분리된 결정.
+readiness 게이트는 실제 멤버십 저장소를 한 번 이상 관측했는지와 현재 ring이 비어 있지 않은지를 함께 봅니다. 실제 멤버십 저장소에 등록된 인스턴스가 없다면 새 트래픽을 받지 않는 게 맞기 때문입니다. ring을 보수적으로 유지하는 것과 readiness 판단은 분리된 결정입니다.
+
+**Liveness와 readiness 분리**: `/health`는 프로세스 생존 확인용으로 단순 200을 반환합니다. `/ready`는 트래픽 수신 가능 여부를 엄격히 검사합니다.
+
+| 서비스 | `/ready` 검사 |
+| :--- | :--- |
+| api-gateway | Redis `PING`, user/chat gRPC health |
+| ws-gateway | Redis `PING`, membership watcher 관측 여부, hash ring non-empty |
+| websocket-service | Redis `PING`, user/chat gRPC health, 자기 주소가 포함된 hash ring, persist queue 사용률 80% 미만 |
+
+user-service와 chat-service의 gRPC health는 각각 PostgreSQL `Ping`, MongoDB `Ping` 결과를 주기적으로 반영합니다. HTTP gateway가 DB에 직접 붙지 않고, 각 backend가 자기 의존성 상태를 gRPC Health Checking Protocol로 노출하는 구조입니다.
 
 게이트웨이만 검증하지 않고 백엔드가 자체 검증하는 양측 확인 패턴은 stateful + 어피니티 기반 분산 시스템의 표준입니다. Kafka(`NOT_LEADER_OR_FOLLOWER`), Cassandra(coordinator forward), Redis Cluster(`MOVED`), MongoDB sharded(`StaleConfigException`), CockroachDB(`NotLeaseHolderError`) 모두 동일한 패턴입니다. 백엔드가 진실의 원천이므로 게이트웨이의 stale 메타데이터를 자체 검증으로 정정합니다.
 
@@ -471,23 +486,23 @@ Router (1)
         └── Session (유저 3)
 ```
 
-Manager와 Hub는 Actor 모델을 따릅니다. 각각 단일 고루틴의 `select` 루프에서 상태 변경을 순차 처리하고, 외부와는 채널로만 통신하므로 뮤텍스 없이 동시성 안전합니다.
+Manager와 Hub는 Actor 모델을 따릅니다. 대부분의 상태 변경은 단일 고루틴의 `select` 루프에서 순차 처리하고, 외부와는 채널 또는 주입된 함수로 통신합니다. 예외적으로 Hub drain 시작과 publish 경합을 막기 위해 작은 accept gate(`RWMutex` + atomic flag)를 두어, drain 이후 새 메시지가 `broadcastCh`에 들어가지 못하게 합니다.
 
 #### 계층별 책임
 
 | 계층 | 책임 |
 | :--- | :--- |
-| Router | HTTP 요청 수신, WebSocket 업그레이드, 멤버십 검증 |
-| Manager | Hub 생명주기, 영속화 워커 풀, 처리율 제한기 |
-| Hub | Session 생명주기, 브로드캐스트 |
-| Session | 개별 연결의 송수신 |
+| Router | HTTP 요청 수신, `/health`/`/ready`, WebSocket 업그레이드, owner self-check |
+| Manager | Hub 생명주기, graceful shutdown, 영속화 워커·retry 워커, 처리율 제한기 |
+| Hub | Session 생명주기, sequence 부여, 브로드캐스트, persistence ack 대기 |
+| Session | 개별 연결의 송수신, 메시지 검증, rate-limit 검사 |
 
 #### 역참조 차단
 
 자식이 부모를 직접 참조하면 순환 의존이 생깁니다. 상향 통신이 필요한 경우 자식이 부모의 존재를 모르도록 우회합니다.
 
-- **송신 전용 채널**: 부모의 채널 참조만 보유하여 값 전달 (Session → Hub 브로드캐스트, Hub → Manager 영속화)
-- **콜백 함수**: 부모가 정의한 함수를 클로저로 감싸 자식에게 주입 (Manager의 처리율 제한기 → Session)
+- **송신 전용 채널**: 부모의 채널 참조만 보유하여 값 전달 (Hub → Manager 영속화)
+- **콜백 함수**: 부모가 정의한 함수를 클로저로 감싸 자식에게 주입 (Hub publish 함수·Manager의 처리율 제한기 → Session)
 - **인터페이스 추상화**: 구현체가 아닌 인터페이스에 의존 (Router의 메시지 저장소 구현체 → Hub)
 
 ### 3.5 Bcrypt 워커 풀
@@ -501,10 +516,15 @@ Bcrypt는 brute force 방어를 위해 높은 연산 비용을 요구하는 해�
 
 메시지를 브로드캐스트와 동시에 저장하면, 저장 지연이 브로드캐스트 처리량에 영향을 줍니다. 브로드캐스트와 저장을 분리하여, 실시간 전송은 즉시 처리하고 저장은 배치 워커 풀을 통해 비동기로 처리합니다.
 
-- 고정 수의 워커가 채널에서 메시지를 꺼내 일정 건수 단위로 배치 저장
+- Hub는 메시지를 fan-out한 뒤 ack 콜백이 붙은 persistence task를 Manager의 `persistCh`에 넣음
+- 고정 수의 워커가 채널에서 task를 꺼내 일정 건수 단위로 배치 저장
 - 배치가 차지 않아도 타이머가 주기적으로 플러시
 - 애플리케이션에서 순서를 부여하므로 워커 간 DB 저장 순서는 무관
-- 서버 종료 시 채널과 큐에 남은 배치를 모두 플러시하여 유실 최소화
+- 저장 성공 또는 idempotent success(`AlreadyExists`) 때 task별 ack를 호출하여 Hub의 `pendingPersist`를 감소
+- retryable 오류는 Manager retry queue로 이동하며, retry 성공·최종 실패·shutdown drain 전까지 Hub ack를 지연
+- 서버 종료나 rebalance close 시 Hub는 이미 fan-out한 메시지의 저장 ack를 기다린 뒤 세션을 닫음
+
+이 구조는 hot path의 브로드캐스트 지연을 낮추는 대신, 저장 실패가 길어질 경우 Hub drain이 `shutdown_timeout`까지 지연될 수 있습니다. 무한 대기는 하지 않으며 timeout 시 metric/log를 남기고 종료를 계속합니다.
 
 ### 3.7 PK로 UUID v7 앱 생성
 
@@ -569,7 +589,7 @@ PK는 애플리케이션에서 UUID v7로 생성합니다. v4 대신 v7을 선�
 
 - 에러 로그는 발생 지점이 아닌 호출 스택 최상단에서 한 번만 기록
 - HTTP 로그에서 민감한 쿼리 파라미터(token, password, secret 등)를 자동 마스킹
-- 헬스체크 로그는 Alloy 수집 단계에서 필터링
+- `/health`, `/ready` 로그는 애플리케이션 미들웨어와 Alloy 수집 단계에서 필터링
 
 ### 5.2 메트릭
 
@@ -586,7 +606,7 @@ PostgreSQL/MongoDB는 메트릭 컨벤션 통일(`gochat_*` prefix, `operation`/
 - User: 인증, Bcrypt 워커 풀 지표
 - Chat: 메시지 저장, 조회 지표
 
-고카디널리티 방지를 위해 URL 경로의 UUID를 `:id`로 정규화하고, 헬스체크/메트릭 엔드포인트는 수집에서 제외합니다.
+고카디널리티 방지를 위해 URL 경로의 UUID를 `:id`로 정규화하고, 헬스체크/메트릭 엔드포인트는 수집에서 제외합니다. OTel resource에는 공통으로 `service.name`과 `service.instance.id`가 들어가며, `service.instance.id`는 K8s `POD_NAME`을 우선 사용하고 로컬/compose에서는 hostname으로 fallback합니다.
 
 ### 5.3 트레이스
 
@@ -596,7 +616,7 @@ OpenTelemetry SDK로 계측하고, `traceparent` 헤더(W3C 표준)로 서비스
 - PostgreSQL/MongoDB: 커스텀 래퍼로 개별 쿼리 스팬 기록
 - Redis: `redisotel.InstrumentTracing`으로 명령별 자동 스팬 생성
 - 10% 샘플링으로 저장 비용과 부하 최소화
-- 헬스체크, 메트릭 엔드포인트 스팬은 Alloy 수집 단계에서 필터링
+- 헬스체크(`/health`, `/ready`), 메트릭 엔드포인트 스팬은 Alloy 수집 단계에서 필터링
 
 ### 5.4 프로파일
 
@@ -625,19 +645,19 @@ Grafana에서 6종의 대시보드를 프로비저닝합니다.
 
 ## 6. 추후 개선사항
 
-현재 시스템은 Docker Compose 기반 정적 인프라 환경에서 동작합니다. k8s 등의 동적 환경으로 확장하고 시스템 고도화를 위해 필요한 개선사항을 정리합니다.
+현재 시스템은 Docker Compose 기반 실행 환경에서 동작하지만, K8s 전환을 위한 앱 코드 변경(동적 멤버십, gRPC round_robin, readiness, graceful drain)은 반영되어 있습니다. 남은 작업은 매니페스트와 운영 검증 중심입니다.
 
-### 6.1 서비스 디스커버리
+### 6.1 K8s 매니페스트
 
-WebSocket 노드 목록이 설정 파일에 하드코딩되어 있어 노드 추가/제거 시 재배포가 필요합니다. 서비스 레지스트리나 k8s 서비스 디스커버리를 도입하여 노드 변동을 자동 반영할 예정입니다.
+Deployment, Service, ConfigMap/Secret, Ingress, Probe, termination grace period를 정의해야 합니다. user-service와 chat-service는 gRPC `dns:///` + `round_robin`이 멀티 파드 IP를 볼 수 있도록 Headless Service가 필요합니다.
 
-### 6.2 Consistent Hashing 리밸런싱
+### 6.2 K8s 분산 동작 검증
 
-현재는 노드 목록이 고정이라 런타임에 Consistent Hashing 링 변경이 불가합니다. 서비스 디스커버리 도입 후 동적 노드 변동이 가능해지면, 같은 방을 한 노드에 모아야 하므로 영향받는 방의 세션을 닫고 클라이언트 자동 재연결로 올바른 노드에 재배치하는 리밸런싱 전략이 필요합니다.
+로컬 kind/k3d 환경에서 HPA 스케일아웃·스케일인, rolling update, `kubectl delete pod`, node drain 시나리오를 검증해야 합니다. 특히 WebSocket owner rebalance 중 in-flight 메시지가 저장 ack 이후 close되는지, gRPC round_robin이 user/chat 다중 파드로 분산되는지 확인합니다.
 
-### 6.3 가중치 기반 부하 분산
+### 6.3 Custom Metrics HPA
 
-Room ID 해시만으로 노드를 결정하므로 방 규모에 따른 부하 편차가 발생할 수 있습니다. 노드별 할당된 방들의 최대 인원 합산값을 가중치로 활용하여 부하를 균등화할 예정입니다.
+초기 HPA는 CPU 기준으로 시작하되, websocket-service는 활성 연결 수, hub 수, broadcast/persist queue depth 같은 custom metric 기반으로 전환하는 편이 더 정확합니다.
 
 ### 6.4 프로덕션 보안
 
