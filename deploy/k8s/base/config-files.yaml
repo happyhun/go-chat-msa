@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gochat-config-files
+  labels:
+    app.kubernetes.io/name: gochat-config-files
+    app.kubernetes.io/component: config
+data:
+  k8s-local.yaml: |
+    ENV: "k8s-local"
+
+    TELEMETRY:
+      OTEL_ENDPOINT: ""
+      PYROSCOPE_ENDPOINT: ""
+
+    API_GATEWAY:
+      CORS:
+        ALLOWED_ORIGINS: ["*"]
+
+    WS_GATEWAY:
+      CORS:
+        ALLOWED_ORIGINS: ["*"]
