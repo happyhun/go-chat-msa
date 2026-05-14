@@ -21,9 +21,9 @@ type TelemetryConfig struct {
 }
 
 type PortConfig struct {
-	APIGateway  string `mapstructure:"API_GATEWAY"  validate:"required"`
-	WSGateway   string `mapstructure:"WS_GATEWAY"   validate:"required"`
-	WebSocket   string `mapstructure:"WEBSOCKET"    validate:"required"`
+	APIGateway string `mapstructure:"API_GATEWAY"  validate:"required"`
+	WSGateway  string `mapstructure:"WS_GATEWAY"   validate:"required"`
+	WebSocket  string `mapstructure:"WEBSOCKET"    validate:"required"`
 	UserGRPC   string `mapstructure:"USER_GRPC"   validate:"required"`
 	ChatGRPC   string `mapstructure:"CHAT_GRPC"   validate:"required"`
 }
@@ -114,9 +114,8 @@ type ValidationConfig struct {
 }
 
 type TokenConfig struct {
-	AccessTokenExpirationMinutes int           `mapstructure:"ACCESS_TOKEN_EXPIRATION_MINUTES" validate:"required"`
-	RefreshTokenExpirationDays   int           `mapstructure:"REFRESH_TOKEN_EXPIRATION_DAYS" validate:"required"`
-	TokenPurgeInterval           time.Duration `mapstructure:"TOKEN_PURGE_INTERVAL" validate:"required"`
+	AccessTokenExpirationMinutes int `mapstructure:"ACCESS_TOKEN_EXPIRATION_MINUTES" validate:"required"`
+	RefreshTokenExpirationDays   int `mapstructure:"REFRESH_TOKEN_EXPIRATION_DAYS" validate:"required"`
 }
 
 type RoomConfig struct {

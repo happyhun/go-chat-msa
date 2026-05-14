@@ -6,9 +6,10 @@ import (
 
 type Config struct {
 	config.AppConfig `mapstructure:",squash"`
-	Telemetry   config.TelemetryConfig `mapstructure:"TELEMETRY"`
-	Port        config.PortConfig      `mapstructure:"PORT"         validate:"required"`
-	DB          config.DBConfig        `mapstructure:"DB"           validate:"required"`
-	JWT         config.JWTConfig       `mapstructure:"JWT"          validate:"required"`
-	UserService config.UserConfig      `mapstructure:"USER_SERVICE" validate:"required"`
+	Telemetry        config.TelemetryConfig `mapstructure:"TELEMETRY"`
+	Port             config.PortConfig      `mapstructure:"PORT"         validate:"required"`
+	DB               config.DBConfig        `mapstructure:"DB"           validate:"required"`
+	Redis            config.RedisConfig     `mapstructure:"REDIS"        validate:"required"`
+	JWT              config.JWTConfig       `mapstructure:"JWT"          validate:"required"`
+	UserService      config.UserConfig      `mapstructure:"USER_SERVICE" validate:"required"`
 }

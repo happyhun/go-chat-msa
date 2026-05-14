@@ -106,13 +106,18 @@ wait_job_complete() {
   fi
 }
 
-restart_apps() {
-  log "restarting app deployments to pick up mounted config"
+restart_backend_apps() {
+  log "restarting backend deployments to pick up mounted config"
   kubectl -n "${NAMESPACE}" rollout restart \
     deployment/user-service \
     deployment/chat-service \
+    deployment/websocket-service
+}
+
+restart_edge_apps() {
+  log "restarting edge deployments after backend rollout"
+  kubectl -n "${NAMESPACE}" rollout restart \
     deployment/api-gateway \
-    deployment/websocket-service \
     deployment/ws-gateway \
     deployment/frontend
 }
@@ -140,8 +145,10 @@ main() {
   wait_job_complete mongo-migrate
 
   apply_kustomize "${OVERLAY_DIR}/apps"
-  restart_apps
-  wait_rollout user-service chat-service api-gateway websocket-service ws-gateway frontend
+  restart_backend_apps
+  wait_rollout user-service chat-service websocket-service
+  restart_edge_apps
+  wait_rollout api-gateway ws-gateway frontend
 
   log "${K8S_ENV} Kubernetes bootstrap completed"
   log "Grafana: kubectl -n ${NAMESPACE} port-forward svc/grafana 3000:3000"

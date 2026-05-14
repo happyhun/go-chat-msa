@@ -184,14 +184,13 @@ HTTP 미들웨어가 아닌 WebSocket `readPump` 안에서 메시지 단위로 �
 
 #### PostgreSQL (User Service)
 
-사용자, 채팅방, 멤버십, 리프레시 토큰을 관리합니다.
+사용자, 채팅방, 멤버십을 관리합니다. 리프레시 토큰은 TTL이 있는 임시 인증 상태이므로 Redis에서 관리합니다.
 
 | 테이블 | 용도 |
 | :--- | :--- |
 | users | 사용자 계정 (소프트 삭제용 `deleted_at` 포함) |
 | rooms | 채팅방 (소프트 삭제용 `deleted_at` 포함) |
 | room_members | 채팅방 멤버십 (복합 PK: `user_id`, `room_id`) |
-| refresh_tokens | 리프레시 토큰 해시 저장 |
 
 PK는 애플리케이션에서 UUID v7로 생성합니다.
 
@@ -210,8 +209,6 @@ PK는 애플리케이션에서 UUID v7로 생성합니다.
 | `room_members.room_id` | INDEX | 방별 멤버 목록 |
 | `rooms.manager_id` | INDEX | 방장별 방 조회 |
 | `rooms.name` | GIN (`pg_trgm`) | 방 이름 중간 일치 검색(`ILIKE '%keyword%'`) |
-| `refresh_tokens.token_hash` | INDEX | 토큰 검증 |
-| `refresh_tokens.user_id` | INDEX | 유저별 토큰 일괄 삭제 |
 
 방 이름 중간 일치 검색(`ILIKE '%keyword%'`)에 `pg_trgm` 확장 + GIN 인덱스를 사용합니다.
 
@@ -234,7 +231,18 @@ PK는 애플리케이션에서 UUID v7로 생성합니다.
 | 채팅방 수정 | 정원 축소 시 현재 인원 수 검증, 참여/삭제와의 경쟁 조건 방지 | `rooms` 행 `FOR UPDATE` |
 | 채팅방 삭제 | 참여와의 경쟁 조건 방지, 방장 권한 검증 원자성 | `rooms` 행 `FOR UPDATE` |
 | 채팅방 나가기 | 방장 위임 경쟁 조건 방지, 빈 방 자동 soft delete | `rooms` 행 `FOR UPDATE` |
-| 토큰 갱신 | 토큰 재사용 탐지 우회 방지 | `refresh_tokens` 행 `FOR UPDATE` |
+
+#### Redis (Auth Session State)
+
+리프레시 토큰은 만료 시간이 있는 bearer credential이므로 Redis TTL key로 관리합니다. 서버에는 토큰 원문을 저장하지 않고 SHA-256 digest만 key에 사용합니다.
+
+| Key | 값 | 용도 |
+| :--- | :--- | :--- |
+| `auth:rt:active:{digest}` | `userID` | 현재 사용 가능한 refresh token |
+| `auth:rt:used:{digest}` | `userID` | 이미 회전된 refresh token tombstone |
+| `auth:rt:user:{userID}` | active digest sorted set | 사용자 단위 revoke-all |
+
+토큰 갱신은 Lua script로 active token 삭제, used tombstone 생성, 새 active token 생성, user index 갱신을 원자 처리합니다. 이미 used tombstone이 있는 토큰이 다시 들어오면 재사용 공격으로 판단하고 해당 사용자의 active refresh token을 모두 폐기합니다.
 
 #### MongoDB (Chat Service)
 
@@ -273,7 +281,7 @@ TTL 90일은 채팅 서비스 특성상 오래된 메시지의 조회 빈도가 
 | :--- | :--- |
 | T0 (탈퇴 요청) | `users.deleted_at = now()` 설정. 비밀번호 재인증 후 진행. 모든 Refresh Token 즉시 폐기. 가입한 방마다 LeaveRoom 로직 적용(매니저면 위임 또는 빈 방 soft-delete). |
 | T0 ~ T+30일 (grace) | `GetUserByUsername`/`GetUserByID`가 `deleted_at IS NULL` 필터로 차단 → 로그인·토큰 갱신 실패. `users.username` UNIQUE 제약이 탈퇴자 row까지 포함해 동일 username 재가입을 막음(freeze). |
-| T+30일 이후 | retention-worker가 `deleted_at < now() - 30d` 행을 hard delete. CASCADE로 `refresh_tokens`/`room_members` 정리, `rooms.manager_id`는 SET NULL. username freeze 자연 해제. |
+| T+30일 이후 | retention-worker가 `deleted_at < now() - 30d` 행을 hard delete. CASCADE로 `room_members` 정리, `rooms.manager_id`는 SET NULL. username freeze 자연 해제. |
 
 채팅방의 soft delete + 30일 grace + retention purge 패턴과 정확히 동일합니다. 운영 일관성을 위해 retention-worker가 두 도메인을 한 cron job 안에서 처리하며, `gochat_retention_purged_total{kind="rooms"|"users"}` 라벨로 분리 관측합니다.
 

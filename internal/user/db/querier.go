@@ -11,18 +11,13 @@ import (
 )
 
 type Querier interface {
-	CreateRefreshToken(ctx context.Context, arg CreateRefreshTokenParams) error
 	CreateRoom(ctx context.Context, arg CreateRoomParams) (CreateRoomRow, error)
 	CreateRoomMember(ctx context.Context, arg CreateRoomMemberParams) error
 	CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error)
-	DeleteExpiredRefreshTokens(ctx context.Context) error
-	DeleteRefreshTokenByHash(ctx context.Context, tokenHash string) error
-	DeleteRefreshTokensByUserID(ctx context.Context, userID pgtype.UUID) error
 	DeleteRoomMember(ctx context.Context, arg DeleteRoomMemberParams) error
 	ExistsRoomMember(ctx context.Context, arg ExistsRoomMemberParams) (bool, error)
 	GetMemberJoinedAt(ctx context.Context, arg GetMemberJoinedAtParams) (pgtype.Timestamptz, error)
 	GetOldestRoomMember(ctx context.Context, roomID pgtype.UUID) (pgtype.UUID, error)
-	GetRefreshTokenByHashForUpdate(ctx context.Context, tokenHash string) (RefreshToken, error)
 	GetRoomForUpdate(ctx context.Context, id pgtype.UUID) (GetRoomForUpdateRow, error)
 	GetRoomMemberCount(ctx context.Context, roomID pgtype.UUID) (int64, error)
 	GetUserByID(ctx context.Context, id pgtype.UUID) (User, error)
@@ -31,7 +26,6 @@ type Querier interface {
 	ListJoinedRoomIDsForUpdate(ctx context.Context, userID pgtype.UUID) ([]pgtype.UUID, error)
 	ListJoinedRooms(ctx context.Context, userID pgtype.UUID) ([]ListJoinedRoomsRow, error)
 	ListRoomMembers(ctx context.Context, roomID pgtype.UUID) ([]ListRoomMembersRow, error)
-	MarkRefreshTokenUsed(ctx context.Context, id pgtype.UUID) error
 	PurgeDeletedRooms(ctx context.Context, deletedAt pgtype.Timestamptz) (int64, error)
 	PurgeDeletedUsers(ctx context.Context, deletedAt pgtype.Timestamptz) (int64, error)
 	SearchRooms(ctx context.Context, arg SearchRoomsParams) ([]SearchRoomsRow, error)

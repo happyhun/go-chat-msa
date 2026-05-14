@@ -14,7 +14,7 @@
 - migration Jobs: postgres-migrate, mongo-migrate
 - observability stack: Alloy, Prometheus, Grafana, Loki, Tempo, Pyroscope
 - app Deployments: api-gateway, ws-gateway, websocket-service, user-service, chat-service, frontend
-- suspended CronJobs: retention-job, user-token-purge-job
+- suspended CronJob: retention-job
 
 `dev`는 단일 인스턴스 smoke, `test`는 app replicas 2 fixed e2e correctness 검증용이다. 이번 baseline에는 k6, HPA, rollout/drain 검증을 포함하지 않는다.
 
@@ -55,7 +55,7 @@ kubectl wait --namespace ingress-nginx \
 ```
 
 ```bash
-for service in api-gateway ws-gateway websocket-service user-service chat-service retention-job user-token-purge-job; do
+for service in api-gateway ws-gateway websocket-service user-service chat-service retention-job; do
   docker build --build-arg SERVICE_NAME="${service}" -t "go-chat-msa/${service}:dev" .
   kind load docker-image --name go-chat "go-chat-msa/${service}:dev"
 done
@@ -103,7 +103,7 @@ curl -G 'http://localhost:9090/api/v1/query' --data-urlencode 'query=sum(gochat_
 Test overlay는 같은 cluster에서 별도 namespace(`go-chat-test`)로 실행한다. test image tag를 build/load한 뒤 bootstrap한다.
 
 ```bash
-for service in api-gateway ws-gateway websocket-service user-service chat-service retention-job user-token-purge-job; do
+for service in api-gateway ws-gateway websocket-service user-service chat-service retention-job; do
   docker build --build-arg SERVICE_NAME="${service}" -t "go-chat-msa/${service}:test" .
   kind load docker-image --name go-chat "go-chat-msa/${service}:test"
 done
@@ -120,6 +120,6 @@ E2E_ENV=k8s go test -count=1 -tags e2e ./test/e2e
 - app image에는 `configs/base.yaml`만 포함한다. dev overlay는 `APP_ENV=k8s-dev`와 `/app/configs/k8s-dev.yaml`, test overlay는 `APP_ENV=k8s-test`와 `/app/configs/k8s-test.yaml` ConfigMap mount로 필요한 값을 K8s Secret/ConfigMap env로 override한다.
 - bootstrap은 app rollout 전에 observability stack을 먼저 올린다. app telemetry endpoint는 `alloy:4318`, Pyroscope endpoint는 `http://pyroscope:4040`이다.
 - migration ConfigMap은 script가 `db/migrations/postgres`, `db/migrations/mongo`에서 생성한다. migration Job 실패 시 app rollout을 진행하지 않는다.
-- `user-token-purge-job`과 `retention-job`은 `suspend: true`다. `user-service` 안에 token purge loop가 아직 남아 있으므로, scheduled responsibility 전환은 다음 앱 보정 작업에서 결정한다.
+- `retention-job`은 아직 `suspend: true`다. refresh token은 Redis TTL 기반 상태로 이관되어 별도 purge CronJob이 필요하지 않다.
 - dev/test data layer와 observability storage는 개발/검증용이며 운영 승격 대상이 아니다.
 - dev/test overlay는 MongoDB 8.0과 Linux kernel 6.19 조합의 startup crash를 피하기 위해 `GLIBC_TUNABLES=glibc.pthread.rseq=1`를 주입한다.
