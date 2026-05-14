@@ -27,6 +27,8 @@ Grafana Full Stack 기반 관측성 구성. Profiles를 제외한 시그널은 G
 
 ## 2. 서비스별 요약
 
+OTel resource에는 공통으로 `service.name`과 `service.instance.id`가 들어간다. `service.instance.id`는 K8s `POD_NAME`을 우선 사용하고, compose/로컬에서는 hostname으로 fallback한다.
+
 | 서비스 | Logs | Metrics | Traces |
 |--------|------|---------|--------|
 | api-gateway | HTTP | HTTP, gRPC Client, Redis | HTTP, gRPC Client, Redis |
@@ -46,7 +48,7 @@ Grafana Full Stack 기반 관측성 구성. Profiles를 제외한 시그널은 G
 
 | 대상 | 필터 |
 |------|------|
-| HTTP 메트릭/로그 | HTTPMetricsMiddleware, LoggingMiddleware가 `/health` 스킵 |
+| HTTP 메트릭/로그 | HTTPMetricsMiddleware, LoggingMiddleware가 `/health`, `/ready` 스킵 |
 | gRPC 메트릭/로그 | UnaryServerInterceptor, UnaryLoggingInterceptor가 `grpc.health.v1.Health/*` 스킵 |
 | gRPC 클라이언트 메트릭 | UnaryClientInterceptor가 `grpc.health.v1.Health/*` 스킵 |
 
@@ -54,8 +56,8 @@ Grafana Full Stack 기반 관측성 구성. Profiles를 제외한 시그널은 G
 
 | 시그널 | 필터 |
 |--------|------|
-| Logs | `/health`, `grpc.health.v1.Health/Check`, `HealthCheck`, `pg_isready`, `adminCommand: ping` 드롭 |
-| Traces | `/health`, `grpc.health.*`, `HealthCheck` 스팬 드롭 |
+| Logs | `/health`, `/ready`, `grpc.health.v1.Health/Check`, `HealthCheck`, `pg_isready`, `adminCommand: ping` 드롭 |
+| Traces | `/health`, `/ready`, `grpc.health.*`, `HealthCheck` 스팬 드롭 |
 
 ---
 
@@ -162,6 +164,8 @@ Grafana Full Stack 기반 관측성 구성. Profiles를 제외한 시그널은 G
 |--------|------|------|
 | gochat_ws_persist_channel_depth | gauge | - |
 | gochat_ws_persist_dropped_total | counter | - |
+| gochat_ws_persist_drain_total | counter | status |
+| gochat_ws_persist_drain_duration_seconds | histogram | status |
 | gochat_persistence_batch_save_total | counter | status |
 | gochat_persistence_retry_queue_depth | gauge | - |
 | gochat_persistence_retry_save_total | counter | status |

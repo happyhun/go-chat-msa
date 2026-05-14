@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
+	"github.com/google/uuid"
 	pyroscope "github.com/grafana/pyroscope-go"
 
 	"go.opentelemetry.io/contrib/instrumentation/runtime"
@@ -13,8 +15,8 @@ import (
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/sdk/resource"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 )
@@ -34,7 +36,10 @@ func InitOTel(ctx context.Context, serviceName, otelEndpoint string) (shutdown f
 		resource.WithProcess(),
 		resource.WithOS(),
 		resource.WithHost(),
-		resource.WithAttributes(semconv.ServiceName(serviceName)),
+		resource.WithAttributes(
+			semconv.ServiceName(serviceName),
+			semconv.ServiceInstanceID(serviceInstanceID()),
+		),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create resource: %w", err)
@@ -88,6 +93,20 @@ func InitOTel(ctx context.Context, serviceName, otelEndpoint string) (shutdown f
 		}
 		return mpErr
 	}, nil
+}
+
+func serviceInstanceID() string {
+	return resolveServiceInstanceID(os.Getenv("POD_NAME"), os.Hostname, uuid.NewString)
+}
+
+func resolveServiceInstanceID(podName string, hostname func() (string, error), newID func() string) string {
+	if podName != "" {
+		return podName
+	}
+	if host, err := hostname(); err == nil && host != "" {
+		return host
+	}
+	return newID()
 }
 
 func InitProfiling(serviceName, pyroscopeEndpoint string) (stop func(), err error) {
