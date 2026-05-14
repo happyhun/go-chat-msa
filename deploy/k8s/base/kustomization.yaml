@@ -8,6 +8,7 @@ resources:
   - postgres.yaml
   - mongo.yaml
   - redis.yaml
+  - observability.yaml
   - migrations.yaml
   - user-service.yaml
   - chat-service.yaml

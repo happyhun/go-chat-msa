@@ -1,0 +1,175 @@
+discovery.kubernetes "pods" {
+	role = "pod"
+
+	namespaces {
+		names = ["go-chat"]
+	}
+}
+
+discovery.relabel "pod_logs" {
+	targets = discovery.kubernetes.pods.targets
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+		target_label  = "service"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_component"]
+		target_label  = "component"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_namespace"]
+		target_label  = "namespace"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_name"]
+		target_label  = "pod"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_container_name"]
+		target_label  = "container"
+	}
+
+	rule {
+		source_labels = ["service"]
+		regex         = "($|alloy|loki|grafana|prometheus|tempo|pyroscope|postgres-migrate|mongo-migrate)"
+		action        = "drop"
+	}
+}
+
+loki.source.kubernetes "pods" {
+	targets    = discovery.relabel.pod_logs.output
+	forward_to = [loki.process.pods.receiver]
+}
+
+loki.process "pods" {
+	forward_to = [loki.write.default.receiver]
+
+	stage.drop {
+		expression = ".*(pg_isready|adminCommand: ping|/health|/ready|HealthCheck|grpc\\.health\\.v1\\.Health/Check).*"
+	}
+
+	stage.match {
+		selector = "{service=\"mongo\"}"
+		stage.json {
+			expressions = { s = "s", t = "t.\"$date\"" }
+		}
+		stage.template {
+			source   = "level"
+			template = `{{ if eq .s "I" }}info{{ else if eq .s "W" }}warn{{ else if eq .s "E" }}error{{ else if eq .s "F" }}fatal{{ else if eq .s "D" }}debug{{ else }}{{ .s }}{{ end }}`
+		}
+		stage.labels { values = { level = "" } }
+		stage.timestamp {
+			source = "t"
+			format = "RFC3339Nano"
+		}
+	}
+
+	stage.match {
+		selector = "{service=\"postgres\"}"
+		stage.regex {
+			expression = "^(?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}.\\d{3} \\w+) \\[(?P<pid>\\d+)\\]\\s+(?:\\S+\\s+)?(?P<pg_level>\\w+):"
+		}
+		stage.template {
+			source   = "level"
+			template = `{{ if or (eq .pg_level "LOG") (eq .pg_level "INFO") (eq .pg_level "NOTICE") }}info{{ else if eq .pg_level "WARNING" }}warn{{ else if or (eq .pg_level "ERROR") (eq .pg_level "FATAL") (eq .pg_level "PANIC") }}error{{ else }}{{ lower .pg_level }}{{ end }}`
+		}
+		stage.labels { values = { level = "" } }
+	}
+
+	stage.match {
+		selector = "{component!~\"(data|observability|migration)\"}"
+		stage.json {
+			expressions = {
+				level     = "level",
+				timestamp = "time",
+				trace_id  = "trace_id",
+			}
+		}
+		stage.template {
+			source   = "level"
+			template = `{{ lower .level }}`
+		}
+		stage.labels {
+			values = { level = "" }
+		}
+		stage.timestamp {
+			source = "timestamp"
+			format = "RFC3339Nano"
+		}
+	}
+}
+
+loki.write "default" {
+	endpoint {
+		url = "http://loki:3100/loki/api/v1/push"
+	}
+}
+
+otelcol.receiver.otlp "default" {
+	grpc {
+		endpoint = "0.0.0.0:4317"
+	}
+	http {
+		endpoint = "0.0.0.0:4318"
+	}
+
+	output {
+		traces  = [otelcol.processor.filter.drop_healthcheck.input]
+		metrics = [otelcol.processor.batch.metrics.input]
+	}
+}
+
+otelcol.processor.batch "metrics" {
+	output {
+		metrics = [otelcol.exporter.prometheus.default.input]
+	}
+}
+
+otelcol.exporter.prometheus "default" {
+	forward_to = [prometheus.remote_write.default.receiver]
+}
+
+prometheus.remote_write "default" {
+	endpoint {
+		url = "http://prometheus:9090/api/v1/write"
+	}
+}
+
+otelcol.processor.filter "drop_healthcheck" {
+	error_mode = "ignore"
+	traces {
+		span = [
+			`attributes["http.route"] == "/health"`,
+			`attributes["http.target"] == "/health"`,
+			`attributes["url.path"] == "/health"`,
+			`attributes["http.route"] == "/ready"`,
+			`attributes["http.target"] == "/ready"`,
+			`attributes["url.path"] == "/ready"`,
+			`IsMatch(name, "grpc\\.health\\..*")`,
+			`IsMatch(name, ".*HealthCheck.*")`,
+		]
+	}
+	output {
+		traces = [otelcol.processor.batch.traces.input]
+	}
+}
+
+otelcol.processor.batch "traces" {
+	output {
+		traces = [otelcol.exporter.otlphttp.tempo.input]
+	}
+}
+
+otelcol.exporter.otlphttp "tempo" {
+	client {
+		endpoint = "http://tempo:4318"
+		tls {
+			insecure = true
+		}
+	}
+}
