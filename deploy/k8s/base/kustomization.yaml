@@ -1,0 +1,25 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - configmap.yaml
+  - config-files.yaml
+  - secret.yaml
+  - postgres.yaml
+  - mongo.yaml
+  - redis.yaml
+  - user-service.yaml
+  - chat-service.yaml
+  - api-gateway.yaml
+  - websocket-service.yaml
+  - ws-gateway.yaml
+  - frontend.yaml
+  - cronjobs.yaml
+  - ingress.yaml
+
+labels:
+  - includeSelectors: true
+    includeTemplates: true
+    pairs:
+      app.kubernetes.io/part-of: go-chat-msa
+      app.kubernetes.io/instance: go-chat-local
