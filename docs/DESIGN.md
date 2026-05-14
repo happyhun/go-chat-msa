@@ -365,6 +365,12 @@ REST API(`GET /rooms/{id}/messages`)에서 `last_seq` 쿼리 파라미터 유무
 - **Go 상수**: 환경마다 동일하고 변경 가능성이 거의 없는 값. 채널 버퍼 크기, 배치 사이즈, 최대 메시지 크기, 업그레이더 버퍼 등
 - **YAML**: 환경마다 달라지거나 정책적으로 변경될 수 있는 값. 타임아웃, 시크릿, 호스트 주소, 처리율 제한 정책 등
 
+#### 환경변수 주입
+
+YAML 키는 환경변수로 오버라이드할 수 있습니다. viper의 `SetEnvPrefix("APP")` + `AutomaticEnv()` 조합으로 `APP_` 접두사가 붙은 env만 자동 적용되며, viper 경로의 `.`은 `_`로 치환됩니다. 예: `WEBSOCKET.ADVERTISED_ADDR` → `APP_WEBSOCKET_ADVERTISED_ADDR`. base.yaml에 `""` + `validate:"required"`로 두면 환경별 매니페스트에서 반드시 주입하도록 강제할 수 있습니다(12-factor app III. Config).
+
+`APP_` 접두사는 호스트 환경의 다른 env가 우리 설정을 silent하게 덮어쓰는 사고를 막기 위한 namespace입니다. 특히 K8s legacy service discovery는 같은 네임스페이스의 모든 Service 이름을 환경변수로 자동 주입(예: `redis` Service → `REDIS_SERVICE_HOST`, `REDIS_PORT_6379_TCP`)하므로, prefix 없이 `AutomaticEnv()`만 호출하면 우리 `REDIS.*` 설정이 K8s 주입 값으로 자동 덮어씌워질 수 있습니다. 같은 이유로 Spring Boot(`SPRING_*`), Rails(`RAILS_*`), AWS SDK(`AWS_*`) 등도 동일한 prefix 패턴을 사용합니다.
+
 ### 2.10 우아한 종료
 
 각 서비스는 `errgroup`으로 종료 순서를 관리하며, HTTP/gRPC 서버의 표준 graceful shutdown을 따릅니다. WebSocket Service는 세션과 영속화 파이프라인 때문에 종료 순서가 가장 정교합니다.
