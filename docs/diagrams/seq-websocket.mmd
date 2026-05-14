@@ -5,6 +5,7 @@ sequenceDiagram
 
     box WebSocket Service
         participant Manager as Manager
+        participant Worker as Persist Worker
         participant Hub as Hub
         participant Session as Session
     end
@@ -32,7 +33,7 @@ sequenceDiagram
     Note over Client, Others: 2. 실시간 메시지 처리
     Client->>Session: 메시지 전송
     Session->>Session: 처리율 제한 검사
-    Session->>Hub: 브로드캐스트 요청
+    Session->>Hub: publish 함수 호출
     Hub->>Hub: 메시지 중복 검사
 
     loop 방 내부 세션 순회
@@ -40,7 +41,11 @@ sequenceDiagram
         Session->>Others: 메시지 전송
     end
 
-    Hub--)ChatSvc: 비동기 배치 저장
+    Hub->>Manager: persistence task enqueue
+    Manager->>Worker: 배치 작업 전달
+    Worker--)ChatSvc: 비동기 배치 저장
+    ChatSvc--)Worker: 저장 ack
+    Worker--)Hub: task ack<br/>pendingPersist 감소
 
     Note over Client, Others: 3. 연결 해제
     Client->>Session: 연결 종료
@@ -50,7 +55,7 @@ sequenceDiagram
     alt 마지막 세션이 종료된 경우
         Hub->>Hub: 허브 종료 타이머 시작
         Note over Manager, Hub: 타이머 만료 시
-        Hub->>Hub: 프로세스 자체 종료
+        Hub->>Hub: Hub actor 종료
         Hub-->>Manager: 종료 알림
         Manager->>Manager: Hub 목록에서 제거 및 자원 반환
     end

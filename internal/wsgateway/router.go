@@ -2,7 +2,9 @@ package wsgateway
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"math"
@@ -11,7 +13,9 @@ import (
 	"net/url"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
+	"time"
 
 	"go-chat-msa/internal/shared/httpio"
 	"go-chat-msa/internal/shared/middleware"
@@ -21,10 +25,16 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+const readinessTimeout = 2 * time.Second
+
 // RingRefresher는 백엔드의 misdirect 응답을 받았을 때 ring을 즉시
 // 갱신하도록 트리거하는 인터페이스. *membership.Watcher가 만족.
 type RingRefresher interface {
 	ForceReconcile()
+}
+
+type memberObserver interface {
+	HasObservedMembers() bool
 }
 
 type Router struct {
@@ -39,6 +49,7 @@ type Router struct {
 	ticketStore        *TicketStore
 	publicLimiter      *ratelimit.RedisLimiter
 	wsEstablishLimiter *ratelimit.RedisLimiter
+	redisClient        *redis.Client
 
 	mu      sync.RWMutex
 	proxies map[string]*httputil.ReverseProxy
@@ -59,6 +70,7 @@ func NewRouter(cfg *Config, hashRing *loadbalance.HashRing, watcher RingRefreshe
 		transport:      tr,
 		proxies:        make(map[string]*httputil.ReverseProxy),
 		ticketStore:    NewTicketStore(redisClient),
+		redisClient:    redisClient,
 		publicLimiter: ratelimit.NewRedis(
 			redisClient,
 			int(math.Ceil(cfg.WSGateway.RateLimit.Public.RPS)),
@@ -95,7 +107,8 @@ func (r *Router) registerRoutes() {
 	r.mux.Handle("GET /health", middleware.ChainMiddleware(
 		func(w http.ResponseWriter, req *http.Request) {
 			httpio.WriteJSON(req.Context(), w, http.StatusOK, map[string]string{"status": "healthy"})
-		}, publicMws...))
+		}, globalMws...))
+	r.mux.Handle("GET /ready", middleware.ChainMiddleware(r.handleReady, globalMws...))
 
 	ticketMws := slices.Concat(globalMws, []func(http.Handler) http.Handler{
 		middleware.BearerAuthMiddleware(r.jwtSecret),
@@ -109,6 +122,42 @@ func (r *Router) registerRoutes() {
 	}
 	r.mux.Handle("POST /internal/rooms/{id}/broadcast", middleware.ChainMiddleware(r.handleBroadcast, internalMws...))
 	r.mux.Handle("DELETE /internal/rooms/{id}", middleware.ChainMiddleware(r.handleCloseRoom, internalMws...))
+}
+
+func (r *Router) handleReady(w http.ResponseWriter, req *http.Request) {
+	failures := r.readinessFailures(req.Context())
+	if len(failures) > 0 {
+		httpio.WriteProblem(req.Context(), w, http.StatusServiceUnavailable, "not ready: "+strings.Join(failures, "; "))
+		return
+	}
+	httpio.WriteJSON(req.Context(), w, http.StatusOK, map[string]string{"status": "ready"})
+}
+
+func (r *Router) readinessFailures(ctx context.Context) []string {
+	failures := make([]string, 0, 3)
+
+	if r.redisClient == nil {
+		failures = append(failures, "redis client not configured")
+	} else {
+		checkCtx, cancel := context.WithTimeout(ctx, readinessTimeout)
+		if err := r.redisClient.Ping(checkCtx).Err(); err != nil {
+			failures = append(failures, fmt.Sprintf("redis ping failed: %v", err))
+		}
+		cancel()
+	}
+
+	observer, ok := r.watcher.(memberObserver)
+	if !ok {
+		failures = append(failures, "membership observer not configured")
+	} else if !observer.HasObservedMembers() {
+		failures = append(failures, "membership has no observed members")
+	}
+
+	if r.hashRing.Len() == 0 {
+		failures = append(failures, "hash ring empty")
+	}
+
+	return failures
 }
 
 func (r *Router) getOrCreateProxy(targetAddr string) (*httputil.ReverseProxy, bool) {

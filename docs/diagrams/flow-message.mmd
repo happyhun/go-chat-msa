@@ -5,17 +5,13 @@ flowchart TB
         direction TB
         ManagerLoop(("Manager Actor Loop"))
         PersistCh[/"Persist Channel"/]
+        RetryCh[/"Retry Channel"/]
+        RetryWorker("Retry Worker")
 
         subgraph WorkerPool ["Batch Worker Pool"]
             direction LR
             W1("Worker 1")
             W2("Worker 2")
-        end
-
-        subgraph StoreAdapter ["Chat Store Adapter"]
-            direction TB
-            RetryCh[/"Retry Channel"/]
-            RetryWorker("Retry Worker")
         end
     end
 
@@ -23,6 +19,7 @@ flowchart TB
         direction TB
         HubLoop(("Hub Actor Loop"))
         Idempotency["Dedup LRU"]
+        Pending["pendingPersist"]
     end
 
     subgraph Session ["Session"]
@@ -50,10 +47,12 @@ flowchart TB
     WP ==> Socket
     Socket ==> Client
 
-    HubLoop -- "메시지 저장" --> PersistCh
+    HubLoop -- "저장 task + ack callback" --> PersistCh
+    HubLoop -. "drain 시 0까지 대기" .-> Pending
     PersistCh --> WorkerPool
-    WorkerPool -- "배치 플러시" --> StoreAdapter
-    ChatService -. "실패" .-> RetryCh
+    WorkerPool -- "배치 저장" --> ChatService
+    WorkerPool -. "성공 / idempotent success" .-> Pending
+    WorkerPool -. "retryable 실패" .-> RetryCh
     RetryCh -. "재시도 대기" .-> RetryWorker
     RetryWorker -. "지수 백오프 재시도" .-> ChatService
-    StoreAdapter -- "배치 저장" --> ChatService
+    RetryWorker -. "성공 / 최종 실패 ack" .-> Pending

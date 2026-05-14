@@ -26,8 +26,8 @@ flowchart TB
 
     Client == "WS Upgrade" ==> Router
 
-    Reg1 -- "SET + EXPIRE" --> Redis
-    Reg2 -- "SET + EXPIRE" --> Redis
+    Reg1 -- "SET lease_token EX ttl" --> Redis
+    Reg2 -- "SET lease_token EX ttl" --> Redis
 
     Redis -- "keyspace notify + SCAN" --> Watcher_G
     Redis -- "keyspace notify + SCAN" --> Watcher1
@@ -40,3 +40,5 @@ flowchart TB
     Router -- "Locate(roomID)" --> Hashring
     Router == "프록시" ==> WSS1
     Router == "프록시" ==> WSS2
+    WSS1 -- "self-check Locate(roomID)" --> Ring1
+    WSS2 -- "self-check Locate(roomID)" --> Ring2

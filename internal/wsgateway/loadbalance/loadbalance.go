@@ -80,6 +80,17 @@ func (r *HashRing) Len() int {
 	return len(r.hash.GetMembers())
 }
 
+func (r *HashRing) Contains(addr string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, m := range r.hash.GetMembers() {
+		if m.String() == addr {
+			return true
+		}
+	}
+	return false
+}
+
 func (h hasher) Sum64(data []byte) uint64 {
 	return xxhash.Sum64(data)
 }

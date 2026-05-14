@@ -6,6 +6,8 @@ sequenceDiagram
     participant Watcher as A의 Watcher
     participant Manager as A의 Manager
     participant Hub as A의 Hub (room R)
+    participant Worker as Persist Worker
+    participant ChatSvc as Chat Service
     participant Client as Client
     participant WSS_C as WSS C (새 owner)
 
@@ -28,7 +30,24 @@ sequenceDiagram
     Note over WSS_A, WSS_C: 3. jitter 만료 후 강제 close (thundering herd 방지)
     Note over Manager: time.AfterFunc(jitter)
     Manager->>Hub: ForceCloseRoom(R)
-    Hub->>Client: WebSocket close (모든 session)
+    Hub->>Hub: beginDrain<br/>신규 register/broadcast 거절
+
+    loop 이미 Hub에 들어온 메시지 처리
+        Hub->>Hub: broadcastCh drain + fan-out
+        Hub->>Worker: persistence task enqueue
+        Worker->>ChatSvc: BatchCreateMessages
+        ChatSvc-->>Worker: 저장 ack
+        Worker-->>Hub: task ack<br/>pendingPersist 감소
+    end
+
+    alt drain 완료
+        Hub->>Client: WebSocket close (모든 session)
+        Hub-->>Manager: done
+    else shutdown_timeout 만료
+        Hub->>Hub: metric status=timeout 기록
+        Hub->>Client: WebSocket close 계속 진행
+        Hub-->>Manager: done
+    end
 
     Note over WSS_A, WSS_C: 4. 클라이언트 자율 reconnect
     Client->>Client: ws.onclose → jittered backoff (1~30s)

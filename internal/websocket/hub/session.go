@@ -38,7 +38,7 @@ type session struct {
 	conn *websocket.Conn
 
 	unregisterCh chan<- *session
-	broadcastCh  chan<- *Message
+	publishFunc  func(context.Context, *Message) bool
 	sendCh       chan egressPacket
 	allowFunc    func(userID, roomID string) bool
 
@@ -51,7 +51,7 @@ func newSession(
 	conn *websocket.Conn,
 	senderID, roomID string,
 	unregisterCh chan<- *session,
-	broadcastCh chan<- *Message,
+	publishFunc func(context.Context, *Message) bool,
 	allowFunc func(userID, roomID string) bool,
 ) *session {
 	return &session{
@@ -60,7 +60,7 @@ func newSession(
 		roomID:       roomID,
 		conn:         conn,
 		unregisterCh: unregisterCh,
-		broadcastCh:  broadcastCh,
+		publishFunc:  publishFunc,
 		sendCh:       make(chan egressPacket, sendBufferSize),
 		allowFunc:    allowFunc,
 	}
@@ -146,8 +146,10 @@ func (s *session) readPump(ctx context.Context) {
 		}
 
 		now := time.Now()
-		select {
-		case s.broadcastCh <- &Message{
+		if s.publishFunc == nil {
+			return
+		}
+		if !s.publishFunc(ctx, &Message{
 			RoomID:      s.roomID,
 			SenderID:    s.senderID,
 			Content:     req.Content,
@@ -155,8 +157,7 @@ func (s *session) readPump(ctx context.Context) {
 			Type:        req.Type,
 			Timestamp:   now.Unix(),
 			ReceivedAt:  now,
-		}:
-		case <-ctx.Done():
+		}) {
 			return
 		}
 	}

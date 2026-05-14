@@ -52,7 +52,7 @@ func (w *loggingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 
 func LoggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" {
+		if isProbePath(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -88,6 +88,10 @@ func LoggingMiddleware(next http.Handler) http.Handler {
 
 		slog.LogAttrs(r.Context(), logLevel, "http request", attrs...)
 	})
+}
+
+func isProbePath(path string) bool {
+	return path == "/health" || path == "/ready"
 }
 
 func logHijacked(r *http.Request) {

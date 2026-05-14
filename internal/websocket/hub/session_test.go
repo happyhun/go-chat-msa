@@ -10,6 +10,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func publishToChannel(ch chan<- *Message) func(context.Context, *Message) bool {
+	return func(ctx context.Context, msg *Message) bool {
+		select {
+		case ch <- msg:
+			return true
+		case <-ctx.Done():
+			return false
+		}
+	}
+}
+
 func TestSession_ReadPump(t *testing.T) {
 	t.Parallel()
 
@@ -58,7 +69,7 @@ func TestSession_ReadPump(t *testing.T) {
 				pingPeriod: 54 * time.Second,
 			}
 
-			s := newSession(cfg, serverConn, "user1", "room1", unregisterCh, broadcastCh, nil)
+			s := newSession(cfg, serverConn, "user1", "room1", unregisterCh, publishToChannel(broadcastCh), nil)
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 
@@ -113,7 +124,7 @@ func TestSession_ReadPump_Unregister(t *testing.T) {
 				pongWait:   60 * time.Second,
 				pingPeriod: 54 * time.Second,
 			}
-			s := newSession(cfg, serverConn, "user1", "room1", unregisterCh, make(chan *Message, 1), nil)
+			s := newSession(cfg, serverConn, "user1", "room1", unregisterCh, publishToChannel(make(chan *Message, 1)), nil)
 
 			go s.run(t.Context())
 
@@ -248,7 +259,7 @@ func TestSession_Run(t *testing.T) {
 			}
 
 			unregisterCh := make(chan *session, 1)
-			s := newSession(cfg, serverConn, "u3", "r3", unregisterCh, make(chan *Message, 10), nil)
+			s := newSession(cfg, serverConn, "u3", "r3", unregisterCh, publishToChannel(make(chan *Message, 10)), nil)
 
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()

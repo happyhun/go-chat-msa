@@ -22,6 +22,7 @@ import (
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/keepalive"
 
 	chatpb "go-chat-msa/api/proto/chat/v1"
@@ -69,7 +70,7 @@ func run(ctx context.Context) error {
 		}
 	}
 
-	userClient, chatClient, cleanupClients, err := initClients(cfg)
+	userClient, chatClient, userHealth, chatHealth, cleanupClients, err := initClients(cfg)
 	if err != nil {
 		return err
 	}
@@ -81,7 +82,8 @@ func run(ctx context.Context) error {
 	}
 	defer redisClient.Close()
 
-	router := apigateway.NewRouter(cfg, userClient, chatClient, redisClient)
+	router := apigateway.NewRouter(cfg, userClient, chatClient, redisClient,
+		apigateway.WithHealthClients(userHealth, chatHealth))
 
 	return runServer(ctx, cfg, router)
 }
@@ -95,7 +97,14 @@ func loadConfig() (*apigateway.Config, error) {
 
 const grpcRoundRobinServiceConfig = `{"loadBalancingConfig":[{"round_robin":{}}]}`
 
-func initClients(cfg *apigateway.Config) (userpb.UserServiceClient, chatpb.ChatServiceClient, func(), error) {
+func initClients(cfg *apigateway.Config) (
+	userpb.UserServiceClient,
+	chatpb.ChatServiceClient,
+	grpc_health_v1.HealthClient,
+	grpc_health_v1.HealthClient,
+	func(),
+	error,
+) {
 	grpcTimeout := cfg.APIGateway.GRPCClient.Timeout
 	opts := []grpc.DialOption{
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
@@ -114,13 +123,13 @@ func initClients(cfg *apigateway.Config) (userpb.UserServiceClient, chatpb.ChatS
 
 	userConn, err := grpc.NewClient(cfg.UserAddr(), opts...)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 
 	chatConn, err := grpc.NewClient(cfg.ChatAddr(), opts...)
 	if err != nil {
 		userConn.Close()
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 
 	cleanupClients := func() {
@@ -128,7 +137,12 @@ func initClients(cfg *apigateway.Config) (userpb.UserServiceClient, chatpb.ChatS
 		chatConn.Close()
 	}
 
-	return userpb.NewUserServiceClient(userConn), chatpb.NewChatServiceClient(chatConn), cleanupClients, nil
+	return userpb.NewUserServiceClient(userConn),
+		chatpb.NewChatServiceClient(chatConn),
+		grpc_health_v1.NewHealthClient(userConn),
+		grpc_health_v1.NewHealthClient(chatConn),
+		cleanupClients,
+		nil
 }
 
 func runServer(ctx context.Context, cfg *apigateway.Config, router *apigateway.Router) error {

@@ -286,13 +286,13 @@ func (s *E2ESuite) runService(ctx context.Context, hostname string, cfg ServiceC
 	var exposedPorts []string
 	if hostname == "api-gateway" {
 		exposedPorts = append(exposedPorts, "8080/tcp")
-		waitStrategy = wait.ForHTTP("/health").WithPort("8080/tcp")
+		waitStrategy = wait.ForHTTP("/ready").WithPort("8080/tcp")
 	} else if hostname == "ws-gateway" {
 		exposedPorts = append(exposedPorts, "8088/tcp")
-		waitStrategy = wait.ForHTTP("/health").WithPort("8088/tcp")
+		waitStrategy = wait.ForHTTP("/ready").WithPort("8088/tcp")
 	} else if strings.HasPrefix(hostname, "websocket-service") {
 		exposedPorts = append(exposedPorts, "8081/tcp")
-		waitStrategy = wait.ForHTTP("/health").WithPort("8081/tcp")
+		waitStrategy = wait.ForHTTP("/ready").WithPort("8081/tcp")
 	} else if hostname == "user-service" {
 		exposedPorts = append(exposedPorts, "50051/tcp")
 		waitStrategy = wait.ForListeningPort("50051/tcp")
