@@ -1599,6 +1599,35 @@ func TestService_BatchGetUsers(t *testing.T) {
 	}
 }
 
+func TestService_PurgeExpiredTokensOnce(t *testing.T) {
+	t.Parallel()
+
+	t.Run("Success: 만료된 리프레시 토큰을 1회 정리", func(t *testing.T) {
+		t.Parallel()
+		mockQueries := dbmocks.NewMockQuerier(t)
+		mockQueries.EXPECT().DeleteExpiredRefreshTokens(mock.Anything).Return(nil).Once()
+
+		s := createTestService(mockQueries)
+
+		err := s.PurgeExpiredTokensOnce(t.Context())
+
+		require.NoError(t, err)
+	})
+
+	t.Run("Failure: DB 에러 반환", func(t *testing.T) {
+		t.Parallel()
+		mockQueries := dbmocks.NewMockQuerier(t)
+		mockQueries.EXPECT().DeleteExpiredRefreshTokens(mock.Anything).Return(assert.AnError).Once()
+
+		s := createTestService(mockQueries)
+
+		err := s.PurgeExpiredTokensOnce(t.Context())
+
+		require.Error(t, err)
+		assert.ErrorIs(t, err, assert.AnError)
+	})
+}
+
 func TestService_PurgeExpiredTokens(t *testing.T) {
 	t.Parallel()
 

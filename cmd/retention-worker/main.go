@@ -9,46 +9,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/robfig/cron/v3"
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
-	"go-chat-msa/internal/shared/config"
+	"go-chat-msa/internal/retention"
 	"go-chat-msa/internal/shared/database"
-	"go-chat-msa/internal/shared/logger"
 	"go-chat-msa/internal/shared/telemetry"
 	userdb "go-chat-msa/internal/user/db"
 )
-
-type Config struct {
-	config.AppConfig `mapstructure:",squash"`
-	Telemetry        config.TelemetryConfig       `mapstructure:"TELEMETRY"`
-	Port             config.PortConfig            `mapstructure:"PORT"             validate:"required"`
-	DB               DBConfig                     `mapstructure:"DB"               validate:"required"`
-	RetentionWorker  config.RetentionWorkerConfig `mapstructure:"RETENTION_WORKER" validate:"required"`
-}
-
-type DBConfig struct {
-	PostgresURL string `mapstructure:"POSTGRES_URL" validate:"required"`
-}
-
-var retentionMeter = otel.Meter("go-chat-msa/retention-worker")
-
-var (
-	retentionDuration  metric.Float64Histogram
-	retentionPurgedTotal metric.Int64Counter
-)
-
-func init() {
-	retentionDuration, _ = retentionMeter.Float64Histogram("gochat_retention_duration_seconds",
-		metric.WithDescription("리텐션 퍼지 작업 소요 시간"),
-		metric.WithExplicitBucketBoundaries(.1, .25, .5, 1, 2.5, 5, 10, 30),
-	)
-	retentionPurgedTotal, _ = retentionMeter.Int64Counter("gochat_retention_purged",
-		metric.WithDescription("리텐션 퍼지 실행 횟수"),
-	)
-}
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -60,32 +26,8 @@ func main() {
 	}
 }
 
-func purge(ctx context.Context, kind string, fn func(context.Context) (int64, error)) {
-	n, err := fn(ctx)
-	if err != nil {
-		retentionPurgedTotal.Add(ctx, 1, metric.WithAttributes(
-			attribute.String("kind", kind),
-			attribute.String("status", "error"),
-		))
-		slog.ErrorContext(ctx, "failed to purge", "kind", kind, "error", err)
-		return
-	}
-	retentionPurgedTotal.Add(ctx, 1, metric.WithAttributes(
-		attribute.String("kind", kind),
-		attribute.String("status", "ok"),
-	))
-	slog.InfoContext(ctx, "purged", "kind", kind, "count", n)
-}
-
-func loadConfig() (*Config, error) {
-	env := config.GetEnv()
-	logger.InitLogger(env)
-
-	return config.Load[Config]("configs", "base", env)
-}
-
 func run(ctx context.Context) error {
-	cfg, err := loadConfig()
+	cfg, err := retention.LoadConfig()
 	if err != nil {
 		return err
 	}
@@ -129,19 +71,15 @@ func run(ctx context.Context) error {
 		defer cancel()
 
 		now := time.Now()
-		threshold := pgtype.Timestamptz{
-			Time:  now.AddDate(0, 0, -cfg.RetentionWorker.RetentionDays),
-			Valid: true,
+		result, err := retention.PurgeDeleted(jobCtx, queries, cfg.RetentionWorker.RetentionDays, now)
+		duration := time.Since(now)
+		retention.RecordMetrics(jobCtx, result, duration)
+		retention.LogResult(jobCtx, result)
+		if err != nil {
+			slog.ErrorContext(jobCtx, "retention purge failed", "error", err)
+			return
 		}
-
-		purge(jobCtx, "rooms", func(ctx context.Context) (int64, error) {
-			return queries.PurgeDeletedRooms(ctx, threshold)
-		})
-		purge(jobCtx, "users", func(ctx context.Context) (int64, error) {
-			return queries.PurgeDeletedUsers(ctx, threshold)
-		})
-
-		retentionDuration.Record(jobCtx, time.Since(now).Seconds())
+		slog.InfoContext(jobCtx, "retention purge completed", "duration", duration)
 	}); err != nil {
 		return err
 	}
