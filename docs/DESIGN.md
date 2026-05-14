@@ -406,7 +406,7 @@ WS Gateway가 `room_id` 기반 Consistent Hashing으로 대상 WebSocket Service
 
 **노드 목록은 동적**입니다. WebSocket Service 인스턴스가 부팅 시 Redis(`wss:member:{addr}` 키, TTL 30s)에 자기 주소를 등록하고 10초마다 `SET key value EX ttl`로 갱신합니다. 단순 `EXPIRE`만 호출하면 키가 이미 만료된 경우 false만 반환하고 재등록이 되지 않으므로, heartbeat는 항상 lease refresh로 봅니다. WS Gateway는 keyspace notification + 30초 SCAN 안전망으로 멤버 변경을 watch하고 자기 hash ring을 자동 동기화합니다. K8s 환경에서 HPA 스케일아웃 시 신규 파드가 자연 ring에 포함되고, 사라진 파드는 TTL 만료로 자동 제거됩니다.
 
-빠른 재시작 시 이전 프로세스의 정리가 새 프로세스의 lease를 지우는 사고를 막기 위해 lease token(프로세스별 무작위 값)을 도입했습니다. Redis value에 token을 함께 저장하고, 종료 시 단순 `DEL`이 아닌 compare-and-delete Lua로 자기 token이 맞을 때만 삭제합니다.
+빠른 재시작 시 이전 프로세스의 정리가 새 프로세스의 lease를 지우는 사고를 막기 위해 lease token(프로세스별 UUID v4 — WebSocket ticket·refresh token과 동일한 생성 컨벤션)을 도입했습니다. Redis value에 token을 함께 저장하고, 종료 시 단순 `DEL`이 아닌 compare-and-delete Lua로 자기 token이 맞을 때만 삭제합니다.
 
 흐름과 정합성 패턴은 §3.3 분산 라우팅 정합성에서 다룹니다.
 
