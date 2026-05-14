@@ -18,12 +18,14 @@ import (
 	"go-chat-msa/internal/user/db"
 	"go-chat-msa/internal/user/hasher"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/suite"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -38,9 +40,12 @@ type userIntegrationConfig struct {
 
 type UserSuite struct {
 	suite.Suite
-	container *postgres.PostgresContainer
-	db        *pgxpool.Pool
-	client    *user.Service
+	container   *postgres.PostgresContainer
+	db          *pgxpool.Pool
+	redisServer *miniredis.Miniredis
+	redisClient *redis.Client
+	tokenStore  *user.RedisRefreshTokenStore
+	client      *user.Service
 }
 
 func (s *UserSuite) SetupSuite() {
@@ -71,8 +76,13 @@ func (s *UserSuite) SetupSuite() {
 
 	s.runMigrations(ctx)
 
+	s.redisServer = miniredis.RunT(s.T())
+	s.redisClient = redis.NewClient(&redis.Options{Addr: s.redisServer.Addr()})
+	s.tokenStore = user.NewRedisRefreshTokenStore(s.redisClient)
+
 	hp := hasher.NewPool(hasher.DefaultPoolConfig())
 	s.client = user.NewService(db.New(s.db), cfg.UserService, "integration_test_secret", hp).
+		WithRefreshTokenStore(s.tokenStore).
 		WithRunInTx(func(ctx context.Context, fn func(db.Querier) error) error {
 			tx, err := s.db.Begin(ctx)
 			if err != nil {
@@ -111,6 +121,12 @@ func (s *UserSuite) runMigrations(ctx context.Context) {
 }
 
 func (s *UserSuite) TearDownSuite() {
+	if s.redisClient != nil {
+		s.Require().NoError(s.redisClient.Close())
+	}
+	if s.redisServer != nil {
+		s.redisServer.Close()
+	}
 	if s.container != nil {
 		s.container.Terminate(context.Background())
 	}
@@ -119,6 +135,9 @@ func (s *UserSuite) TearDownSuite() {
 func (s *UserSuite) SetupTest() {
 	_, err := s.db.Exec(s.T().Context(), "TRUNCATE TABLE users RESTART IDENTITY CASCADE")
 	s.Require().NoError(err)
+	if s.redisServer != nil {
+		s.redisServer.FlushAll()
+	}
 }
 
 func (s *UserSuite) TestCreateUser_ValidArgs() {
@@ -258,15 +277,9 @@ func (s *UserSuite) TestRefreshToken_Expired() {
 	username := "expireduser"
 	userID := s.createUser(username, "")
 
-	tokenHash := auth.HashToken("expired-token")
-	err := db.New(s.db).CreateRefreshToken(s.T().Context(), db.CreateRefreshTokenParams{
-		ID:        pgtype.UUID{Bytes: uuid.New(), Valid: true},
-		UserID:    pgtype.UUID{Bytes: uuid.MustParse(userID), Valid: true},
-		TokenHash: tokenHash,
-		ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(-1 * time.Hour), Valid: true},
-		CreatedAt: pgtype.Timestamptz{Time: time.Now().Add(-2 * time.Hour), Valid: true},
-	})
+	err := s.tokenStore.Issue(s.T().Context(), userID, "expired-token", time.Second)
 	s.Require().NoError(err)
+	s.redisServer.FastForward(time.Second + time.Millisecond)
 
 	_, err = s.client.RefreshToken(s.T().Context(), &pb.RefreshTokenRequest{
 		RefreshToken: "expired-token",
@@ -274,7 +287,7 @@ func (s *UserSuite) TestRefreshToken_Expired() {
 
 	s.Error(err)
 	s.Equal(codes.Unauthenticated, status.Code(err))
-	s.Contains(err.Error(), "expired")
+	s.Contains(err.Error(), "invalid refresh token")
 }
 
 func (s *UserSuite) TestRevokeToken_Success() {
@@ -1066,13 +1079,6 @@ func (s *UserSuite) TestDeleteUser_FullFlow() {
 	).Scan(&deletedAt)
 	s.Require().NoError(err)
 	s.True(deletedAt.Valid)
-
-	var tokenCount int64
-	err = s.db.QueryRow(s.T().Context(),
-		"SELECT COUNT(*) FROM refresh_tokens WHERE user_id = $1", aliceID,
-	).Scan(&tokenCount)
-	s.Require().NoError(err)
-	s.Zero(tokenCount, "alice의 refresh token 모두 삭제")
 
 	var memberCount int64
 	err = s.db.QueryRow(s.T().Context(),

@@ -79,10 +79,17 @@ func run(ctx context.Context) error {
 	}
 	defer pgPool.Close()
 
+	redisClient, err := database.NewRedis(cfg.Redis.Addr)
+	if err != nil {
+		return err
+	}
+	defer redisClient.Close()
+
 	telemetry.RegisterPgxpoolMetrics(pgPool)
 
 	dbQueries := db.New(telemetry.InstrumentedDBTX(pgPool))
 	userService := user.NewService(dbQueries, cfg.UserService, cfg.JWT.Secret, hasherPool).
+		WithRefreshTokenStore(user.NewRedisRefreshTokenStore(redisClient)).
 		WithRunInTx(func(ctx context.Context, fn func(db.Querier) error) error {
 			tx, err := pgPool.Begin(ctx)
 			if err != nil {
@@ -143,11 +150,6 @@ func runServer(ctx context.Context, cfg *user.Config, grpcServer *grpc.Server, u
 	eg.Go(func() error {
 		slog.InfoContext(ctx, "Starting User Service", "port", cfg.Port.UserGRPC, "env", cfg.Env)
 		return grpcServer.Serve(lis)
-	})
-
-	eg.Go(func() error {
-		userService.PurgeExpiredTokens(ctx)
-		return nil
 	})
 
 	eg.Go(func() error {

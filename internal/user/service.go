@@ -32,6 +32,7 @@ type Service struct {
 	secretKey string
 	queries   db.Querier
 	hasher    *hasher.Pool
+	tokens    RefreshTokenStore
 	runInTx   func(ctx context.Context, fn func(db.Querier) error) error
 }
 
@@ -41,6 +42,7 @@ func NewService(dbConn db.Querier, cfg config.UserConfig, secretKey string, h *h
 		config:    cfg,
 		secretKey: secretKey,
 		hasher:    h,
+		tokens:    missingRefreshTokenStore{},
 
 		runInTx: func(ctx context.Context, fn func(db.Querier) error) error {
 			return fn(dbConn)
@@ -50,6 +52,15 @@ func NewService(dbConn db.Querier, cfg config.UserConfig, secretKey string, h *h
 
 func (s *Service) WithRunInTx(runInTx func(ctx context.Context, fn func(db.Querier) error) error) *Service {
 	s.runInTx = runInTx
+	return s
+}
+
+func (s *Service) WithRefreshTokenStore(tokens RefreshTokenStore) *Service {
+	if tokens == nil {
+		s.tokens = missingRefreshTokenStore{}
+		return s
+	}
+	s.tokens = tokens
 	return s
 }
 
@@ -143,57 +154,48 @@ func (s *Service) VerifyUser(ctx context.Context, req *pb.VerifyUserRequest) (*p
 }
 
 func (s *Service) RefreshToken(ctx context.Context, req *pb.RefreshTokenRequest) (*pb.RefreshTokenResponse, error) {
-	tokenHash := auth.HashToken(req.RefreshToken)
-
-	var accessToken, refreshToken string
-	var reuseDetected bool
-	if err := s.runInTx(ctx, func(qtx db.Querier) error {
-		rt, err := qtx.GetRefreshTokenByHashForUpdate(ctx, tokenHash)
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return status.Error(codes.Unauthenticated, "invalid refresh token")
-			}
-			slog.ErrorContext(ctx, "failed to get refresh token", "error", err)
-			return status.Error(codes.Internal, "failed to verify refresh token")
-		}
-
-		if rt.ExpiresAt.Time.Before(time.Now()) {
-			return status.Error(codes.Unauthenticated, "refresh token expired")
-		}
-
-		if rt.Used {
-			authTokenReuseTotal.Add(ctx, 1)
-			slog.WarnContext(ctx, "refresh token reuse detected, revoking all tokens", "user_id", rt.UserID.String())
-			if err := qtx.DeleteRefreshTokensByUserID(ctx, rt.UserID); err != nil {
-				slog.ErrorContext(ctx, "failed to revoke all tokens", "error", err)
-				return status.Error(codes.Internal, "failed to revoke tokens")
-			}
-			reuseDetected = true
-			return nil
-		}
-
-		if err := qtx.MarkRefreshTokenUsed(ctx, rt.ID); err != nil {
-			slog.ErrorContext(ctx, "failed to mark refresh token used", "error", err)
-			return status.Error(codes.Internal, "failed to refresh token")
-		}
-
-		user, err := qtx.GetUserByID(ctx, rt.UserID)
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return status.Error(codes.Unauthenticated, "user no longer exists")
-			}
-			slog.ErrorContext(ctx, "failed to get user for refresh", "error", err)
-			return status.Error(codes.Internal, "failed to get user")
-		}
-
-		accessToken, refreshToken, err = s.issueTokenPairTx(ctx, qtx, rt.UserID, user.Username)
-		return err
-	}); err != nil {
-		return nil, err
+	refreshToken := uuid.NewString()
+	rotation, err := s.tokens.Rotate(ctx, req.RefreshToken, refreshToken, s.refreshTokenTTL())
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to rotate refresh token", "error", err)
+		return nil, status.Error(codes.Internal, "failed to refresh token")
 	}
 
-	if reuseDetected {
+	switch rotation.Status {
+	case RefreshTokenInvalid:
+		return nil, status.Error(codes.Unauthenticated, "invalid refresh token")
+	case RefreshTokenReused:
+		authTokenReuseTotal.Add(ctx, 1)
+		slog.WarnContext(ctx, "refresh token reuse detected, revoking all tokens", "user_id", rotation.UserID)
 		return nil, status.Error(codes.Unauthenticated, "refresh token reuse detected")
+	case RefreshTokenRotated:
+	default:
+		slog.ErrorContext(ctx, "unexpected refresh token rotation status", "status", rotation.Status)
+		return nil, status.Error(codes.Internal, "failed to refresh token")
+	}
+
+	userUUID, err := toPGUUID(rotation.UserID)
+	if err != nil {
+		slog.ErrorContext(ctx, "invalid user id in refresh token store", "user_id", rotation.UserID, "error", err)
+		return nil, status.Error(codes.Internal, "failed to refresh token")
+	}
+
+	user, err := s.queries.GetUserByID(ctx, userUUID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			if revokeErr := s.tokens.RevokeUser(ctx, rotation.UserID); revokeErr != nil {
+				slog.WarnContext(ctx, "failed to revoke refresh tokens for missing user", "user_id", rotation.UserID, "error", revokeErr)
+			}
+			return nil, status.Error(codes.Unauthenticated, "user no longer exists")
+		}
+		slog.ErrorContext(ctx, "failed to get user for refresh", "error", err)
+		return nil, status.Error(codes.Internal, "failed to get user")
+	}
+
+	accessToken, err := s.issueAccessToken(user.ID, user.Username)
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to generate access token", "error", err)
+		return nil, status.Error(codes.Internal, "failed to generate access token")
 	}
 
 	return &pb.RefreshTokenResponse{
@@ -203,9 +205,7 @@ func (s *Service) RefreshToken(ctx context.Context, req *pb.RefreshTokenRequest)
 }
 
 func (s *Service) RevokeToken(ctx context.Context, req *pb.RevokeTokenRequest) (*pb.RevokeTokenResponse, error) {
-	tokenHash := auth.HashToken(req.RefreshToken)
-
-	if err := s.queries.DeleteRefreshTokenByHash(ctx, tokenHash); err != nil {
+	if err := s.tokens.Revoke(ctx, req.RefreshToken); err != nil {
 		slog.ErrorContext(ctx, "failed to revoke token", "error", err)
 		return nil, status.Error(codes.Internal, "failed to revoke token")
 	}
@@ -244,49 +244,24 @@ func (s *Service) BatchGetUsers(ctx context.Context, req *pb.BatchGetUsersReques
 	return &pb.BatchGetUsersResponse{Users: users}, nil
 }
 
-func (s *Service) PurgeExpiredTokens(ctx context.Context) {
-	interval := s.config.Token.TokenPurgeInterval
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	slog.InfoContext(ctx, "Starting token purge goroutine", "interval", interval)
-
-	for {
-		select {
-		case <-ctx.Done():
-			slog.InfoContext(ctx, "Token purge goroutine stopped")
-			return
-		case <-ticker.C:
-			_ = s.PurgeExpiredTokensOnce(ctx)
-		}
-	}
-}
-
-func (s *Service) issueTokenPairTx(ctx context.Context, qtx db.Querier, userID pgtype.UUID, username string) (string, string, error) {
+func (s *Service) issueAccessToken(userID pgtype.UUID, username string) (string, error) {
 	accessTokenDuration := time.Duration(s.config.Token.AccessTokenExpirationMinutes) * time.Minute
 	accessToken, err := auth.GenerateJWT(userID.String(), username, s.secretKey, accessTokenDuration)
+	if err != nil {
+		return "", err
+	}
+	return accessToken, nil
+}
+
+func (s *Service) issueTokenPair(ctx context.Context, userID pgtype.UUID, username string) (string, string, error) {
+	accessToken, err := s.issueAccessToken(userID, username)
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to generate access token", "error", err)
 		return "", "", status.Error(codes.Internal, "failed to generate access token")
 	}
-
 	refreshToken := uuid.NewString()
-	tokenHash := auth.HashToken(refreshToken)
 
-	rtID, err := uuid.NewV7()
-	if err != nil {
-		return "", "", status.Error(codes.Internal, "failed to generate token ID")
-	}
-	now := time.Now()
-	refreshTokenDuration := time.Duration(s.config.Token.RefreshTokenExpirationDays) * 24 * time.Hour
-
-	if err := qtx.CreateRefreshToken(ctx, db.CreateRefreshTokenParams{
-		ID:        pgtype.UUID{Bytes: rtID, Valid: true},
-		UserID:    userID,
-		TokenHash: tokenHash,
-		ExpiresAt: pgtype.Timestamptz{Time: now.Add(refreshTokenDuration), Valid: true},
-		CreatedAt: pgtype.Timestamptz{Time: now, Valid: true},
-	}); err != nil {
+	if err := s.tokens.Issue(ctx, userID.String(), refreshToken, s.refreshTokenTTL()); err != nil {
 		slog.ErrorContext(ctx, "failed to save refresh token", "error", err)
 		return "", "", status.Error(codes.Internal, "failed to save refresh token")
 	}
@@ -294,8 +269,8 @@ func (s *Service) issueTokenPairTx(ctx context.Context, qtx db.Querier, userID p
 	return accessToken, refreshToken, nil
 }
 
-func (s *Service) issueTokenPair(ctx context.Context, userID pgtype.UUID, username string) (string, string, error) {
-	return s.issueTokenPairTx(ctx, s.queries, userID, username)
+func (s *Service) refreshTokenTTL() time.Duration {
+	return time.Duration(s.config.Token.RefreshTokenExpirationDays) * 24 * time.Hour
 }
 
 func (s *Service) CreateRoom(ctx context.Context, req *pb.CreateRoomRequest) (*pb.CreateRoomResponse, error) {
@@ -671,6 +646,12 @@ func (s *Service) DeleteUser(ctx context.Context, req *pb.DeleteUserRequest) (*p
 		}
 	}
 
+	if err := s.tokens.RevokeUser(ctx, userUUID.String()); err != nil {
+		slog.ErrorContext(ctx, "failed to revoke user refresh tokens", "user_id", userUUID.String(), "error", err)
+		userDeletedTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("status", "error")))
+		return nil, status.Error(codes.Internal, "failed to revoke tokens")
+	}
+
 	var leftRoomIDs []string
 	if err := s.runInTx(ctx, func(qtx db.Querier) error {
 		roomIDs, err := qtx.ListJoinedRoomIDsForUpdate(ctx, userUUID)
@@ -685,11 +666,6 @@ func (s *Service) DeleteUser(ctx context.Context, req *pb.DeleteUserRequest) (*p
 				return err
 			}
 			leftRoomIDs = append(leftRoomIDs, roomID.String())
-		}
-
-		if err := qtx.DeleteRefreshTokensByUserID(ctx, userUUID); err != nil {
-			slog.ErrorContext(ctx, "failed to delete refresh tokens", "error", err)
-			return status.Error(codes.Internal, "failed to revoke tokens")
 		}
 
 		if _, err := qtx.SoftDeleteUser(ctx, db.SoftDeleteUserParams{
