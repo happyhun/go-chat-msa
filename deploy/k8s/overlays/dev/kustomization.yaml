@@ -1,13 +1,14 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-namespace: go-chat
+namespace: go-chat-dev
 
 resources:
-  - ../../../base
+  - namespace.yaml
+  - ../../base
 
-patchesStrategicMerge:
-  - delete-non-apps.yaml
+patches:
+  - path: patches/mongo-glibc-tunables.yaml
 
 images:
   - name: go-chat-msa/api-gateway
@@ -32,4 +33,4 @@ labels:
     includeTemplates: true
     pairs:
       app.kubernetes.io/part-of: go-chat-msa
-      app.kubernetes.io/instance: go-chat-local
+      app.kubernetes.io/instance: go-chat-dev
