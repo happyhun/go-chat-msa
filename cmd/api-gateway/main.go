@@ -93,11 +93,14 @@ func loadConfig() (*apigateway.Config, error) {
 	return config.Load[apigateway.Config]("configs", "base", env)
 }
 
+const grpcRoundRobinServiceConfig = `{"loadBalancingConfig":[{"round_robin":{}}]}`
+
 func initClients(cfg *apigateway.Config) (userpb.UserServiceClient, chatpb.ChatServiceClient, func(), error) {
 	grpcTimeout := cfg.APIGateway.GRPCClient.Timeout
 	opts := []grpc.DialOption{
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultServiceConfig(grpcRoundRobinServiceConfig),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                cfg.APIGateway.GRPCClient.Keepalive.Time,
 			Timeout:             cfg.APIGateway.GRPCClient.Keepalive.Timeout,
