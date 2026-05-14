@@ -34,9 +34,9 @@ type ServiceRegistry struct {
 }
 
 func (c *Config) UserAddr() string {
-	return fmt.Sprintf("%s:%s", c.Registry.UserService.Host, c.Port.UserGRPC)
+	return fmt.Sprintf("dns:///%s:%s", c.Registry.UserService.Host, c.Port.UserGRPC)
 }
 
 func (c *Config) ChatAddr() string {
-	return fmt.Sprintf("%s:%s", c.Registry.ChatService.Host, c.Port.ChatGRPC)
+	return fmt.Sprintf("dns:///%s:%s", c.Registry.ChatService.Host, c.Port.ChatGRPC)
 }

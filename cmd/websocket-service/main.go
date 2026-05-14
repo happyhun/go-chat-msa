@@ -105,11 +105,14 @@ func loadConfig() (*websocket.Config, error) {
 	return config.Load[websocket.Config]("configs", "base", env)
 }
 
+const grpcRoundRobinServiceConfig = `{"loadBalancingConfig":[{"round_robin":{}}]}`
+
 func initClients(cfg *websocket.Config) (chatpb.ChatServiceClient, userpb.UserServiceClient, func(), error) {
 	grpcTimeout := cfg.WS.GRPCClient.Timeout
 	opts := []grpc.DialOption{
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultServiceConfig(grpcRoundRobinServiceConfig),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                cfg.WS.GRPCClient.Keepalive.Time,
 			Timeout:             cfg.WS.GRPCClient.Keepalive.Timeout,
