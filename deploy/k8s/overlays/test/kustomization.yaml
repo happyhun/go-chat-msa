@@ -27,8 +27,6 @@ images:
     newTag: test
   - name: go-chat-msa/retention-job
     newTag: test
-  - name: go-chat-msa/user-token-purge-job
-    newTag: test
 
 labels:
   - includeSelectors: true
