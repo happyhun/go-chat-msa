@@ -12,21 +12,28 @@ import (
 var hubMeter = otel.Meter("go-chat-msa/websocket/hub")
 
 var (
-	hubsActive                    metric.Int64UpDownCounter
-	hubsClosedTotal               metric.Int64Counter
-	connectionsActive             metric.Int64UpDownCounter
-	sessionConflictsTotal         metric.Int64Counter
-	messagesReceivedTotal         metric.Int64Counter
-	messagesRateLimitedTotal      metric.Int64Counter
-	messagesSentTotal             metric.Int64Counter
-	duplicateMessagesDroppedTotal metric.Int64Counter
-	sendQueueDroppedTotal         metric.Int64Counter
-	broadcastChannelDepth         metric.Float64Histogram
-	persistChannelDepth           metric.Float64Gauge
-	persistDroppedTotal           metric.Int64Counter
-	fanoutDuration                metric.Float64Histogram
-	egressDuration                metric.Float64Histogram
-	rebalanceEvictionsTotal       metric.Int64Counter
+	hubsActive                     metric.Int64UpDownCounter
+	hubsClosedTotal                metric.Int64Counter
+	connectionsActive              metric.Int64UpDownCounter
+	sessionConflictsTotal          metric.Int64Counter
+	messagesReceivedTotal          metric.Int64Counter
+	messagesRateLimitedTotal       metric.Int64Counter
+	messagesSentTotal              metric.Int64Counter
+	duplicateMessagesDroppedTotal  metric.Int64Counter
+	sendQueueDroppedTotal          metric.Int64Counter
+	broadcastChannelDepth          metric.Float64Histogram
+	persistChannelDepth            metric.Float64Gauge
+	persistDroppedTotal            metric.Int64Counter
+	persistDrainTotal              metric.Int64Counter
+	persistDrainDuration           metric.Float64Histogram
+	persistenceBatchSaveTotal      metric.Int64Counter
+	persistenceRetryQueueDepth     metric.Float64Gauge
+	persistenceRetryOldestAge      metric.Float64Gauge
+	persistenceRetrySaveTotal      metric.Int64Counter
+	persistenceRetryQueueFullTotal metric.Int64Counter
+	fanoutDuration                 metric.Float64Histogram
+	egressDuration                 metric.Float64Histogram
+	rebalanceEvictionsTotal        metric.Int64Counter
 )
 
 func init() {
@@ -103,6 +110,49 @@ func init() {
 	)
 	if err != nil {
 		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_ws_persist_dropped", "error", err)
+	}
+	persistDrainTotal, err = hubMeter.Int64Counter("gochat_ws_persist_drain",
+		metric.WithDescription("Hub 종료 전 영속화 drain 결과"),
+	)
+	if err != nil {
+		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_ws_persist_drain", "error", err)
+	}
+	persistDrainDuration, err = hubMeter.Float64Histogram("gochat_ws_persist_drain_duration_seconds",
+		metric.WithDescription("Hub 종료 전 영속화 drain 소요 시간"),
+		metric.WithExplicitBucketBoundaries(.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 30),
+	)
+	if err != nil {
+		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_ws_persist_drain_duration_seconds", "error", err)
+	}
+	persistenceBatchSaveTotal, err = hubMeter.Int64Counter("gochat_persistence_batch_save",
+		metric.WithDescription("배치 저장 시도 횟수"),
+	)
+	if err != nil {
+		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_persistence_batch_save", "error", err)
+	}
+	persistenceRetryQueueDepth, err = hubMeter.Float64Gauge("gochat_persistence_retry_queue_depth",
+		metric.WithDescription("재시도 큐 대기 배치 수"),
+	)
+	if err != nil {
+		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_persistence_retry_queue_depth", "error", err)
+	}
+	persistenceRetryOldestAge, err = hubMeter.Float64Gauge("gochat_persistence_retry_oldest_age_seconds",
+		metric.WithDescription("재시도 대기 중 가장 오래된 작업의 경과 시간(초)"),
+	)
+	if err != nil {
+		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_persistence_retry_oldest_age_seconds", "error", err)
+	}
+	persistenceRetrySaveTotal, err = hubMeter.Int64Counter("gochat_persistence_retry_save",
+		metric.WithDescription("재시도 저장 결과"),
+	)
+	if err != nil {
+		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_persistence_retry_save", "error", err)
+	}
+	persistenceRetryQueueFullTotal, err = hubMeter.Int64Counter("gochat_persistence_retry_queue_full",
+		metric.WithDescription("재시도 큐 포화로 폐기된 배치 수"),
+	)
+	if err != nil {
+		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_persistence_retry_queue_full", "error", err)
 	}
 	fanoutDuration, err = hubMeter.Float64Histogram("gochat_ws_fanout_duration_seconds",
 		metric.WithDescription("팬아웃 지연 시간 (수신 → 세션 큐 적재)"),

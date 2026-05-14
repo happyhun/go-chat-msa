@@ -3,6 +3,7 @@ package hub
 import (
 	"context"
 	"encoding/json"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -11,6 +12,8 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func testManagerConfig() config.ManagerConfig {
@@ -38,7 +41,7 @@ func TestHub_Functional(t *testing.T) {
 
 	t.Run("Success: 다수 세션의 등록 및 메시지 브로드캐스트", func(t *testing.T) {
 		t.Parallel()
-		h := newHub("room1", testSessionConfig(), time.Minute, nil, nil, nil)
+		h := newHub("room1", testSessionConfig(), time.Minute, nil, nil, time.Second, nil)
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		go h.run(ctx)
@@ -68,7 +71,7 @@ func TestHub_Functional(t *testing.T) {
 
 	t.Run("Success: 동일 유저 중복 등록 시 이전 세션 강제 종료(Conflict)", func(t *testing.T) {
 		t.Parallel()
-		h := newHub("conflict-room", testSessionConfig(), 5*time.Minute, nil, nil, nil)
+		h := newHub("conflict-room", testSessionConfig(), 5*time.Minute, nil, nil, time.Second, nil)
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		go h.run(ctx)
@@ -228,6 +231,38 @@ func TestManager_ForceCloseRoom(t *testing.T) {
 	})
 }
 
+func TestManager_ShutdownStopsTimedOutHubsBeforeClosingPersistenceQueue(t *testing.T) {
+	t.Parallel()
+
+	store := &retryOnlyStore{}
+	manager := NewManager(testManagerConfig(), config.RateLimitConfig{}, store, 20*time.Millisecond)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() {
+		manager.Run(ctx)
+		close(done)
+	}()
+
+	err := manager.Broadcast(t.Context(), &Message{
+		RoomID:   "retry-room",
+		SenderID: "user-1",
+		Content:  "hello",
+		Type:     "chat",
+	})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		return store.saveCalls.Load() > 0
+	}, time.Second, 10*time.Millisecond)
+
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("manager should stop even when hub persistence drain times out")
+	}
+}
+
 func TestNewSystemMessage(t *testing.T) {
 	t.Parallel()
 
@@ -240,4 +275,14 @@ func TestNewSystemMessage(t *testing.T) {
 		assert.Equal(t, "system", msg.Type)
 		assert.Equal(t, systemSenderID, msg.SenderID)
 	})
+}
+
+type retryOnlyStore struct {
+	mockStore
+	saveCalls atomic.Int64
+}
+
+func (s *retryOnlyStore) SaveMany(_ context.Context, _ []*Message) error {
+	s.saveCalls.Add(1)
+	return status.Error(codes.Unavailable, "temporary outage")
 }

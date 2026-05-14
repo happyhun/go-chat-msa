@@ -24,6 +24,7 @@ import (
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/keepalive"
 
 	chatpb "go-chat-msa/api/proto/chat/v1"
@@ -77,7 +78,7 @@ func run(ctx context.Context) error {
 		}
 	}
 
-	chatClient, userClient, cleanupClients, err := initClients(cfg)
+	chatClient, userClient, chatHealth, userHealth, cleanupClients, err := initClients(cfg)
 	if err != nil {
 		return err
 	}
@@ -93,7 +94,10 @@ func run(ctx context.Context) error {
 	registry := membership.NewRegistry(redisClient, membershipKeyPrefix, cfg.WS.AdvertisedAddr, membershipTTL, membershipHeartbeat)
 	watcher := membership.NewWatcher(redisClient, membershipKeyPrefix, hashRing)
 
-	router := websocket.NewRouter(chatClient, userClient, cfg.WS, hashRing)
+	router := websocket.NewRouter(chatClient, userClient, cfg.WS, hashRing,
+		websocket.WithShutdownTimeout(cfg.ShutdownTimeout),
+		websocket.WithRedisClient(redisClient),
+		websocket.WithHealthClients(chatHealth, userHealth))
 
 	return runServer(ctx, cfg, router, registry, watcher)
 }
@@ -107,7 +111,14 @@ func loadConfig() (*websocket.Config, error) {
 
 const grpcRoundRobinServiceConfig = `{"loadBalancingConfig":[{"round_robin":{}}]}`
 
-func initClients(cfg *websocket.Config) (chatpb.ChatServiceClient, userpb.UserServiceClient, func(), error) {
+func initClients(cfg *websocket.Config) (
+	chatpb.ChatServiceClient,
+	userpb.UserServiceClient,
+	grpc_health_v1.HealthClient,
+	grpc_health_v1.HealthClient,
+	func(),
+	error,
+) {
 	grpcTimeout := cfg.WS.GRPCClient.Timeout
 	opts := []grpc.DialOption{
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
@@ -126,13 +137,13 @@ func initClients(cfg *websocket.Config) (chatpb.ChatServiceClient, userpb.UserSe
 
 	chatConn, err := grpc.NewClient(cfg.ChatAddr(), opts...)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 
 	userConn, err := grpc.NewClient(cfg.UserAddr(), opts...)
 	if err != nil {
 		chatConn.Close()
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 
 	cleanupClients := func() {
@@ -140,7 +151,12 @@ func initClients(cfg *websocket.Config) (chatpb.ChatServiceClient, userpb.UserSe
 		userConn.Close()
 	}
 
-	return chatpb.NewChatServiceClient(chatConn), userpb.NewUserServiceClient(userConn), cleanupClients, nil
+	return chatpb.NewChatServiceClient(chatConn),
+		userpb.NewUserServiceClient(userConn),
+		grpc_health_v1.NewHealthClient(chatConn),
+		grpc_health_v1.NewHealthClient(userConn),
+		cleanupClients,
+		nil
 }
 
 func runServer(
