@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gochat-config
+data:
+  APP_ENV: k8s-test
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: gochat-secret
+stringData:
+  APP_JWT_SECRET: e2e_secret
+  APP_INTERNAL_SECRET: e2e_internal_secret
