@@ -396,6 +396,7 @@ YAML 키는 환경변수로 오버라이드할 수 있습니다. viper의 `SetEn
 
 각 서비스는 타겟당 단일 `grpc.ClientConn`을 공유합니다.  
 `ClientConn`은 HTTP/2 multiplexing으로 다중 요청을 동시 처리하며, keepalive 파라미터로 장기 유휴 연결을 유지합니다.  
+내부적으로는 DNS resolver가 반환한 backend endpoint마다 subchannel(=long-lived HTTP/2 connection)을 두고, `round_robin` LB 정책으로 RPC를 subchannel들 사이에 분배합니다. 따라서 `ClientConn`은 single connection 추상이 아니라 backend별 connection 집합 + LB 정책을 묶은 채널이며, K8s Headless Service의 multi-A 응답과 결합해 RPC 단위 분산을 달성합니다.  
 저장 파이프라인은 배치 워커 풀로, 핸드셰이크 경로는 ws-gateway rate limiter로 동시 호출 수를 억제해 HTTP/2 권장치(연결당 ~100 스트림) 이내로 유도합니다.  
 추후 권장치를 초과하는 병목이 관측되면 커넥션 풀을 도입할 예정입니다.
 
