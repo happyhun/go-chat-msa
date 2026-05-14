@@ -19,8 +19,7 @@ func newTestRegistry(t *testing.T, addr string, ttl, heartbeat time.Duration) (*
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
-	reg, err := NewRegistry(client, testKeyPrefix, addr, ttl, heartbeat)
-	require.NoError(t, err)
+	reg := NewRegistry(client, testKeyPrefix, addr, ttl, heartbeat)
 	return reg, client, mr
 }
 
@@ -133,8 +132,7 @@ func TestRegistry_DeregisterIgnoresMismatchedToken(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
 
-	r1, err := NewRegistry(client, testKeyPrefix, "wss-x:8081", 30*time.Second, 10*time.Second)
-	require.NoError(t, err)
+	r1 := NewRegistry(client, testKeyPrefix, "wss-x:8081", 30*time.Second, 10*time.Second)
 
 	require.NoError(t, client.Set(t.Context(), testKeyPrefix+"wss-x:8081", "other-token", 30*time.Second).Err())
 

@@ -2,19 +2,15 @@ package membership
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 )
 
-const (
-	deregisterTimeout = 2 * time.Second
-	tokenByteLength   = 16
-)
+const deregisterTimeout = 2 * time.Second
 
 var compareAndDeleteScript = redis.NewScript(`
 if redis.call("GET", KEYS[1]) == ARGV[1] then
@@ -32,27 +28,15 @@ type Registry struct {
 	heartbeat time.Duration
 }
 
-func NewRegistry(client *redis.Client, keyPrefix, addr string, ttl, heartbeat time.Duration) (*Registry, error) {
-	token, err := generateToken()
-	if err != nil {
-		return nil, fmt.Errorf("generate lease token: %w", err)
-	}
+func NewRegistry(client *redis.Client, keyPrefix, addr string, ttl, heartbeat time.Duration) *Registry {
 	return &Registry{
 		client:    client,
 		keyPrefix: keyPrefix,
 		addr:      addr,
-		token:     token,
+		token:     uuid.NewString(),
 		ttl:       ttl,
 		heartbeat: heartbeat,
-	}, nil
-}
-
-func generateToken() (string, error) {
-	buf := make([]byte, tokenByteLength)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
 	}
-	return hex.EncodeToString(buf), nil
 }
 
 func (r *Registry) key() string {

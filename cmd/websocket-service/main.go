@@ -90,10 +90,7 @@ func run(ctx context.Context) error {
 	defer redisClient.Close()
 
 	hashRing := loadbalance.New(nil)
-	registry, err := membership.NewRegistry(redisClient, membershipKeyPrefix, cfg.WS.AdvertisedAddr, membershipTTL, membershipHeartbeat)
-	if err != nil {
-		return err
-	}
+	registry := membership.NewRegistry(redisClient, membershipKeyPrefix, cfg.WS.AdvertisedAddr, membershipTTL, membershipHeartbeat)
 	watcher := membership.NewWatcher(redisClient, membershipKeyPrefix, hashRing)
 
 	router := websocket.NewRouter(chatClient, userClient, cfg.WS, hashRing)
