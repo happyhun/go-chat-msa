@@ -36,7 +36,8 @@
   - 구조체 검증: `go-playground/validator/v10`
 - 테스트:
   - 프레임워크: `stretchr/testify`
-  - 컨테이너: `testcontainers/testcontainers-go`
+  - 통합 테스트 컨테이너: `testcontainers/testcontainers-go`
+  - E2E: Kubernetes `test` overlay
 - 관측성 인프라:
   - 수집: Grafana Alloy (OTel Collector)
   - 로그: Loki
@@ -59,7 +60,7 @@
 | websocket-service | 실시간 메시지 브로드캐스트, 세션/룸 관리 | WebSocket | - |
 | user-service | 사용자 및 채팅방 CRUD, Bcrypt 워커 풀 | gRPC | PostgreSQL |
 | chat-service | 메시지 저장 및 조회 | gRPC | MongoDB |
-| retention-worker | 소프트 삭제된 채팅방·사용자 퍼지 | - | PostgreSQL |
+| retention-job | 소프트 삭제된 채팅방·사용자 one-shot 퍼지 | CronJob | PostgreSQL |
 
 ---
 
@@ -204,7 +205,7 @@ PK는 애플리케이션에서 UUID v7로 생성합니다.
 | 대상 | 종류 | 용도 |
 | :--- | :--- | :--- |
 | `users.username` | UNIQUE | 로그인, 중복 검사 (탈퇴자 row까지 포함하여 grace 기간 동안 동일 username 재가입 차단) |
-| `users.deleted_at` | INDEX (partial: `WHERE deleted_at IS NOT NULL`) | retention-worker가 grace 만료 행을 빠르게 스캔 |
+| `users.deleted_at` | INDEX (partial: `WHERE deleted_at IS NOT NULL`) | retention job이 grace 만료 행을 빠르게 스캔 |
 | `room_members.(user_id, room_id)` | PK (복합) | 멤버십 조회 |
 | `room_members.room_id` | INDEX | 방별 멤버 목록 |
 | `rooms.manager_id` | INDEX | 방장별 방 조회 |
@@ -281,9 +282,9 @@ TTL 90일은 채팅 서비스 특성상 오래된 메시지의 조회 빈도가 
 | :--- | :--- |
 | T0 (탈퇴 요청) | `users.deleted_at = now()` 설정. 비밀번호 재인증 후 진행. 모든 Refresh Token 즉시 폐기. 가입한 방마다 LeaveRoom 로직 적용(매니저면 위임 또는 빈 방 soft-delete). |
 | T0 ~ T+30일 (grace) | `GetUserByUsername`/`GetUserByID`가 `deleted_at IS NULL` 필터로 차단 → 로그인·토큰 갱신 실패. `users.username` UNIQUE 제약이 탈퇴자 row까지 포함해 동일 username 재가입을 막음(freeze). |
-| T+30일 이후 | retention-worker가 `deleted_at < now() - 30d` 행을 hard delete. CASCADE로 `room_members` 정리, `rooms.manager_id`는 SET NULL. username freeze 자연 해제. |
+| T+30일 이후 | retention job이 `deleted_at < now() - 30d` 행을 hard delete. CASCADE로 `room_members` 정리, `rooms.manager_id`는 SET NULL. username freeze 자연 해제. |
 
-채팅방의 soft delete + 30일 grace + retention purge 패턴과 정확히 동일합니다. 운영 일관성을 위해 retention-worker가 두 도메인을 한 cron job 안에서 처리하며, `gochat_retention_purged_total{kind="rooms"|"users"}` 라벨로 분리 관측합니다.
+채팅방의 soft delete + 30일 grace + retention purge 패턴과 정확히 동일합니다. 운영 일관성을 위해 retention job이 두 도메인을 한 one-shot 실행 안에서 처리하며, `gochat_retention_purged_total{kind="rooms"|"users"}` 라벨로 분리 관측합니다.
 
 ### 2.7 세션 생명주기
 
@@ -357,14 +358,15 @@ REST API(`GET /rooms/{id}/messages`)에서 `last_seq` 쿼리 파라미터 유무
 
 - **공통 타입 (`shared/config`)**: `HTTPServerConfig`, `JWTConfig`, `RateLimitConfig` 등 여러 서비스가 공유하는 설정 빌딩블록. validate 태그를 포함하여 로딩 시점에 검증합니다.
 - **서비스별 Config**: 공통 타입을 임베딩(`mapstructure:",squash"`)하거나 필드로 조합하여 서비스 고유의 설정 트리를 구성합니다. 서비스마다 필드 구성이 다른 래퍼 구조체(예: `RateLimitConfig`, `ServiceRegistry`)는 각 서비스 config 파일에 정의합니다.
-- **예외**: `cmd/retention-worker`는 Postgres만 사용하므로 공유 `DBConfig` 대신 자체 `DBConfig`를 정의합니다.
+- **예외**: retention entrypoint는 Postgres만 사용하므로 공유 `DBConfig` 대신 자체 `DBConfig`를 정의합니다.
 
 #### 환경 격리
 
 환경별로 설정 파일을 분리합니다.
 - `configs/base.yaml`: 기본 설정값
 - `configs/dev.yaml`: 개발 환경 설정값 (오버라이드 필수 값 위주)
-- `test/e2e/configs/test.yaml`: E2E 테스트용 설정값
+- `deploy/k8s/overlays/dev`: 로컬 개발 smoke용 K8s 설정
+- `deploy/k8s/overlays/test`: E2E correctness 검증용 K8s 설정
 
 #### 상수 vs YAML
 
@@ -571,7 +573,9 @@ PK는 애플리케이션에서 UUID v7로 생성합니다. v4 대신 v7을 선�
 
 #### E2E 테스트
 
-- Testcontainers로 전체 시스템을 띄우고 블랙박스 검증 (`docker-compose.test.yaml`은 컨테이너 설정 참조용)
+- K8s `test` overlay로 전체 시스템을 띄우고 블랙박스 검증
+- e2e suite는 이미 bootstrap된 `go-chat-test` namespace의 readiness를 확인한 뒤 실행
+- 테스트 간 cleanup은 K8s 내부 Postgres truncate와 MongoDB drop으로 수행하며, Redis membership/ring 상태는 검증 대상이므로 전체 flush하지 않음
 - 시나리오 번호 순서대로 사용자 여정(user journey)을 이어가며 검증
 
 ---
@@ -653,15 +657,15 @@ Grafana에서 6종의 대시보드를 프로비저닝합니다.
 
 ## 6. 추후 개선사항
 
-현재 시스템은 Docker Compose 기반 실행 환경에서 동작하지만, K8s 전환을 위한 앱 코드 변경(동적 멤버십, gRPC round_robin, readiness, graceful drain)은 반영되어 있습니다. 남은 작업은 매니페스트와 운영 검증 중심입니다.
+현재 시스템은 Kubernetes dev/test overlay 기준으로 실행됩니다. Docker Compose 실행 경로는 mainline에서 제거했고, Compose 기반 성능/구조 비교가 필요할 때는 `legacy-compose-baseline` tag를 참조합니다. K8s 전환을 위한 앱 코드 변경(동적 멤버십, gRPC round_robin, readiness, graceful drain)과 기본 매니페스트는 반영되어 있으며, 남은 작업은 멀티 노드 HPA/load/rollout 검증과 운영성 고도화 중심입니다.
 
-### 6.1 K8s 매니페스트
+### 6.1 멀티 노드 K8s 검증
 
-Deployment, Service, ConfigMap/Secret, Ingress, Probe, termination grace period를 정의해야 합니다. user-service와 chat-service는 gRPC `dns:///` + `round_robin`이 멀티 파드 IP를 볼 수 있도록 Headless Service가 필요합니다.
+Mac/Windows 호스트의 Linux VM을 Tailscale로 연결하고, k3s 기반 멀티 노드 클러스터에서 실제 네트워크 지연과 노드 장애 조건을 포함해 검증합니다. user-service와 chat-service는 Headless Service + gRPC `dns:///` + `round_robin`으로 멀티 파드 IP를 보게 합니다.
 
 ### 6.2 K8s 분산 동작 검증
 
-로컬 kind/k3d 환경에서 HPA 스케일아웃·스케일인, rolling update, `kubectl delete pod`, node drain 시나리오를 검증해야 합니다. 특히 WebSocket owner rebalance 중 in-flight 메시지가 저장 ack 이후 close되는지, gRPC round_robin이 user/chat 다중 파드로 분산되는지 확인합니다.
+k3s `qa` overlay에서 HPA 스케일아웃·스케일인, rolling update, `kubectl delete pod`, node drain 시나리오를 검증합니다. 특히 WebSocket owner rebalance 중 in-flight 메시지가 저장 ack 이후 close되는지, gRPC round_robin이 user/chat 다중 파드로 분산되는지 확인합니다.
 
 ### 6.3 Custom Metrics HPA
 
