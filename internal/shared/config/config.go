@@ -149,12 +149,6 @@ type SyncConfig struct {
 	MaxLimit     int64 `mapstructure:"MAX_LIMIT" validate:"required"`
 }
 
-type RetentionWorkerConfig struct {
-	Schedule      string        `mapstructure:"SCHEDULE"       validate:"required"`
-	RetentionDays int           `mapstructure:"RETENTION_DAYS" validate:"required,min=1"`
-	JobTimeout    time.Duration `mapstructure:"JOB_TIMEOUT"    validate:"required"`
-}
-
 type RateLimitConfig struct {
 	RPS   float64       `mapstructure:"RPS"   validate:"required,gt=0"`
 	Burst int           `mapstructure:"BURST" validate:"required,min=1"`

@@ -23,7 +23,6 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/suite"
@@ -1073,12 +1072,12 @@ func (s *UserSuite) TestDeleteUser_FullFlow() {
 	s.NotNil(deleteRes)
 	s.Len(deleteRes.LeftRoomIds, 2, "정리된 방 두 개")
 
-	var deletedAt pgtype.Timestamptz
+	var userExists bool
 	err = s.db.QueryRow(s.T().Context(),
-		"SELECT deleted_at FROM users WHERE id = $1", aliceID,
-	).Scan(&deletedAt)
+		"SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)", aliceID,
+	).Scan(&userExists)
 	s.Require().NoError(err)
-	s.True(deletedAt.Valid)
+	s.False(userExists, "alice row is hard deleted")
 
 	var memberCount int64
 	err = s.db.QueryRow(s.T().Context(),
@@ -1114,15 +1113,15 @@ func (s *UserSuite) TestDeleteUser_WrongPassword() {
 	s.Error(err)
 	s.Equal(codes.Unauthenticated, status.Code(err))
 
-	var deletedAt pgtype.Timestamptz
+	var userExists bool
 	err = s.db.QueryRow(s.T().Context(),
-		"SELECT deleted_at FROM users WHERE id = $1", aliceID,
-	).Scan(&deletedAt)
+		"SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)", aliceID,
+	).Scan(&userExists)
 	s.Require().NoError(err)
-	s.False(deletedAt.Valid, "비밀번호 오답 시 deleted_at은 변하지 않아야 함")
+	s.True(userExists, "비밀번호 오답 시 사용자 row는 유지되어야 함")
 }
 
-func (s *UserSuite) TestDeleteUser_LonelyManagerSoftDeletesRoom() {
+func (s *UserSuite) TestDeleteUser_LonelyManagerDeletesRoom() {
 	aliceID := s.createUser("delsolo", "")
 
 	roomRes, err := s.client.CreateRoom(s.T().Context(), &pb.CreateRoomRequest{
@@ -1135,26 +1134,10 @@ func (s *UserSuite) TestDeleteUser_LonelyManagerSoftDeletesRoom() {
 	})
 	s.Require().NoError(err)
 
-	s.False(s.roomExists(roomRes.RoomId), "혼자 만든 방은 soft delete됨")
+	s.False(s.roomExists(roomRes.RoomId), "혼자 만든 방은 삭제됨")
 }
 
-func (s *UserSuite) TestDeleteUser_UsernameFrozenDuringGrace() {
-	aliceID := s.createUser("delfrozen", "")
-
-	_, err := s.client.DeleteUser(s.T().Context(), &pb.DeleteUserRequest{
-		UserId: aliceID, Password: "SecurePass123!",
-	})
-	s.Require().NoError(err)
-
-	_, err = s.client.CreateUser(s.T().Context(), &pb.CreateUserRequest{
-		Username: "delfrozen",
-		Password: "SecurePass123!",
-	})
-	s.Error(err)
-	s.Equal(codes.AlreadyExists, status.Code(err))
-}
-
-func (s *UserSuite) TestDeleteUser_UsernameReleasedAfterPurge() {
+func (s *UserSuite) TestDeleteUser_UsernameReleasedAfterDelete() {
 	aliceID := s.createUser("delreleased", "")
 
 	_, err := s.client.DeleteUser(s.T().Context(), &pb.DeleteUserRequest{
@@ -1162,25 +1145,14 @@ func (s *UserSuite) TestDeleteUser_UsernameReleasedAfterPurge() {
 	})
 	s.Require().NoError(err)
 
-	_, err = s.db.Exec(s.T().Context(),
-		"UPDATE users SET deleted_at = $1 WHERE id = $2",
-		time.Now().Add(-31*24*time.Hour), aliceID,
-	)
-	s.Require().NoError(err)
-
-	threshold := pgtype.Timestamptz{Time: time.Now().Add(-30 * 24 * time.Hour), Valid: true}
-	n, err := db.New(s.db).PurgeDeletedUsers(s.T().Context(), threshold)
-	s.Require().NoError(err)
-	s.Equal(int64(1), n)
-
 	_, err = s.client.CreateUser(s.T().Context(), &pb.CreateUserRequest{
 		Username: "delreleased",
 		Password: "SecurePass123!",
 	})
-	s.NoError(err, "purge 후 동일 username 재가입 가능")
+	s.NoError(err, "hard delete 후 동일 username 재가입 가능")
 }
 
-func (s *UserSuite) TestBatchGetUsers_FiltersDeleted() {
+func (s *UserSuite) TestBatchGetUsers_FiltersMissingUsers() {
 	aliceID := s.createUser("batchalice", "")
 	bobID := s.createUser("batchbob", "")
 	charlieID := s.createUser("batchcharlie", "")
@@ -1200,10 +1172,10 @@ func (s *UserSuite) TestBatchGetUsers_FiltersDeleted() {
 	for _, u := range res.Users {
 		usernames[u.Id] = u.Username
 	}
-	s.Len(usernames, 2, "활성 사용자(alice, charlie)만 반환")
+	s.Len(usernames, 2, "존재하는 사용자(alice, charlie)만 반환")
 	s.Equal("batchalice", usernames[aliceID])
 	s.Equal("batchcharlie", usernames[charlieID])
-	s.NotContains(usernames, bobID, "탈퇴자 응답 제외")
+	s.NotContains(usernames, bobID, "삭제된 사용자 응답 제외")
 }
 
 func (s *UserSuite) TestBatchGetUsers_EmptyInput() {
@@ -1219,7 +1191,7 @@ func (s *UserSuite) getRoom(roomID string) (string, int32, string) {
 	var capacity int32
 	var managerID *string
 	err := s.db.QueryRow(s.T().Context(),
-		"SELECT name, capacity, manager_id::text FROM rooms WHERE id = $1 AND deleted_at IS NULL",
+		"SELECT name, capacity, manager_id::text FROM rooms WHERE id = $1",
 		roomID,
 	).Scan(&name, &capacity, &managerID)
 	s.Require().NoError(err)
@@ -1232,7 +1204,7 @@ func (s *UserSuite) getRoom(roomID string) (string, int32, string) {
 func (s *UserSuite) roomExists(roomID string) bool {
 	var exists bool
 	err := s.db.QueryRow(s.T().Context(),
-		"SELECT EXISTS(SELECT 1 FROM rooms WHERE id = $1 AND deleted_at IS NULL)",
+		"SELECT EXISTS(SELECT 1 FROM rooms WHERE id = $1)",
 		roomID,
 	).Scan(&exists)
 	s.Require().NoError(err)

@@ -736,5 +736,8 @@ func (s *E2ESuite) TestScenario_13_UserDeletion_FullLifecycle() {
 	signupResp, err := client.Do(signupReq)
 	s.Require().NoError(err)
 	signupResp.Body.Close()
-	s.Equal(http.StatusConflict, signupResp.StatusCode, "grace 기간 동안 동일 username 재가입 차단 → 409")
+	s.Equal(http.StatusCreated, signupResp.StatusCode, "하드 삭제 후 동일 username 재가입 가능 → 201")
+
+	_, _, err = s.loginWithCookie(ctx, alice, password)
+	s.Require().NoError(err, "재가입한 계정으로 로그인 가능")
 }

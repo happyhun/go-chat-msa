@@ -133,12 +133,6 @@ USER_SERVICE:
       TIMEOUT: "5s"
       MIN_TIME: "5s"
 
-# Retention Worker
-RETENTION_WORKER:
-  SCHEDULE: "0 3 * * *"
-  RETENTION_DAYS: 30
-  JOB_TIMEOUT: "60s"
-
 # Chat Service
 CHAT_SERVICE:
   MESSAGE:

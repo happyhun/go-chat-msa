@@ -14,7 +14,6 @@ type Room struct {
 	ManagerID pgtype.UUID
 	Capacity  int32
 	CreatedAt pgtype.Timestamptz
-	DeletedAt pgtype.Timestamptz
 }
 
 type RoomMember struct {
@@ -28,5 +27,4 @@ type User struct {
 	Username     string
 	PasswordHash string
 	CreatedAt    pgtype.Timestamptz
-	DeletedAt    pgtype.Timestamptz
 }

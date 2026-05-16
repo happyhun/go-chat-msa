@@ -11,10 +11,12 @@ import (
 )
 
 type Querier interface {
-	CreateRoom(ctx context.Context, arg CreateRoomParams) (CreateRoomRow, error)
+	CreateRoom(ctx context.Context, arg CreateRoomParams) (Room, error)
 	CreateRoomMember(ctx context.Context, arg CreateRoomMemberParams) error
 	CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error)
+	DeleteRoom(ctx context.Context, arg DeleteRoomParams) (pgtype.UUID, error)
 	DeleteRoomMember(ctx context.Context, arg DeleteRoomMemberParams) error
+	DeleteUser(ctx context.Context, id pgtype.UUID) (pgtype.UUID, error)
 	ExistsRoomMember(ctx context.Context, arg ExistsRoomMemberParams) (bool, error)
 	GetMemberJoinedAt(ctx context.Context, arg GetMemberJoinedAtParams) (pgtype.Timestamptz, error)
 	GetOldestRoomMember(ctx context.Context, roomID pgtype.UUID) (pgtype.UUID, error)
@@ -26,11 +28,7 @@ type Querier interface {
 	ListJoinedRoomIDsForUpdate(ctx context.Context, userID pgtype.UUID) ([]pgtype.UUID, error)
 	ListJoinedRooms(ctx context.Context, userID pgtype.UUID) ([]ListJoinedRoomsRow, error)
 	ListRoomMembers(ctx context.Context, roomID pgtype.UUID) ([]ListRoomMembersRow, error)
-	PurgeDeletedRooms(ctx context.Context, deletedAt pgtype.Timestamptz) (int64, error)
-	PurgeDeletedUsers(ctx context.Context, deletedAt pgtype.Timestamptz) (int64, error)
 	SearchRooms(ctx context.Context, arg SearchRoomsParams) ([]SearchRoomsRow, error)
-	SoftDeleteRoom(ctx context.Context, arg SoftDeleteRoomParams) (pgtype.UUID, error)
-	SoftDeleteUser(ctx context.Context, arg SoftDeleteUserParams) (pgtype.UUID, error)
 	UpdateRoom(ctx context.Context, arg UpdateRoomParams) (pgtype.UUID, error)
 	UpdateRoomManager(ctx context.Context, arg UpdateRoomManagerParams) error
 }

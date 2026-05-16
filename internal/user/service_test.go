@@ -380,7 +380,7 @@ func TestService_CreateRoom(t *testing.T) {
 			name: "Success: 채팅방 생성 및 멤버 추가 (방장 포함)",
 			mockBehavior: func(m *dbmocks.MockQuerier) {
 				m.EXPECT().CreateRoom(mock.Anything, mock.Anything).
-					Return(db.CreateRoomRow{
+					Return(db.Room{
 						ID:        fixedRoomID,
 						Name:      roomName,
 						ManagerID: pgtype.UUID{Bytes: uid, Valid: true},
@@ -982,7 +982,7 @@ func TestService_LeaveRoom(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "Success: 마지막 멤버(방장)가 나갈 때 방 soft delete",
+			name: "Success: 마지막 멤버(방장)가 나갈 때 방 hard delete",
 			req: &pb.LeaveRoomRequest{
 				RoomId: roomID.String(),
 				UserId: managerID.String(),
@@ -997,10 +997,9 @@ func TestService_LeaveRoom(t *testing.T) {
 					UserID: pgtype.UUID{Bytes: managerID, Valid: true},
 				}).Return(nil)
 				m.EXPECT().GetOldestRoomMember(mock.Anything, pgtype.UUID{Bytes: roomID, Valid: true}).Return(pgtype.UUID{}, pgx.ErrNoRows)
-				m.EXPECT().SoftDeleteRoom(mock.Anything, mock.MatchedBy(func(p db.SoftDeleteRoomParams) bool {
+				m.EXPECT().DeleteRoom(mock.Anything, mock.MatchedBy(func(p db.DeleteRoomParams) bool {
 					return p.ID == pgtype.UUID{Bytes: roomID, Valid: true} &&
-						p.ManagerID == pgtype.UUID{Bytes: managerID, Valid: true} &&
-						p.DeletedAt.Valid
+						p.ManagerID == pgtype.UUID{Bytes: managerID, Valid: true}
 				})).Return(pgtype.UUID{Bytes: roomID, Valid: true}, nil)
 			},
 			wantErr: false,
@@ -1044,7 +1043,7 @@ func TestService_DeleteRoom(t *testing.T) {
 		errCode      codes.Code
 	}{
 		{
-			name: "Success: 방장이 채팅방 정상 삭제 (Soft Delete)",
+			name: "Success: 방장이 채팅방 정상 삭제",
 			req: &pb.DeleteRoomRequest{
 				RoomId:      roomID.String(),
 				RequesterId: managerID.String(),
@@ -1055,7 +1054,7 @@ func TestService_DeleteRoom(t *testing.T) {
 						ID:        roomPGUUID,
 						ManagerID: managerPGUUID,
 					}, nil)
-				m.EXPECT().SoftDeleteRoom(mock.Anything, mock.Anything).
+				m.EXPECT().DeleteRoom(mock.Anything, mock.Anything).
 					Return(roomPGUUID, nil)
 			},
 			wantErr: false,
@@ -1121,7 +1120,7 @@ func TestService_DeleteRoom(t *testing.T) {
 						ID:        roomPGUUID,
 						ManagerID: managerPGUUID,
 					}, nil)
-				m.EXPECT().SoftDeleteRoom(mock.Anything, mock.Anything).
+				m.EXPECT().DeleteRoom(mock.Anything, mock.Anything).
 					Return(pgtype.UUID{}, assert.AnError)
 			},
 			wantErr: true,
@@ -1385,7 +1384,7 @@ func TestService_DeleteUser(t *testing.T) {
 		wantRoomLen  int
 	}{
 		{
-			name: "Success: 매니저 방(위임) + 일반 방을 정리하고 토큰 폐기 후 soft delete",
+			name: "Success: 매니저 방(위임) + 일반 방을 정리하고 토큰 폐기 후 hard delete",
 			req:  &pb.DeleteUserRequest{UserId: uid.String(), Password: password},
 			mockBehavior: func(m *dbmocks.MockQuerier) {
 				m.EXPECT().GetUserByID(mock.Anything, userPGUUID).Return(db.User{
@@ -1420,15 +1419,13 @@ func TestService_DeleteUser(t *testing.T) {
 					RoomID: pgtype.UUID{Bytes: memberRoom, Valid: true},
 					UserID: userPGUUID,
 				}).Return(nil)
-				m.EXPECT().SoftDeleteUser(mock.Anything, mock.MatchedBy(func(p db.SoftDeleteUserParams) bool {
-					return p.ID == userPGUUID && p.DeletedAt.Valid
-				})).Return(userPGUUID, nil)
+				m.EXPECT().DeleteUser(mock.Anything, userPGUUID).Return(userPGUUID, nil)
 			},
 			wantErr:     false,
 			wantRoomLen: 2,
 		},
 		{
-			name: "Success: 마지막 멤버이자 매니저인 방은 soft-delete",
+			name: "Success: 마지막 멤버이자 매니저인 방은 hard-delete",
 			req:  &pb.DeleteUserRequest{UserId: uid.String(), Password: password},
 			mockBehavior: func(m *dbmocks.MockQuerier) {
 				m.EXPECT().GetUserByID(mock.Anything, userPGUUID).Return(db.User{
@@ -1445,10 +1442,11 @@ func TestService_DeleteUser(t *testing.T) {
 				}, nil)
 				m.EXPECT().DeleteRoomMember(mock.Anything, mock.Anything).Return(nil)
 				m.EXPECT().GetOldestRoomMember(mock.Anything, pgtype.UUID{Bytes: managerRoom, Valid: true}).Return(pgtype.UUID{}, pgx.ErrNoRows)
-				m.EXPECT().SoftDeleteRoom(mock.Anything, mock.MatchedBy(func(p db.SoftDeleteRoomParams) bool {
-					return p.ID == pgtype.UUID{Bytes: managerRoom, Valid: true} && p.DeletedAt.Valid
+				m.EXPECT().DeleteRoom(mock.Anything, mock.MatchedBy(func(p db.DeleteRoomParams) bool {
+					return p.ID == pgtype.UUID{Bytes: managerRoom, Valid: true} &&
+						p.ManagerID == userPGUUID
 				})).Return(pgtype.UUID{Bytes: managerRoom, Valid: true}, nil)
-				m.EXPECT().SoftDeleteUser(mock.Anything, mock.Anything).Return(userPGUUID, nil)
+				m.EXPECT().DeleteUser(mock.Anything, userPGUUID).Return(userPGUUID, nil)
 			},
 			wantErr:     false,
 			wantRoomLen: 1,
@@ -1463,7 +1461,7 @@ func TestService_DeleteUser(t *testing.T) {
 					PasswordHash: validHash,
 				}, nil)
 				m.EXPECT().ListJoinedRoomIDsForUpdate(mock.Anything, userPGUUID).Return(nil, nil)
-				m.EXPECT().SoftDeleteUser(mock.Anything, mock.Anything).Return(userPGUUID, nil)
+				m.EXPECT().DeleteUser(mock.Anything, userPGUUID).Return(userPGUUID, nil)
 			},
 			wantErr:     false,
 			wantRoomLen: 0,
@@ -1498,7 +1496,7 @@ func TestService_DeleteUser(t *testing.T) {
 			errCode: codes.Unauthenticated,
 		},
 		{
-			name: "Failure: 이중 탈퇴 (이미 soft-deleted) → NotFound",
+			name: "Failure: 삭제 대상 사용자가 사라진 경우 → NotFound",
 			req:  &pb.DeleteUserRequest{UserId: uid.String(), Password: password},
 			mockBehavior: func(m *dbmocks.MockQuerier) {
 				m.EXPECT().GetUserByID(mock.Anything, userPGUUID).Return(db.User{
@@ -1507,7 +1505,7 @@ func TestService_DeleteUser(t *testing.T) {
 					PasswordHash: validHash,
 				}, nil)
 				m.EXPECT().ListJoinedRoomIDsForUpdate(mock.Anything, userPGUUID).Return(nil, nil)
-				m.EXPECT().SoftDeleteUser(mock.Anything, mock.Anything).Return(pgtype.UUID{}, pgx.ErrNoRows)
+				m.EXPECT().DeleteUser(mock.Anything, userPGUUID).Return(pgtype.UUID{}, pgx.ErrNoRows)
 			},
 			wantErr: true,
 			errCode: codes.NotFound,

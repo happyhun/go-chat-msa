@@ -593,12 +593,11 @@ func (s *Service) leaveRoomTx(ctx context.Context, qtx db.Querier, roomUUID, use
 
 	oldestMember, err := qtx.GetOldestRoomMember(ctx, roomUUID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		if _, err := qtx.SoftDeleteRoom(ctx, db.SoftDeleteRoomParams{
+		if _, err := qtx.DeleteRoom(ctx, db.DeleteRoomParams{
 			ID:        roomUUID,
 			ManagerID: room.ManagerID,
-			DeletedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
 		}); err != nil {
-			slog.ErrorContext(ctx, "failed to soft delete empty room", "error", err)
+			slog.ErrorContext(ctx, "failed to delete empty room", "error", err)
 			return status.Error(codes.Internal, "failed to delete empty room")
 		}
 		return nil
@@ -668,14 +667,11 @@ func (s *Service) DeleteUser(ctx context.Context, req *pb.DeleteUserRequest) (*p
 			leftRoomIDs = append(leftRoomIDs, roomID.String())
 		}
 
-		if _, err := qtx.SoftDeleteUser(ctx, db.SoftDeleteUserParams{
-			ID:        userUUID,
-			DeletedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
-		}); err != nil {
+		if _, err := qtx.DeleteUser(ctx, userUUID); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return status.Error(codes.NotFound, "user not found")
 			}
-			slog.ErrorContext(ctx, "failed to soft delete user", "error", err)
+			slog.ErrorContext(ctx, "failed to delete user", "error", err)
 			return status.Error(codes.Internal, "failed to delete user")
 		}
 		return nil
@@ -711,12 +707,11 @@ func (s *Service) DeleteRoom(ctx context.Context, req *pb.DeleteRoomRequest) (*p
 			return status.Error(codes.PermissionDenied, "only manager can delete room")
 		}
 
-		if _, err := qtx.SoftDeleteRoom(ctx, db.SoftDeleteRoomParams{
+		if _, err := qtx.DeleteRoom(ctx, db.DeleteRoomParams{
 			ID:        roomUUID,
 			ManagerID: requesterUUID,
-			DeletedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
 		}); err != nil {
-			slog.ErrorContext(ctx, "failed to soft delete room", "error", err)
+			slog.ErrorContext(ctx, "failed to delete room", "error", err)
 			return status.Error(codes.Internal, "failed to delete room")
 		}
 

@@ -25,22 +25,22 @@ func (_m *MockQuerier) EXPECT() *MockQuerier_Expecter {
 }
 
 // CreateRoom provides a mock function with given fields: ctx, arg
-func (_m *MockQuerier) CreateRoom(ctx context.Context, arg db.CreateRoomParams) (db.CreateRoomRow, error) {
+func (_m *MockQuerier) CreateRoom(ctx context.Context, arg db.CreateRoomParams) (db.Room, error) {
 	ret := _m.Called(ctx, arg)
 
 	if len(ret) == 0 {
 		panic("no return value specified for CreateRoom")
 	}
 
-	var r0 db.CreateRoomRow
+	var r0 db.Room
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, db.CreateRoomParams) (db.CreateRoomRow, error)); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, db.CreateRoomParams) (db.Room, error)); ok {
 		return rf(ctx, arg)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, db.CreateRoomParams) db.CreateRoomRow); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, db.CreateRoomParams) db.Room); ok {
 		r0 = rf(ctx, arg)
 	} else {
-		r0 = ret.Get(0).(db.CreateRoomRow)
+		r0 = ret.Get(0).(db.Room)
 	}
 
 	if rf, ok := ret.Get(1).(func(context.Context, db.CreateRoomParams) error); ok {
@@ -71,12 +71,12 @@ func (_c *MockQuerier_CreateRoom_Call) Run(run func(ctx context.Context, arg db.
 	return _c
 }
 
-func (_c *MockQuerier_CreateRoom_Call) Return(_a0 db.CreateRoomRow, _a1 error) *MockQuerier_CreateRoom_Call {
+func (_c *MockQuerier_CreateRoom_Call) Return(_a0 db.Room, _a1 error) *MockQuerier_CreateRoom_Call {
 	_c.Call.Return(_a0, _a1)
 	return _c
 }
 
-func (_c *MockQuerier_CreateRoom_Call) RunAndReturn(run func(context.Context, db.CreateRoomParams) (db.CreateRoomRow, error)) *MockQuerier_CreateRoom_Call {
+func (_c *MockQuerier_CreateRoom_Call) RunAndReturn(run func(context.Context, db.CreateRoomParams) (db.Room, error)) *MockQuerier_CreateRoom_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -185,6 +185,63 @@ func (_c *MockQuerier_CreateUser_Call) RunAndReturn(run func(context.Context, db
 	return _c
 }
 
+// DeleteRoom provides a mock function with given fields: ctx, arg
+func (_m *MockQuerier) DeleteRoom(ctx context.Context, arg db.DeleteRoomParams) (pgtype.UUID, error) {
+	ret := _m.Called(ctx, arg)
+
+	if len(ret) == 0 {
+		panic("no return value specified for DeleteRoom")
+	}
+
+	var r0 pgtype.UUID
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, db.DeleteRoomParams) (pgtype.UUID, error)); ok {
+		return rf(ctx, arg)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, db.DeleteRoomParams) pgtype.UUID); ok {
+		r0 = rf(ctx, arg)
+	} else {
+		r0 = ret.Get(0).(pgtype.UUID)
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, db.DeleteRoomParams) error); ok {
+		r1 = rf(ctx, arg)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// MockQuerier_DeleteRoom_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DeleteRoom'
+type MockQuerier_DeleteRoom_Call struct {
+	*mock.Call
+}
+
+// DeleteRoom is a helper method to define mock.On call
+//   - ctx context.Context
+//   - arg db.DeleteRoomParams
+func (_e *MockQuerier_Expecter) DeleteRoom(ctx interface{}, arg interface{}) *MockQuerier_DeleteRoom_Call {
+	return &MockQuerier_DeleteRoom_Call{Call: _e.mock.On("DeleteRoom", ctx, arg)}
+}
+
+func (_c *MockQuerier_DeleteRoom_Call) Run(run func(ctx context.Context, arg db.DeleteRoomParams)) *MockQuerier_DeleteRoom_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(db.DeleteRoomParams))
+	})
+	return _c
+}
+
+func (_c *MockQuerier_DeleteRoom_Call) Return(_a0 pgtype.UUID, _a1 error) *MockQuerier_DeleteRoom_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *MockQuerier_DeleteRoom_Call) RunAndReturn(run func(context.Context, db.DeleteRoomParams) (pgtype.UUID, error)) *MockQuerier_DeleteRoom_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // DeleteRoomMember provides a mock function with given fields: ctx, arg
 func (_m *MockQuerier) DeleteRoomMember(ctx context.Context, arg db.DeleteRoomMemberParams) error {
 	ret := _m.Called(ctx, arg)
@@ -228,6 +285,63 @@ func (_c *MockQuerier_DeleteRoomMember_Call) Return(_a0 error) *MockQuerier_Dele
 }
 
 func (_c *MockQuerier_DeleteRoomMember_Call) RunAndReturn(run func(context.Context, db.DeleteRoomMemberParams) error) *MockQuerier_DeleteRoomMember_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// DeleteUser provides a mock function with given fields: ctx, id
+func (_m *MockQuerier) DeleteUser(ctx context.Context, id pgtype.UUID) (pgtype.UUID, error) {
+	ret := _m.Called(ctx, id)
+
+	if len(ret) == 0 {
+		panic("no return value specified for DeleteUser")
+	}
+
+	var r0 pgtype.UUID
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, pgtype.UUID) (pgtype.UUID, error)); ok {
+		return rf(ctx, id)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, pgtype.UUID) pgtype.UUID); ok {
+		r0 = rf(ctx, id)
+	} else {
+		r0 = ret.Get(0).(pgtype.UUID)
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, pgtype.UUID) error); ok {
+		r1 = rf(ctx, id)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// MockQuerier_DeleteUser_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DeleteUser'
+type MockQuerier_DeleteUser_Call struct {
+	*mock.Call
+}
+
+// DeleteUser is a helper method to define mock.On call
+//   - ctx context.Context
+//   - id pgtype.UUID
+func (_e *MockQuerier_Expecter) DeleteUser(ctx interface{}, id interface{}) *MockQuerier_DeleteUser_Call {
+	return &MockQuerier_DeleteUser_Call{Call: _e.mock.On("DeleteUser", ctx, id)}
+}
+
+func (_c *MockQuerier_DeleteUser_Call) Run(run func(ctx context.Context, id pgtype.UUID)) *MockQuerier_DeleteUser_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(pgtype.UUID))
+	})
+	return _c
+}
+
+func (_c *MockQuerier_DeleteUser_Call) Return(_a0 pgtype.UUID, _a1 error) *MockQuerier_DeleteUser_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *MockQuerier_DeleteUser_Call) RunAndReturn(run func(context.Context, pgtype.UUID) (pgtype.UUID, error)) *MockQuerier_DeleteUser_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -867,120 +981,6 @@ func (_c *MockQuerier_ListRoomMembers_Call) RunAndReturn(run func(context.Contex
 	return _c
 }
 
-// PurgeDeletedRooms provides a mock function with given fields: ctx, deletedAt
-func (_m *MockQuerier) PurgeDeletedRooms(ctx context.Context, deletedAt pgtype.Timestamptz) (int64, error) {
-	ret := _m.Called(ctx, deletedAt)
-
-	if len(ret) == 0 {
-		panic("no return value specified for PurgeDeletedRooms")
-	}
-
-	var r0 int64
-	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, pgtype.Timestamptz) (int64, error)); ok {
-		return rf(ctx, deletedAt)
-	}
-	if rf, ok := ret.Get(0).(func(context.Context, pgtype.Timestamptz) int64); ok {
-		r0 = rf(ctx, deletedAt)
-	} else {
-		r0 = ret.Get(0).(int64)
-	}
-
-	if rf, ok := ret.Get(1).(func(context.Context, pgtype.Timestamptz) error); ok {
-		r1 = rf(ctx, deletedAt)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
-// MockQuerier_PurgeDeletedRooms_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'PurgeDeletedRooms'
-type MockQuerier_PurgeDeletedRooms_Call struct {
-	*mock.Call
-}
-
-// PurgeDeletedRooms is a helper method to define mock.On call
-//   - ctx context.Context
-//   - deletedAt pgtype.Timestamptz
-func (_e *MockQuerier_Expecter) PurgeDeletedRooms(ctx interface{}, deletedAt interface{}) *MockQuerier_PurgeDeletedRooms_Call {
-	return &MockQuerier_PurgeDeletedRooms_Call{Call: _e.mock.On("PurgeDeletedRooms", ctx, deletedAt)}
-}
-
-func (_c *MockQuerier_PurgeDeletedRooms_Call) Run(run func(ctx context.Context, deletedAt pgtype.Timestamptz)) *MockQuerier_PurgeDeletedRooms_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(pgtype.Timestamptz))
-	})
-	return _c
-}
-
-func (_c *MockQuerier_PurgeDeletedRooms_Call) Return(_a0 int64, _a1 error) *MockQuerier_PurgeDeletedRooms_Call {
-	_c.Call.Return(_a0, _a1)
-	return _c
-}
-
-func (_c *MockQuerier_PurgeDeletedRooms_Call) RunAndReturn(run func(context.Context, pgtype.Timestamptz) (int64, error)) *MockQuerier_PurgeDeletedRooms_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// PurgeDeletedUsers provides a mock function with given fields: ctx, deletedAt
-func (_m *MockQuerier) PurgeDeletedUsers(ctx context.Context, deletedAt pgtype.Timestamptz) (int64, error) {
-	ret := _m.Called(ctx, deletedAt)
-
-	if len(ret) == 0 {
-		panic("no return value specified for PurgeDeletedUsers")
-	}
-
-	var r0 int64
-	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, pgtype.Timestamptz) (int64, error)); ok {
-		return rf(ctx, deletedAt)
-	}
-	if rf, ok := ret.Get(0).(func(context.Context, pgtype.Timestamptz) int64); ok {
-		r0 = rf(ctx, deletedAt)
-	} else {
-		r0 = ret.Get(0).(int64)
-	}
-
-	if rf, ok := ret.Get(1).(func(context.Context, pgtype.Timestamptz) error); ok {
-		r1 = rf(ctx, deletedAt)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
-// MockQuerier_PurgeDeletedUsers_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'PurgeDeletedUsers'
-type MockQuerier_PurgeDeletedUsers_Call struct {
-	*mock.Call
-}
-
-// PurgeDeletedUsers is a helper method to define mock.On call
-//   - ctx context.Context
-//   - deletedAt pgtype.Timestamptz
-func (_e *MockQuerier_Expecter) PurgeDeletedUsers(ctx interface{}, deletedAt interface{}) *MockQuerier_PurgeDeletedUsers_Call {
-	return &MockQuerier_PurgeDeletedUsers_Call{Call: _e.mock.On("PurgeDeletedUsers", ctx, deletedAt)}
-}
-
-func (_c *MockQuerier_PurgeDeletedUsers_Call) Run(run func(ctx context.Context, deletedAt pgtype.Timestamptz)) *MockQuerier_PurgeDeletedUsers_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(pgtype.Timestamptz))
-	})
-	return _c
-}
-
-func (_c *MockQuerier_PurgeDeletedUsers_Call) Return(_a0 int64, _a1 error) *MockQuerier_PurgeDeletedUsers_Call {
-	_c.Call.Return(_a0, _a1)
-	return _c
-}
-
-func (_c *MockQuerier_PurgeDeletedUsers_Call) RunAndReturn(run func(context.Context, pgtype.Timestamptz) (int64, error)) *MockQuerier_PurgeDeletedUsers_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
 // SearchRooms provides a mock function with given fields: ctx, arg
 func (_m *MockQuerier) SearchRooms(ctx context.Context, arg db.SearchRoomsParams) ([]db.SearchRoomsRow, error) {
 	ret := _m.Called(ctx, arg)
@@ -1036,120 +1036,6 @@ func (_c *MockQuerier_SearchRooms_Call) Return(_a0 []db.SearchRoomsRow, _a1 erro
 }
 
 func (_c *MockQuerier_SearchRooms_Call) RunAndReturn(run func(context.Context, db.SearchRoomsParams) ([]db.SearchRoomsRow, error)) *MockQuerier_SearchRooms_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// SoftDeleteRoom provides a mock function with given fields: ctx, arg
-func (_m *MockQuerier) SoftDeleteRoom(ctx context.Context, arg db.SoftDeleteRoomParams) (pgtype.UUID, error) {
-	ret := _m.Called(ctx, arg)
-
-	if len(ret) == 0 {
-		panic("no return value specified for SoftDeleteRoom")
-	}
-
-	var r0 pgtype.UUID
-	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, db.SoftDeleteRoomParams) (pgtype.UUID, error)); ok {
-		return rf(ctx, arg)
-	}
-	if rf, ok := ret.Get(0).(func(context.Context, db.SoftDeleteRoomParams) pgtype.UUID); ok {
-		r0 = rf(ctx, arg)
-	} else {
-		r0 = ret.Get(0).(pgtype.UUID)
-	}
-
-	if rf, ok := ret.Get(1).(func(context.Context, db.SoftDeleteRoomParams) error); ok {
-		r1 = rf(ctx, arg)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
-// MockQuerier_SoftDeleteRoom_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SoftDeleteRoom'
-type MockQuerier_SoftDeleteRoom_Call struct {
-	*mock.Call
-}
-
-// SoftDeleteRoom is a helper method to define mock.On call
-//   - ctx context.Context
-//   - arg db.SoftDeleteRoomParams
-func (_e *MockQuerier_Expecter) SoftDeleteRoom(ctx interface{}, arg interface{}) *MockQuerier_SoftDeleteRoom_Call {
-	return &MockQuerier_SoftDeleteRoom_Call{Call: _e.mock.On("SoftDeleteRoom", ctx, arg)}
-}
-
-func (_c *MockQuerier_SoftDeleteRoom_Call) Run(run func(ctx context.Context, arg db.SoftDeleteRoomParams)) *MockQuerier_SoftDeleteRoom_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(db.SoftDeleteRoomParams))
-	})
-	return _c
-}
-
-func (_c *MockQuerier_SoftDeleteRoom_Call) Return(_a0 pgtype.UUID, _a1 error) *MockQuerier_SoftDeleteRoom_Call {
-	_c.Call.Return(_a0, _a1)
-	return _c
-}
-
-func (_c *MockQuerier_SoftDeleteRoom_Call) RunAndReturn(run func(context.Context, db.SoftDeleteRoomParams) (pgtype.UUID, error)) *MockQuerier_SoftDeleteRoom_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// SoftDeleteUser provides a mock function with given fields: ctx, arg
-func (_m *MockQuerier) SoftDeleteUser(ctx context.Context, arg db.SoftDeleteUserParams) (pgtype.UUID, error) {
-	ret := _m.Called(ctx, arg)
-
-	if len(ret) == 0 {
-		panic("no return value specified for SoftDeleteUser")
-	}
-
-	var r0 pgtype.UUID
-	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, db.SoftDeleteUserParams) (pgtype.UUID, error)); ok {
-		return rf(ctx, arg)
-	}
-	if rf, ok := ret.Get(0).(func(context.Context, db.SoftDeleteUserParams) pgtype.UUID); ok {
-		r0 = rf(ctx, arg)
-	} else {
-		r0 = ret.Get(0).(pgtype.UUID)
-	}
-
-	if rf, ok := ret.Get(1).(func(context.Context, db.SoftDeleteUserParams) error); ok {
-		r1 = rf(ctx, arg)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
-// MockQuerier_SoftDeleteUser_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SoftDeleteUser'
-type MockQuerier_SoftDeleteUser_Call struct {
-	*mock.Call
-}
-
-// SoftDeleteUser is a helper method to define mock.On call
-//   - ctx context.Context
-//   - arg db.SoftDeleteUserParams
-func (_e *MockQuerier_Expecter) SoftDeleteUser(ctx interface{}, arg interface{}) *MockQuerier_SoftDeleteUser_Call {
-	return &MockQuerier_SoftDeleteUser_Call{Call: _e.mock.On("SoftDeleteUser", ctx, arg)}
-}
-
-func (_c *MockQuerier_SoftDeleteUser_Call) Run(run func(ctx context.Context, arg db.SoftDeleteUserParams)) *MockQuerier_SoftDeleteUser_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(db.SoftDeleteUserParams))
-	})
-	return _c
-}
-
-func (_c *MockQuerier_SoftDeleteUser_Call) Return(_a0 pgtype.UUID, _a1 error) *MockQuerier_SoftDeleteUser_Call {
-	_c.Call.Return(_a0, _a1)
-	return _c
-}
-
-func (_c *MockQuerier_SoftDeleteUser_Call) RunAndReturn(run func(context.Context, db.SoftDeleteUserParams) (pgtype.UUID, error)) *MockQuerier_SoftDeleteUser_Call {
 	_c.Call.Return(run)
 	return _c
 }

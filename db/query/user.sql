@@ -7,23 +7,17 @@ INSERT INTO users (
 
 -- name: GetUserByUsername :one
 SELECT * FROM users
-WHERE username = $1 AND deleted_at IS NULL LIMIT 1;
+WHERE username = $1 LIMIT 1;
 
 -- name: GetUserByID :one
 SELECT * FROM users
-WHERE id = $1 AND deleted_at IS NULL LIMIT 1;
+WHERE id = $1 LIMIT 1;
 
 -- name: GetUsersByIDs :many
 SELECT id, username, created_at FROM users
-WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL;
+WHERE id = ANY($1::uuid[]);
 
--- name: SoftDeleteUser :one
-UPDATE users
-SET deleted_at = $2
-WHERE id = $1 AND deleted_at IS NULL
-RETURNING id;
-
--- name: PurgeDeletedUsers :execrows
+-- name: DeleteUser :one
 DELETE FROM users
-WHERE deleted_at IS NOT NULL
-  AND deleted_at < $1;
+WHERE id = $1
+RETURNING id;

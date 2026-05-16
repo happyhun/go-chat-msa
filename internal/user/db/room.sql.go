@@ -27,15 +27,7 @@ type CreateRoomParams struct {
 	CreatedAt pgtype.Timestamptz
 }
 
-type CreateRoomRow struct {
-	ID        pgtype.UUID
-	Name      string
-	ManagerID pgtype.UUID
-	Capacity  int32
-	CreatedAt pgtype.Timestamptz
-}
-
-func (q *Queries) CreateRoom(ctx context.Context, arg CreateRoomParams) (CreateRoomRow, error) {
+func (q *Queries) CreateRoom(ctx context.Context, arg CreateRoomParams) (Room, error) {
 	row := q.db.QueryRow(ctx, createRoom,
 		arg.ID,
 		arg.Name,
@@ -43,7 +35,7 @@ func (q *Queries) CreateRoom(ctx context.Context, arg CreateRoomParams) (CreateR
 		arg.Capacity,
 		arg.CreatedAt,
 	)
-	var i CreateRoomRow
+	var i Room
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
@@ -73,6 +65,24 @@ func (q *Queries) CreateRoomMember(ctx context.Context, arg CreateRoomMemberPara
 	return err
 }
 
+const deleteRoom = `-- name: DeleteRoom :one
+DELETE FROM rooms
+WHERE id = $1 AND manager_id = $2
+RETURNING id
+`
+
+type DeleteRoomParams struct {
+	ID        pgtype.UUID
+	ManagerID pgtype.UUID
+}
+
+func (q *Queries) DeleteRoom(ctx context.Context, arg DeleteRoomParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, deleteRoom, arg.ID, arg.ManagerID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const deleteRoomMember = `-- name: DeleteRoomMember :exec
 DELETE FROM room_members
 WHERE room_id = $1 AND user_id = $2
@@ -92,7 +102,7 @@ const existsRoomMember = `-- name: ExistsRoomMember :one
 SELECT EXISTS (
   SELECT 1 FROM room_members rm
   JOIN rooms r ON r.id = rm.room_id
-  WHERE rm.room_id = $1 AND rm.user_id = $2 AND r.deleted_at IS NULL
+  WHERE rm.room_id = $1 AND rm.user_id = $2
 ) AS exists
 `
 
@@ -112,7 +122,7 @@ const getMemberJoinedAt = `-- name: GetMemberJoinedAt :one
 SELECT rm.joined_at
 FROM room_members rm
 JOIN rooms r ON r.id = rm.room_id
-WHERE rm.room_id = $1 AND rm.user_id = $2 AND r.deleted_at IS NULL
+WHERE rm.room_id = $1 AND rm.user_id = $2
 LIMIT 1
 `
 
@@ -144,7 +154,7 @@ func (q *Queries) GetOldestRoomMember(ctx context.Context, roomID pgtype.UUID) (
 
 const getRoomForUpdate = `-- name: GetRoomForUpdate :one
 SELECT id, name, manager_id, capacity FROM rooms
-WHERE id = $1 AND deleted_at IS NULL
+WHERE id = $1
 FOR UPDATE
 `
 
@@ -183,7 +193,7 @@ const listJoinedRoomIDsForUpdate = `-- name: ListJoinedRoomIDsForUpdate :many
 SELECT rm.room_id
 FROM room_members rm
 JOIN rooms r ON r.id = rm.room_id
-WHERE rm.user_id = $1 AND r.deleted_at IS NULL
+WHERE rm.user_id = $1
 FOR UPDATE OF r
 `
 
@@ -212,7 +222,7 @@ SELECT r.id, r.name, r.manager_id, r.capacity, rm.joined_at,
        (SELECT COUNT(*) FROM room_members WHERE room_id = r.id) AS member_count
 FROM rooms r
 JOIN room_members rm ON r.id = rm.room_id
-WHERE rm.user_id = $1 AND r.deleted_at IS NULL
+WHERE rm.user_id = $1
 ORDER BY rm.joined_at DESC
 `
 
@@ -257,7 +267,7 @@ SELECT u.id, u.username, rm.joined_at
 FROM room_members rm
 JOIN users u ON u.id = rm.user_id
 JOIN rooms r ON r.id = rm.room_id
-WHERE rm.room_id = $1 AND r.deleted_at IS NULL
+WHERE rm.room_id = $1
 ORDER BY rm.joined_at ASC
 `
 
@@ -287,26 +297,12 @@ func (q *Queries) ListRoomMembers(ctx context.Context, roomID pgtype.UUID) ([]Li
 	return items, nil
 }
 
-const purgeDeletedRooms = `-- name: PurgeDeletedRooms :execrows
-DELETE FROM rooms
-WHERE deleted_at IS NOT NULL
-  AND deleted_at < $1
-`
-
-func (q *Queries) PurgeDeletedRooms(ctx context.Context, deletedAt pgtype.Timestamptz) (int64, error) {
-	result, err := q.db.Exec(ctx, purgeDeletedRooms, deletedAt)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const searchRooms = `-- name: SearchRooms :many
 SELECT id, name, manager_id, capacity, created_at,
        COUNT(*) OVER() AS total_count,
        (SELECT COUNT(*) FROM room_members WHERE room_id = rooms.id) AS member_count
 FROM rooms
-WHERE name ILIKE '%' || $1 || '%' AND deleted_at IS NULL
+WHERE name ILIKE '%' || $1 || '%'
 ORDER BY created_at DESC
 LIMIT $2 OFFSET $3
 `
@@ -355,30 +351,10 @@ func (q *Queries) SearchRooms(ctx context.Context, arg SearchRoomsParams) ([]Sea
 	return items, nil
 }
 
-const softDeleteRoom = `-- name: SoftDeleteRoom :one
-UPDATE rooms
-SET deleted_at = $3
-WHERE id = $1 AND manager_id = $2 AND deleted_at IS NULL
-RETURNING id
-`
-
-type SoftDeleteRoomParams struct {
-	ID        pgtype.UUID
-	ManagerID pgtype.UUID
-	DeletedAt pgtype.Timestamptz
-}
-
-func (q *Queries) SoftDeleteRoom(ctx context.Context, arg SoftDeleteRoomParams) (pgtype.UUID, error) {
-	row := q.db.QueryRow(ctx, softDeleteRoom, arg.ID, arg.ManagerID, arg.DeletedAt)
-	var id pgtype.UUID
-	err := row.Scan(&id)
-	return id, err
-}
-
 const updateRoom = `-- name: UpdateRoom :one
 UPDATE rooms
 SET name = $2, capacity = $3
-WHERE id = $1 AND manager_id = $4 AND deleted_at IS NULL
+WHERE id = $1 AND manager_id = $4
 RETURNING id
 `
 
@@ -404,7 +380,7 @@ func (q *Queries) UpdateRoom(ctx context.Context, arg UpdateRoomParams) (pgtype.
 const updateRoomManager = `-- name: UpdateRoomManager :exec
 UPDATE rooms
 SET manager_id = $2
-WHERE id = $1 AND deleted_at IS NULL
+WHERE id = $1
 `
 
 type UpdateRoomManagerParams struct {

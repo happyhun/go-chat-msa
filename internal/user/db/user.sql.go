@@ -44,9 +44,22 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateU
 	return i, err
 }
 
+const deleteUser = `-- name: DeleteUser :one
+DELETE FROM users
+WHERE id = $1
+RETURNING id
+`
+
+func (q *Queries) DeleteUser(ctx context.Context, id pgtype.UUID) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, deleteUser, id)
+	var id_2 pgtype.UUID
+	err := row.Scan(&id_2)
+	return id_2, err
+}
+
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, username, password_hash, created_at, deleted_at FROM users
-WHERE id = $1 AND deleted_at IS NULL LIMIT 1
+SELECT id, username, password_hash, created_at FROM users
+WHERE id = $1 LIMIT 1
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (User, error) {
@@ -57,14 +70,13 @@ func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (User, error)
 		&i.Username,
 		&i.PasswordHash,
 		&i.CreatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getUserByUsername = `-- name: GetUserByUsername :one
-SELECT id, username, password_hash, created_at, deleted_at FROM users
-WHERE username = $1 AND deleted_at IS NULL LIMIT 1
+SELECT id, username, password_hash, created_at FROM users
+WHERE username = $1 LIMIT 1
 `
 
 func (q *Queries) GetUserByUsername(ctx context.Context, username string) (User, error) {
@@ -75,14 +87,13 @@ func (q *Queries) GetUserByUsername(ctx context.Context, username string) (User,
 		&i.Username,
 		&i.PasswordHash,
 		&i.CreatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getUsersByIDs = `-- name: GetUsersByIDs :many
 SELECT id, username, created_at FROM users
-WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL
+WHERE id = ANY($1::uuid[])
 `
 
 type GetUsersByIDsRow struct {
@@ -109,37 +120,4 @@ func (q *Queries) GetUsersByIDs(ctx context.Context, dollar_1 []pgtype.UUID) ([]
 		return nil, err
 	}
 	return items, nil
-}
-
-const purgeDeletedUsers = `-- name: PurgeDeletedUsers :execrows
-DELETE FROM users
-WHERE deleted_at IS NOT NULL
-  AND deleted_at < $1
-`
-
-func (q *Queries) PurgeDeletedUsers(ctx context.Context, deletedAt pgtype.Timestamptz) (int64, error) {
-	result, err := q.db.Exec(ctx, purgeDeletedUsers, deletedAt)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
-const softDeleteUser = `-- name: SoftDeleteUser :one
-UPDATE users
-SET deleted_at = $2
-WHERE id = $1 AND deleted_at IS NULL
-RETURNING id
-`
-
-type SoftDeleteUserParams struct {
-	ID        pgtype.UUID
-	DeletedAt pgtype.Timestamptz
-}
-
-func (q *Queries) SoftDeleteUser(ctx context.Context, arg SoftDeleteUserParams) (pgtype.UUID, error) {
-	row := q.db.QueryRow(ctx, softDeleteUser, arg.ID, arg.DeletedAt)
-	var id pgtype.UUID
-	err := row.Scan(&id)
-	return id, err
 }
