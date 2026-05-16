@@ -24,8 +24,8 @@ flowchart TB
             CS["Chat Service"]
         end
 
-        subgraph Workers ["Workers Layer"]
-            RW["retention-worker"]
+        subgraph Jobs ["Batch Layer"]
+            RJ["retention-job CronJob"]
         end
     end
 
@@ -67,7 +67,7 @@ flowchart TB
     AGW --> RD
     WSGW --> RD
     WS_Cluster --> RD
-    RW -- "Purge Cron" --> PG
+    RJ -- "Purge once" --> PG
 
     Alloy -. "pull: logs" .-> Services
     Services -. "push: traces, metrics" .-> Alloy

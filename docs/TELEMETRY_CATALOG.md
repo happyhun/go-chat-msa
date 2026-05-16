@@ -27,7 +27,7 @@ Grafana Full Stack 기반 관측성 구성. Profiles를 제외한 시그널은 G
 
 ## 2. 서비스별 요약
 
-OTel resource에는 공통으로 `service.name`과 `service.instance.id`가 들어간다. `service.instance.id`는 K8s `POD_NAME`을 우선 사용하고, compose/로컬에서는 hostname으로 fallback한다.
+OTel resource에는 공통으로 `service.name`과 `service.instance.id`가 들어간다. `service.instance.id`는 K8s `POD_NAME`을 우선 사용하고, 로컬 단독 실행에서는 hostname으로 fallback한다.
 
 | 서비스 | Logs | Metrics | Traces |
 |--------|------|---------|--------|
@@ -36,7 +36,7 @@ OTel resource에는 공통으로 `service.name`과 `service.instance.id`가 들�
 | websocket-service | HTTP | HTTP, WebSocket, Persistence, gRPC Client | HTTP, gRPC Client |
 | user-service | gRPC | gRPC Server, PostgreSQL, Domain | gRPC Server, PostgreSQL |
 | chat-service | gRPC | gRPC Server, MongoDB, Domain | gRPC Server, MongoDB |
-| retention-worker | Cron | Retention | - |
+| retention-job | CronJob | Retention | - |
 
 ---
 
@@ -244,15 +244,15 @@ OTel resource에는 공통으로 `service.name`과 `service.instance.id`가 들�
 | gochat_wsgateway_routed_total | counter | endpoint | ws-gateway |
 | gochat_wsgateway_misdirected_total | counter | - | ws-gateway |
 | gochat_membership_reconcile_total | counter | status | ws-gateway, websocket-service |
-| gochat_retention_duration_seconds | histogram | - | retention-worker |
-| gochat_retention_purged_total | counter | kind, status | retention-worker |
+| gochat_retention_duration_seconds | histogram | - | retention-job |
+| gochat_retention_purged_total | counter | kind, status | retention-job |
 
 ### System
 
 | 메트릭 | 타입 | 라벨 | 서비스 |
 |--------|------|------|--------|
 | gochat_build_info | gauge | goversion, vcs_revision, vcs_time, vcs_modified | 전체 |
-| gochat_panic_recovered_total | counter | - | retention-worker 제외 |
+| gochat_panic_recovered_total | counter | - | retention entrypoint 제외 |
 | container_cpu_usage_seconds_total | counter | service, cpu | cAdvisor |
 | container_memory_rss | gauge | service | cAdvisor |
 

@@ -194,7 +194,7 @@ paths:
       tags:
         - Auth
       summary: 회원탈퇴
-      description: 본인 인증을 위해 비밀번호를 함께 받아 검증한 뒤 사용자 계정을 즉시 비활성화(soft delete)하고 모든 Refresh Token을 폐기합니다. 30일 grace 기간 동안 동일 username 재가입은 차단되며, 이후 retention-worker가 영구 삭제합니다.
+      description: 본인 인증을 위해 비밀번호를 함께 받아 검증한 뒤 사용자 계정을 즉시 비활성화(soft delete)하고 모든 Refresh Token을 폐기합니다. 30일 grace 기간 동안 동일 username 재가입은 차단되며, 이후 retention job이 영구 삭제합니다.
       operationId: deleteUser
       security:
         - bearerAuth: []
