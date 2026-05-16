@@ -8,6 +8,11 @@ resources:
 
 patches:
   - path: patches/test-config.yaml
+  - path: patches/grafana-root-url.yaml
+  - path: patches/ingress-host.yaml
+    target:
+      kind: Ingress
+      name: grafana
 
 patchesStrategicMerge:
   - delete-non-observability.yaml

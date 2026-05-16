@@ -9,6 +9,26 @@ resources:
 patches:
   - path: patches/test-config.yaml
   - path: patches/fixed-replicas.yaml
+  - path: patches/ingress-host.yaml
+    target:
+      kind: Ingress
+      name: api-gateway
+  - path: patches/ingress-host.yaml
+    target:
+      kind: Ingress
+      name: ws-gateway-api
+  - path: patches/ingress-host.yaml
+    target:
+      kind: Ingress
+      name: ws-gateway-websocket
+  - path: patches/ingress-host.yaml
+    target:
+      kind: Ingress
+      name: swagger-ui
+  - path: patches/ingress-host.yaml
+    target:
+      kind: Ingress
+      name: frontend
 
 patchesStrategicMerge:
   - delete-non-apps.yaml

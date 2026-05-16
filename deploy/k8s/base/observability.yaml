@@ -469,7 +469,7 @@ spec:
             - name: GF_AUTH_DISABLE_LOGIN_FORM
               value: "true"
             - name: GF_SERVER_ROOT_URL
-              value: "http://localhost:30080/grafana/"
+              value: "http://gochat.localhost:30080/grafana/"
             - name: GF_SERVER_SERVE_FROM_SUB_PATH
               value: "true"
           volumeMounts:

@@ -10,6 +10,7 @@ OVERLAY_DIR="${K8S_DIR}/overlays/${K8S_ENV}"
 if [[ -z "${NAMESPACE:-}" ]]; then
   NAMESPACE="go-chat-${K8S_ENV}"
 fi
+K8S_HOST="${K8S_HOST:-${K8S_ENV}.gochat.localhost}"
 TIMEOUT="${KUBECTL_TIMEOUT:-180s}"
 TMP_FILES=()
 
@@ -157,9 +158,9 @@ main() {
   wait_rollout api-gateway ws-gateway frontend swagger-ui
 
   log "${K8S_ENV} Kubernetes bootstrap completed"
-  log "Frontend: http://localhost:30080/"
-  log "OpenAPI: http://localhost:30080/docs/"
-  log "Grafana: http://localhost:30080/grafana/"
+  log "Frontend: http://${K8S_HOST}:30080/"
+  log "OpenAPI: http://${K8S_HOST}:30080/docs/"
+  log "Grafana: http://${K8S_HOST}:30080/grafana/"
 }
 
 main "$@"

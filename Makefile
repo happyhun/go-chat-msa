@@ -61,11 +61,6 @@ build-load-test-images: kind-up
 .PHONY: dev-up
 dev-up: kind-up build-load-dev-images
 	@K8S_ENV=dev NAMESPACE=go-chat-dev KUBECTL_TIMEOUT='$(KUBECTL_TIMEOUT)' bash deploy/k8s/scripts/bootstrap.sh
-	@printf '\nFrontend: http://localhost:30080/\n'
-	@printf 'API health: http://localhost:30080/api/health\n'
-	@printf 'WS health:  http://localhost:30080/ws-api/health\n'
-	@printf 'OpenAPI:    http://localhost:30080/docs/\n'
-	@printf 'Grafana:    http://localhost:30080/grafana/\n'
 
 .PHONY: test-up
 test-up: kind-up build-load-test-images
