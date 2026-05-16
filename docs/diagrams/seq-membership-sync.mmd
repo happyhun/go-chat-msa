@@ -1,13 +1,13 @@
 sequenceDiagram
     autonumber
 
-    box WebSocket Service 1
+    box WebSocket Service Pod A
         participant Reg1 as Registry
     end
 
     participant Redis as Redis
 
-    box WS Gateway / WebSocket Service 2
+    box WS Gateway / Other WebSocket Pods
         participant Watcher as Membership Watcher
         participant Ring as Hash Ring
     end

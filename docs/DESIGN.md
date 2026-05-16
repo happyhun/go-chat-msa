@@ -5,9 +5,10 @@
 1. [아키텍처 개요](#1-아키텍처-개요)
 2. [시스템 상세 설계](#2-시스템-상세-설계)
 3. [주요 의사결정](#3-주요-의사결정)
-4. [테스트 전략](#4-테스트-전략)
-5. [관측성](#5-관측성)
-6. [추후 개선사항](#6-추후-개선사항)
+4. [Kubernetes 배포 설계](#4-kubernetes-배포-설계)
+5. [테스트 전략](#5-테스트-전략)
+6. [관측성](#6-관측성)
+7. [추후 개선사항](#7-추후-개선사항)
 
 ---
 
@@ -120,9 +121,9 @@ RS256은 서명자와 검증자가 다를 때(공개키 배포) 의미가 있지
 
 #### Refresh Token
 
-Access Token 재발급에 사용됩니다. JWT와 달리 토큰 자체에 정보를 담을 필요가 없으므로 UUID로 생성한 opaque token을 사용합니다. Opaque token은 토큰만 봐서는 누구의 것인지, 언제 만료되는지 알 수 없고 반드시 DB 조회가 필요합니다.
+Access Token 재발급에 사용됩니다. JWT와 달리 토큰 자체에 정보를 담을 필요가 없으므로 UUID로 생성한 opaque token을 사용합니다. Opaque token은 토큰만 봐서는 누구의 것인지, 언제 만료되는지 알 수 없고 서버 상태 저장소 조회가 필요합니다.
 
-DB 유출에 대비하여 원본이 아닌 SHA-256 해시만 저장합니다.
+저장소 유출에 대비하여 토큰 원문은 저장하지 않고 SHA-256 digest만 사용합니다. refresh token은 영구 도메인 데이터가 아니라 만료 시간이 있는 인증 세션 상태이므로 PostgreSQL 테이블이 아니라 Redis TTL key로 관리합니다.
 
 전달은 `HttpOnly`, `SameSite=Strict` 쿠키를 사용하여 XSS/CSRF를 방어합니다. (운영 환경에서는 `Secure` 추가)
 
@@ -130,10 +131,17 @@ DB 유출에 대비하여 원본이 아닌 SHA-256 해시만 저장합니다.
 
 토큰 탈취에 대비하여 Refresh Token Rotation을 적용합니다.
 
-1. 사용 시 해당 토큰을 `used=true`로 마킹하고 새 토큰을 발급합니다.
-2. 이미 사용된 토큰이 다시 들어오면 탈취로 간주하고, 해당 유저의 모든 Refresh Token을 파기합니다.
-3. 만료된 토큰은 백그라운드 고루틴이 주기적으로 일괄 삭제합니다.
-4. 회원탈퇴 시 해당 사용자의 모든 Refresh Token을 즉시 폐기합니다. 또한 `GetUserByID`가 `deleted_at IS NULL` 조건으로 걸러지므로 grace 기간 동안 살아있는 토큰으로 재발급 시도가 들어와도 `Unauthenticated`로 거부됩니다.
+1. 로그인 성공 시 `auth:rt:active:{digest}` key를 TTL과 함께 생성합니다.
+2. refresh 요청이 들어오면 Lua script가 기존 active token 삭제, used tombstone 생성, 새 active token 생성, 사용자별 active token index 갱신을 원자적으로 수행합니다.
+3. 이미 used tombstone으로 남은 토큰이 다시 들어오면 탈취 또는 재사용 공격으로 간주하고 해당 사용자의 active refresh token을 모두 폐기합니다.
+4. 로그아웃은 해당 refresh token digest만 삭제합니다. 회원탈퇴는 `auth:rt:user:{userID}` index를 기준으로 사용자의 모든 refresh token을 삭제합니다.
+5. Redis TTL이 만료 데이터를 자동 제거하므로 별도 token purge loop나 CronJob은 필요하지 않습니다.
+
+이 선택은 RDB에 인증 세션을 저장하던 초기 설계에서 바뀐 부분입니다. 초기에는 저장소가 PostgreSQL뿐이었기 때문에 refresh token을 `refresh_tokens` 테이블에 넣고 만료 토큰을 주기적으로 삭제했습니다. 그러나 K8s로 넘어가면서 서비스 replica가 늘어나면 background purge loop가 중복 실행되는 문제가 생겼고, CronJob으로 분리하더라도 “TTL 임시 상태를 RDB에 저장한 뒤 다시 정리 job을 운영하는 구조”가 남았습니다.
+
+Redis로 옮기면 TTL, 원자적 Lua script, 빠른 key-value 접근을 활용할 수 있어 인증 세션 상태에는 더 자연스럽습니다. 대신 Redis 장애 시 로그인/refresh/logout 같은 인증 상태 변경이 실패할 수 있으므로 fail-closed로 처리합니다. 즉, 인증 상태를 확인하거나 갱신할 수 없으면 토큰을 허용하지 않습니다. 사용자 계정, 채팅방, 멤버십처럼 복구와 관계 무결성이 중요한 데이터는 계속 PostgreSQL이 source of truth이고, Redis는 만료 가능한 인증 세션과 WebSocket control plane 상태에만 사용합니다.
+
+관련 흐름은 [인증 및 WebSocket 티켓 발급 시퀀스](diagrams/seq-auth-ticket.mmd)와 [Refresh Token rotation 시퀀스](diagrams/seq-refresh-token-rotation.mmd)에서 확인할 수 있습니다.
 
 #### WebSocket 티켓
 
@@ -548,9 +556,208 @@ PK는 애플리케이션에서 UUID v7로 생성합니다. v4 대신 v7을 선�
 
 ---
 
-## 4. 테스트 전략
+## 4. Kubernetes 배포 설계
 
-### 4.1 테스트 구성
+이 프로젝트의 K8s 전환 목표는 단순히 `docker compose up`을 `kubectl apply`로 바꾸는 것이 아닙니다. Docker Compose는 한 머신에서 여러 컨테이너를 동시에 띄우는 개발 도구에 가깝고, Kubernetes는 여러 replica가 동적으로 생성·종료되는 환경에서 트래픽 라우팅, readiness, rollout, batch job, 관측성을 함께 다루는 플랫폼입니다. 따라서 앱 코드는 “프로세스 하나가 오래 떠 있다”는 가정에서 벗어나, 여러 파드가 동시에 떠도 중복 실행되면 안 되는 책임과 수평 확장되어야 하는 serving 책임을 분리해야 합니다.
+
+K8s 전환에서 가장 먼저 나눈 기준은 다음입니다.
+
+| 책임 | K8s 리소스 | 이유 |
+| :--- | :--- | :--- |
+| 계속 요청을 받아야 하는 서비스 | Deployment | replica 수를 조절하고 rolling update 대상이 됨 |
+| 내부 라우팅 대상 | Service | 파드 IP가 바뀌어도 안정적인 DNS 이름 제공 |
+| gRPC backend discovery | Headless Service | 클라이언트가 backend Pod IP 목록을 직접 보고 round_robin 수행 |
+| 일회성 마이그레이션 | Job | 성공/실패가 명확하고 완료 후 종료됨 |
+| 주기적 배치 | CronJob | Deployment replica 수와 실행 횟수를 분리 |
+| 외부 HTTP/WebSocket 진입점 | Ingress | `/`, `/api`, `/ws-api`, `/ws` path 라우팅 |
+
+MSA 앱 책임 구조는 [MSA 앱 아키텍처](diagrams/flow-msa.mmd), K8s 런타임 배치 구조는 [K8s 런타임 배포 구조](diagrams/flow-k8s-runtime.mmd), overlay 구성은 [K8s overlay 구조](diagrams/flow-k8s-overlays.mmd), bootstrap 순서는 [K8s bootstrap 흐름](diagrams/flow-k8s-bootstrap.mmd)에서 확인할 수 있습니다.
+
+### 4.1 Manifest 구조
+
+K8s manifest는 `base`와 `overlay`로 나눕니다.
+
+```text
+deploy/k8s
+├── base
+│   ├── api-gateway.yaml
+│   ├── ws-gateway.yaml
+│   ├── websocket-service.yaml
+│   ├── user-service.yaml
+│   ├── chat-service.yaml
+│   ├── frontend.yaml
+│   ├── postgres.yaml
+│   ├── mongo.yaml
+│   ├── redis.yaml
+│   ├── migrations.yaml
+│   ├── cronjobs.yaml
+│   ├── observability.yaml
+│   └── ingress.yaml
+└── overlays
+    ├── dev
+    │   ├── foundation
+    │   ├── observability
+    │   ├── migrations
+    │   └── apps
+    └── test
+        ├── foundation
+        ├── observability
+        ├── migrations
+        └── apps
+```
+
+`base`는 공통 리소스의 기본 형태를 정의합니다. 서비스 이름, 포트, probe, label, volume mount, Ingress path 같은 “환경이 바뀌어도 거의 변하지 않는 구조”가 여기에 들어갑니다.
+
+`overlay`는 실행 목적에 따라 달라지는 값을 덮어씁니다.
+
+| Overlay | 목적 | 특징 |
+| :--- | :--- | :--- |
+| `dev` | 로컬 개발 smoke | 단일 인스턴스 중심, 프론트 접속과 수동 확인 |
+| `test` | 자동화된 K8s e2e correctness | 주요 앱 서비스 `replicas: 2`, 멀티 인스턴스 정합성 검증 |
+| `qa` | 후속 계획 | k3s 멀티 노드, HPA, k6 부하, rollout/drain 검증 |
+
+이름을 `local`이 아니라 `dev/test/qa`로 정리한 이유는 실행 목적을 분리하기 위해서입니다. `local`은 “내 컴퓨터에서 돈다”는 위치만 말하지만, `dev`는 사람이 기능을 확인하는 환경, `test`는 자동화된 correctness gate, `qa`는 실제 멀티 노드와 부하를 걸 검증 환경이라는 역할을 표현합니다.
+
+### 4.2 Phase Overlay와 Bootstrap 순서
+
+K8s는 manifest를 한 번에 적용할 수 있지만, 이 시스템은 순서가 중요합니다. 앱이 뜨기 전에 DB가 준비되어야 하고, DB schema migration이 끝나기 전에 user-service/chat-service가 트래픽을 받으면 실패합니다. 또한 observability backend가 없는 상태에서 앱을 먼저 띄우면 exporter 실패 로그가 반복되어 실제 문제와 잡음을 구분하기 어렵습니다.
+
+그래서 전체 overlay와 별도로 bootstrap script가 사용할 phase overlay를 둡니다.
+
+| Phase | 포함 리소스 | 목적 |
+| :--- | :--- | :--- |
+| `foundation` | Namespace, ConfigMap, Secret, Postgres, Mongo, Redis | 앱이 의존하는 기본 실행 기반 |
+| `observability` | Alloy, Prometheus, Grafana, Loki, Tempo, Pyroscope | 앱 rollout 전에 telemetry 수신 대상 준비 |
+| `migrations` | `postgres-migrate`, `mongo-migrate` Job | schema/index를 앱 시작 전에 확정 |
+| `apps` | 앱 Deployment, Service, Ingress, CronJob | 실제 serving workload 기동 |
+
+`deploy/k8s/scripts/bootstrap.sh`는 이 순서를 강제합니다.
+
+```text
+1. foundation apply
+2. Postgres/Mongo/Redis rollout wait
+3. observability apply
+4. Alloy/Prometheus/Grafana/Loki/Tempo/Pyroscope rollout wait
+5. migration ConfigMap 생성
+6. migration Job 삭제 후 재생성
+7. migration Job completion wait
+8. apps apply
+9. app rollout/readiness smoke
+```
+
+마이그레이션 Job은 재실행 가능하도록 기존 Job을 먼저 삭제한 뒤 다시 만듭니다. Kubernetes Job은 완료된 뒤 같은 이름으로 다시 실행되지 않으므로, dev/test 환경에서 반복 bootstrap을 하려면 이 삭제-재생성 흐름이 필요합니다. migration 실패 시 app rollout을 중단합니다. 스키마가 불확실한 상태에서 앱을 띄워 더 큰 에러를 만들지 않기 위한 fail-fast 전략입니다.
+
+### 4.3 Runtime 리소스 모델
+
+장기 실행 서비스는 Deployment로 둡니다.
+
+| Deployment | 역할 | Service |
+| :--- | :--- | :--- |
+| `api-gateway` | REST API 진입점 | ClusterIP |
+| `ws-gateway` | WebSocket ticket/API 및 WebSocket reverse proxy | ClusterIP |
+| `websocket-service` | 실제 WebSocket 세션과 방별 Hub 관리 | ClusterIP |
+| `user-service` | 사용자/방/멤버십 gRPC backend | Headless |
+| `chat-service` | 메시지 저장/조회 gRPC backend | Headless |
+| `frontend` | 정적 프론트엔드 | ClusterIP |
+
+`api-gateway`, `ws-gateway`, `frontend`, `websocket-service`는 ClusterIP Service를 사용합니다. 이들은 Ingress 또는 다른 서비스가 안정적인 DNS 이름으로 접근하면 충분합니다.
+
+반면 `user-service`와 `chat-service`는 Headless Service를 사용합니다. 일반 ClusterIP는 Service 가상 IP 하나로 트래픽을 숨기기 때문에 gRPC 클라이언트 입장에서는 backend Pod 목록을 직접 보기 어렵습니다. 이 프로젝트는 gRPC `dns:///user-service:50051`와 `round_robin` 정책을 사용하므로, DNS가 여러 Pod IP를 반환해야 RPC 단위 분산이 가능합니다. Headless Service는 `clusterIP: None`으로 Service VIP를 만들지 않고 endpoint Pod IP들을 DNS 응답으로 노출합니다.
+
+이 선택의 트레이드오프는 책임 위치입니다. Kubernetes Service가 L4 부하분산을 대신 해주는 구조보다 클라이언트 설정이 더 중요해집니다. 대신 gRPC의 장기 HTTP/2 연결 특성을 고려해 backend별 subchannel을 만들고 RPC를 분배할 수 있어, 다중 user/chat replica에서 더 의도한 방식으로 분산됩니다.
+
+### 4.4 Local Data Layer
+
+Postgres, Mongo, Redis도 dev/test baseline에서는 K8s 안에 띄웁니다. 다만 이들은 운영용 DB manifest가 아니라 K8s 실행 경로와 e2e를 독립적으로 검증하기 위한 local data layer입니다.
+
+| 리소스 | 구현 | 저장소 | 이유 |
+| :--- | :--- | :--- | :--- |
+| Postgres | Deployment + ClusterIP | `emptyDir` | user/room schema와 migration 검증 |
+| Mongo | Deployment + ClusterIP | `emptyDir` | message schema/index와 catch-up 검증 |
+| Redis | Deployment + ClusterIP | 메모리 | refresh token TTL, WebSocket ticket, membership 검증 |
+
+운영 환경이라면 StatefulSet, PVC, backup/restore, replication, credential rotation, network policy까지 고려해야 합니다. 하지만 이 프로젝트의 Phase 2 목표는 “로컬 K8s에서 앱 실행 모델을 검증하는 것”입니다. 그래서 data layer는 단순하게 두고, 운영형 persistence 설계는 Phase 3 이후 과제로 분리했습니다.
+
+이 결정은 의도적인 절충입니다. 처음부터 운영형 DB 배포까지 넣으면 학습 범위가 지나치게 넓어지고, WebSocket owner, gRPC discovery, readiness, migration, e2e 같은 핵심 마이그레이션 검증이 흐려집니다. 대신 local data layer는 매번 깨끗하게 재생성 가능하고 e2e cleanup도 단순해집니다.
+
+### 4.5 Ingress와 외부 경로
+
+Ingress는 브라우저와 테스트 클라이언트가 접근하는 외부 경로를 하나로 모읍니다.
+
+| Path | Backend | 목적 |
+| :--- | :--- | :--- |
+| `/` | `frontend` | 프론트엔드 |
+| `/api` | `api-gateway` | REST API |
+| `/ws-api` | `ws-gateway` | WebSocket ticket 발급 등 HTTP API |
+| `/ws` | `ws-gateway` | WebSocket upgrade |
+
+프론트엔드와 API를 같은 origin 아래에 두는 이유는 인증 쿠키 때문입니다. refresh token은 `HttpOnly` 쿠키로 전달되므로 cross-origin 구조로 만들면 CORS와 credential 정책을 추가로 설계해야 합니다. local K8s baseline에서는 Ingress path routing으로 same-origin을 유지해 인증 흐름을 단순하게 만듭니다.
+
+WebSocket 경로는 일반 HTTP와 달리 upgrade 연결이 길게 유지됩니다. 그래서 Ingress에는 WebSocket timeout 관련 nginx annotation을 명시합니다. 짧은 기본 timeout에 의해 정상 채팅 연결이 끊기는 문제를 피하기 위한 설정입니다.
+
+### 4.6 Probe와 Lifecycle
+
+K8s에서 probe는 단순 헬스체크가 아니라 rollout과 트래픽 라우팅의 기준입니다. 특히 readiness와 liveness를 섞으면 장애 대응이 오히려 나빠질 수 있습니다.
+
+| Probe | 의미 | 이 프로젝트의 기준 |
+| :--- | :--- | :--- |
+| startupProbe | 느린 초기화를 기다림 | 앱 부팅 중 liveness 오판 방지 |
+| livenessProbe | 프로세스가 살아있는지 확인 | HTTP는 `/health`, gRPC는 TCP socket |
+| readinessProbe | 트래픽을 받아도 되는지 확인 | HTTP는 `/ready`, gRPC는 native gRPC health |
+
+user-service와 chat-service의 gRPC health는 DB 상태를 반영합니다. 이 값을 liveness에 넣으면 DB가 잠깐 느려졌다는 이유로 애플리케이션 Pod를 재시작하는 악순환이 생길 수 있습니다. 그래서 gRPC 서비스 liveness는 TCP socket으로 두고, readiness에서 DB 의존성을 확인합니다. 준비되지 않은 Pod는 Service endpoint에서 빠져 새 트래픽을 받지 않지만, 프로세스 자체는 재시작하지 않습니다.
+
+WebSocket Service는 더 조심해야 합니다. 연결 중인 세션과 영속화 중인 메시지가 있기 때문에 Pod가 종료될 때 바로 끊으면 in-flight 메시지가 손실될 수 있습니다. 앱 내부의 graceful drain이 이미 fan-out한 메시지의 저장 ack를 기다리도록 설계되어 있으므로, K8s Deployment에는 `terminationGracePeriodSeconds`를 주어 이 drain이 끝날 시간을 확보합니다.
+
+### 4.7 CronJob과 Job
+
+K8s에서는 serving process와 batch process를 분리합니다. Deployment replica가 2개면 그 안의 background goroutine도 2번 실행됩니다. 그래서 주기적으로 한 번만 실행되어야 하는 작업은 Deployment 내부 루프가 아니라 Job/CronJob으로 빼야 합니다.
+
+현재 남아 있는 주기 batch는 retention입니다.
+
+| Job | 책임 | 현재 상태 |
+| :--- | :--- | :--- |
+| `retention-job` | soft-deleted rooms/users hard delete | CronJob manifest 유지, 수동 one-shot smoke 검증 |
+
+`retention-job` CronJob은 manifest에 존재하지만 dev/test baseline에서는 `suspend: true`로 둡니다. 실제 schedule 정책, concurrencyPolicy, history limit, alerting은 운영성 판단이 필요한 영역이므로 Phase 3로 미룹니다. 대신 `deploy/k8s/scripts/retention-cronjob-smoke.sh`가 `kubectl create job --from=cronjob/retention-job retention-job-smoke` 방식으로 CronJob template을 실제 one-shot Job으로 실행해 wiring을 검증합니다.
+
+Refresh token purge CronJob은 제거했습니다. refresh token을 Redis TTL로 옮기면서 만료 cleanup은 Redis가 담당하므로 별도 purge job이 필요하지 않습니다. 이 변화는 “K8s에 맞춰 CronJob을 잘 만드는 것”보다 “애초에 CronJob이 필요 없는 설계인지 다시 보는 것”이 더 중요하다는 교훈이었습니다.
+
+retention CronJob smoke 흐름은 [retention CronJob smoke 시퀀스](diagrams/seq-retention-cronjob.mmd)로 정리했습니다.
+
+### 4.8 E2E 실행 기준
+
+Docker Compose 실행 경로는 mainline에서 제거했습니다. 현재 e2e는 K8s `test` overlay가 이미 bootstrap되어 있다는 전제로 실행됩니다.
+
+```bash
+go test -count=1 -tags e2e ./test/e2e
+```
+
+기본 endpoint는 다음입니다.
+
+| 환경변수 | 기본값 | 용도 |
+| :--- | :--- | :--- |
+| `E2E_GATEWAY_BASE_URL` | `http://localhost:30080/api` | REST API |
+| `E2E_WS_BASE_URL` | `http://localhost:30080/ws-api` | WebSocket ticket/API |
+| `E2E_K8S_NAMESPACE` | `go-chat-test` | readiness/replica/membership 검증 대상 |
+
+`test` overlay는 api-gateway, ws-gateway, websocket-service, user-service, chat-service를 `replicas: 2`로 고정합니다. HPA를 바로 붙이지 않은 이유는 변수가 너무 많아지기 때문입니다. 먼저 “같은 코드가 두 개 떠도 정합성이 깨지지 않는가”를 고정 replica로 확인해야 합니다. 그 다음에야 HPA, node drain, k6 부하처럼 동적인 조건을 얹을 수 있습니다.
+
+E2E cleanup에서는 Redis `FLUSHALL`을 사용하지 않습니다. Redis에는 테스트 데이터뿐 아니라 WebSocket Service membership과 hash ring 검증 대상도 들어 있습니다. 전체 flush를 해버리면 테스트가 검증해야 할 control plane 상태를 스스로 지우는 셈입니다. 대신 Postgres/Mongo 데이터는 테스트 전용 데이터 정리로 격리하고, Redis는 TTL과 unique test data로 오염을 줄입니다.
+
+### 4.9 Docker Compose 제거와 기준점 보존
+
+Docker Compose는 더 이상 mainline의 실행 경로가 아닙니다. 개발 smoke, e2e, retention smoke 모두 K8s 기준으로 정리했습니다. 다만 Docker 자체는 계속 사용합니다. 로컬 이미지를 빌드하고 kind/OrbStack/K8s 클러스터에 이미지를 제공하기 위해 Dockerfile은 여전히 필요합니다.
+
+Compose 제거 전에 `legacy-compose-baseline` annotated tag를 남겼습니다. Phase 3에서 “Compose 대비 K8s 성능 지표”를 비교하고 싶을 때, mainline에 Compose 파일을 계속 들고 갈 필요 없이 해당 tag를 기준점으로 참조할 수 있습니다.
+
+이 결정의 장점은 현재 실행 경로가 단순해진다는 점입니다. 문서와 e2e가 K8s 하나만 바라보므로 “Compose에서는 되는데 K8s에서는 안 되는” 이중 현실이 줄어듭니다. 단점은 K8s bootstrap이 선행되어야 하므로 처음 실행 장벽이 올라간다는 것입니다. 그래서 README는 K8s dev/test 실행 명령을 authoritative runbook으로 두고, 디자인 문서는 왜 그런 구조가 되었는지를 설명하는 역할로 나눕니다.
+
+---
+
+## 5. 테스트 전략
+
+### 5.1 테스트 구성
 
 | 구분 | 빌드 태그 | 파일 네이밍 | 함수 네이밍 | 실행 방식 |
 | :--- | :--- | :--- | :--- | :--- |
@@ -558,7 +765,7 @@ PK는 애플리케이션에서 UUID v7로 생성합니다. v4 대신 v7을 선�
 | 통합 테스트 | `//go:build integration` | `*_integration_test.go` | `(s *Suite) TestMethod_Scenario` | testify/suite, 순차 실행 |
 | E2E 테스트 | `//go:build e2e` | `test/e2e/*_test.go` | `(s *E2ESuite) TestScenario_##_Name` | testify/suite, 순차 실행 |
 
-### 4.2 작성 원칙
+### 5.2 작성 원칙
 
 #### 단위 테스트
 
@@ -580,7 +787,7 @@ PK는 애플리케이션에서 UUID v7로 생성합니다. v4 대신 v7을 선�
 
 ---
 
-## 5. 관측성
+## 6. 관측성
 
 운영 중인 시스템의 내부 상태를 외부에서 파악하려면 관측성이 필요합니다. 특히 MSA에서는 장애 지점이 여러 서비스에 걸칠 수 있어 더 중요합니다. 로그, 메트릭, 트레이스, 프로파일 4가지 신호를 조합하여 이상 감지(메트릭) → 구간 특정(트레이스) → 상세 컨텍스트(로그) → 코드 레벨 병목(프로파일)을 연결합니다.
 
@@ -595,7 +802,7 @@ PK는 애플리케이션에서 UUID v7로 생성합니다. v4 대신 v7을 선�
 | 트레이스 | Tempo | 서비스 간 요청 흐름 추적 |
 | 프로파일 | Pyroscope | 코드 레벨 병목 분석 |
 
-### 5.1 로그
+### 6.1 로그
 
 `slog`로 JSON 구조화 로깅을 하며, 모든 로그에 `trace_id`와 `span_id`를 자동 주입하여 트레이스와 연결합니다.
 
@@ -603,7 +810,7 @@ PK는 애플리케이션에서 UUID v7로 생성합니다. v4 대신 v7을 선�
 - HTTP 로그에서 민감한 쿼리 파라미터(token, password, secret 등)를 자동 마스킹
 - `/health`, `/ready` 로그는 애플리케이션 미들웨어와 Alloy 수집 단계에서 필터링
 
-### 5.2 메트릭
+### 6.2 메트릭
 
 OTel Metrics SDK로 계측하고 OTLP로 Alloy에 push합니다. Alloy가 Prometheus에 remote write합니다. 커스텀 미들웨어/인터셉터/래퍼로 계측하되, Redis는 라이브러리(`redisotel`) 자동 계측을 사용합니다.
 
@@ -618,9 +825,9 @@ PostgreSQL/MongoDB는 메트릭 컨벤션 통일(`gochat_*` prefix, `operation`/
 - User: 인증, Bcrypt 워커 풀 지표
 - Chat: 메시지 저장, 조회 지표
 
-고카디널리티 방지를 위해 URL 경로의 UUID를 `:id`로 정규화하고, 헬스체크/메트릭 엔드포인트는 수집에서 제외합니다. OTel resource에는 공통으로 `service.name`과 `service.instance.id`가 들어가며, `service.instance.id`는 K8s `POD_NAME`을 우선 사용하고 로컬/compose에서는 hostname으로 fallback합니다.
+고카디널리티 방지를 위해 URL 경로의 UUID를 `:id`로 정규화하고, 헬스체크/메트릭 엔드포인트는 수집에서 제외합니다. OTel resource에는 공통으로 `service.name`과 `service.instance.id`가 들어가며, `service.instance.id`는 K8s `POD_NAME`을 우선 사용하고 비K8s 실행 환경에서는 hostname으로 fallback합니다.
 
-### 5.3 트레이스
+### 6.3 트레이스
 
 OpenTelemetry SDK로 계측하고, `traceparent` 헤더(W3C 표준)로 서비스 간 `trace_id`를 전파합니다.
 
@@ -630,7 +837,7 @@ OpenTelemetry SDK로 계측하고, `traceparent` 헤더(W3C 표준)로 서비스
 - 10% 샘플링으로 저장 비용과 부하 최소화
 - 헬스체크(`/health`, `/ready`), 메트릭 엔드포인트 스팬은 Alloy 수집 단계에서 필터링
 
-### 5.4 프로파일
+### 6.4 프로파일
 
 `pyroscope-go`가 런타임 프로파일을 주기적으로 Pyroscope 서버에 직접 push하여 코드 레벨 병목을 파악합니다 (Alloy를 거치지 않음).
 
@@ -638,7 +845,7 @@ OpenTelemetry SDK로 계측하고, `traceparent` 헤더(W3C 표준)로 서비스
 - 메모리: 현재 점유 중인 객체 수와 크기 (Inuse)
 - 고루틴: 고루틴을 생성하는 함수의 스택트레이스
 
-### 5.5 통합 조회
+### 6.5 통합 조회
 
 Grafana에서 6종의 대시보드를 프로비저닝합니다.
 
@@ -655,22 +862,22 @@ Grafana에서 6종의 대시보드를 프로비저닝합니다.
 
 ---
 
-## 6. 추후 개선사항
+## 7. 추후 개선사항
 
 현재 시스템은 Kubernetes dev/test overlay 기준으로 실행됩니다. Docker Compose 실행 경로는 mainline에서 제거했고, Compose 기반 성능/구조 비교가 필요할 때는 `legacy-compose-baseline` tag를 참조합니다. K8s 전환을 위한 앱 코드 변경(동적 멤버십, gRPC round_robin, readiness, graceful drain)과 기본 매니페스트는 반영되어 있으며, 남은 작업은 멀티 노드 HPA/load/rollout 검증과 운영성 고도화 중심입니다.
 
-### 6.1 멀티 노드 K8s 검증
+### 7.1 멀티 노드 K8s 검증
 
 Mac/Windows 호스트의 Linux VM을 Tailscale로 연결하고, k3s 기반 멀티 노드 클러스터에서 실제 네트워크 지연과 노드 장애 조건을 포함해 검증합니다. user-service와 chat-service는 Headless Service + gRPC `dns:///` + `round_robin`으로 멀티 파드 IP를 보게 합니다.
 
-### 6.2 K8s 분산 동작 검증
+### 7.2 K8s 분산 동작 검증
 
 k3s `qa` overlay에서 HPA 스케일아웃·스케일인, rolling update, `kubectl delete pod`, node drain 시나리오를 검증합니다. 특히 WebSocket owner rebalance 중 in-flight 메시지가 저장 ack 이후 close되는지, gRPC round_robin이 user/chat 다중 파드로 분산되는지 확인합니다.
 
-### 6.3 Custom Metrics HPA
+### 7.3 Custom Metrics HPA
 
 초기 HPA는 CPU 기준으로 시작하되, websocket-service는 활성 연결 수, hub 수, broadcast/persist queue depth 같은 custom metric 기반으로 전환하는 편이 더 정확합니다.
 
-### 6.4 프로덕션 보안
+### 7.4 프로덕션 보안
 
 프로덕션용 JWT 시크릿과 내부 통신 시크릿을 YAML 파일이 아닌 환경변수로 주입해야 합니다. 또한, 처리율 제한의 클라이언트 IP 추출도 Trusted Proxy 기반 파싱으로 전환이 필요합니다.

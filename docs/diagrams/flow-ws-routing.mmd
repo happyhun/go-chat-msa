@@ -8,18 +8,19 @@ flowchart TB
         Watcher_G["Membership Watcher"]
     end
 
-    subgraph WS_Cluster ["WebSocket Service Cluster"]
+    subgraph WS_Cluster ["WebSocket Service Deployment"]
         direction TB
-        subgraph WSS1 ["WebSocket Service 1"]
+        subgraph WSS1 ["Pod A"]
             Reg1["Registry (self heartbeat)"]
             Watcher1["Membership Watcher"]
             Ring1["Hash Ring (self-check)"]
         end
-        subgraph WSS2 ["WebSocket Service 2"]
+        subgraph WSS2 ["Pod B"]
             Reg2["Registry (self heartbeat)"]
             Watcher2["Membership Watcher"]
             Ring2["Hash Ring (self-check)"]
         end
+        More["... more pods<br/>when scaled"]
     end
 
     Redis[("Redis<br/>wss:member:*")]
@@ -40,5 +41,6 @@ flowchart TB
     Router -- "Locate(roomID)" --> Hashring
     Router == "프록시" ==> WSS1
     Router == "프록시" ==> WSS2
+    Router -. "same logic" .-> More
     WSS1 -- "self-check Locate(roomID)" --> Ring1
     WSS2 -- "self-check Locate(roomID)" --> Ring2

@@ -121,82 +121,54 @@ NAMESPACE=go-chat-test bash deploy/k8s/scripts/retention-cronjob-smoke.sh
 
 ```mermaid
 flowchart TB
-    subgraph External ["External Layer"]
+    subgraph ClientLayer ["Client Layer"]
         direction LR
-        Client["Web Browser"]
+        Browser["Web Browser"]
     end
 
-    subgraph K8s ["Kubernetes Cluster"]
-        subgraph Edge ["Edge Layer"]
-            direction LR
-            WSGW["WS Gateway"]
-            AGW["API Gateway"]
-
-            AGW -- "Internal HTTP" --> WSGW
-        end
-
-        subgraph Core ["Core Layer"]
-            direction LR
-            subgraph WS_Cluster ["WebSocket Service Cluster"]
-                direction LR
-                WSS1["WebSocket Service Pod 1"]
-                WSS2["WebSocket Service Pod 2"]
-            end
-            US["User Service"]
-            CS["Chat Service"]
-        end
-
-        subgraph Jobs ["Batch Layer"]
-            RJ["retention-job CronJob"]
-        end
-
-        subgraph Data ["Data Layer"]
-            direction LR
-            PG[("PostgreSQL")]
-            MG[("MongoDB")]
-            RD[("Redis")]
-        end
-
-        subgraph Observability ["Observability Layer"]
-            direction LR
-            Alloy["Alloy"]
-            Prometheus[("Prometheus")]
-            Loki[("Loki")]
-            Tempo[("Tempo")]
-            Pyroscope[("Pyroscope")]
-            Grafana["Grafana"]
-
-            Alloy -- "metrics" --> Prometheus
-            Alloy -- "logs" --> Loki
-            Alloy -- "traces" --> Tempo
-            Prometheus & Loki & Tempo & Pyroscope --> Grafana
-        end
+    subgraph Edge ["Edge Services"]
+        direction LR
+        AGW["API Gateway<br/>REST API · auth middleware"]
+        WSGW["WS Gateway<br/>ticket API · WebSocket proxy"]
     end
 
-    Client == "WebSocket" ==> WSGW
-    Client == "REST" ==> AGW
+    subgraph Core ["Core Services"]
+        direction LR
+        UserSvc["User Service<br/>users · rooms · memberships<br/>refresh token state"]
+        ChatSvc["Chat Service<br/>message persistence<br/>history lookup"]
+        WSSvc["WebSocket Service<br/>sessions · hubs<br/>broadcast · persistence queue"]
+    end
 
-    WSGW -- "L7 Proxy" --> WS_Cluster
+    subgraph Data ["Data Stores"]
+        direction LR
+        PG[("PostgreSQL")]
+        MG[("MongoDB")]
+        RD[("Redis")]
+    end
 
-    AGW -- "gRPC" --> US
-    AGW -- "gRPC" --> CS
+    subgraph Batch ["Batch"]
+        Retention["retention-job"]
+    end
 
-    WS_Cluster -- "gRPC" --> US
-    WS_Cluster -- "gRPC" --> CS
+    Browser == "REST /api" ==> AGW
+    Browser == "ticket /ws-api" ==> WSGW
+    Browser == "WebSocket /ws" ==> WSGW
 
-    US --> PG
-    US --> RD
-    CS --> MG
+    AGW -- "internal HTTP" --> WSGW
+    WSGW == "L7 proxy<br/>room_id hashing" ==> WSSvc
+
+    AGW -- "gRPC" --> UserSvc
+    AGW -- "gRPC" --> ChatSvc
+    WSSvc -- "gRPC" --> UserSvc
+    WSSvc -- "gRPC" --> ChatSvc
+
+    UserSvc --> PG
+    UserSvc --> RD
+    ChatSvc --> MG
     AGW --> RD
     WSGW --> RD
-    RJ -- "Purge once" --> PG
-
-    Alloy -. "pull: logs" .-> Edge
-    Alloy -. "pull: logs" .-> Core
-    Edge -. "push: traces, metrics" .-> Alloy
-    Core -. "push: traces, metrics" .-> Alloy
-    Edge -. "push: profiles" .-> Pyroscope
-    Core -. "push: profiles" .-> Pyroscope
+    WSSvc --> RD
+    Retention --> PG
 ```
 
 | 서비스 | 역할 | 프로토콜 | 저장소 |
@@ -210,9 +182,15 @@ flowchart TB
 
 상세 흐름은 개별 다이어그램을 참고해 주세요.
 
+- [MSA 앱 아키텍처](docs/diagrams/flow-msa.mmd)
+- [K8s 런타임 배포 구조](docs/diagrams/flow-k8s-runtime.mmd)
+- [K8s overlay 구조](docs/diagrams/flow-k8s-overlays.mmd)
+- [K8s bootstrap 흐름](docs/diagrams/flow-k8s-bootstrap.mmd)
 - [메시지 브로드캐스트 흐름](docs/diagrams/flow-message.mmd)
 - [WebSocket 라우팅 흐름](docs/diagrams/flow-ws-routing.mmd)
 - [인증 및 티켓 발급 시퀀스](docs/diagrams/seq-auth-ticket.mmd)
+- [Refresh Token rotation 시퀀스](docs/diagrams/seq-refresh-token-rotation.mmd)
+- [Retention CronJob smoke 시퀀스](docs/diagrams/seq-retention-cronjob.mmd)
 - [WebSocket 세션 생명주기](docs/diagrams/seq-websocket.mmd)
 
 ---

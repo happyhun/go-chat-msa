@@ -1,74 +1,50 @@
 flowchart TB
-    subgraph External ["External Layer"]
+    subgraph ClientLayer ["Client Layer"]
         direction LR
-        Client["Web Browser"]
+        Browser["Web Browser"]
     end
 
-    subgraph Services ["Services"]
-        subgraph Edge ["Edge Layer"]
-            direction LR
-            WSGW["WS Gateway"]
-            AGW["API Gateway"]
-
-            AGW -- "Internal HTTP" --> WSGW
-        end
-
-        subgraph Core ["Core Layer"]
-            direction LR
-            subgraph WS_Cluster ["WebSocket Service Cluster"]
-                direction LR
-                WSS1["WebSocket Service 1"]
-                WSS2["WebSocket Service 2"]
-            end
-            US["User Service"]
-            CS["Chat Service"]
-        end
-
-        subgraph Jobs ["Batch Layer"]
-            RJ["retention-job CronJob"]
-        end
-    end
-
-    subgraph Data ["Data Layer"]
+    subgraph Edge ["Edge Services"]
         direction LR
-        PG[("PostgreSQL")]
-        MG[("MongoDB")]
-        RD[("Redis")]
+        AGW["API Gateway<br/>REST API · auth middleware<br/>API version routing"]
+        WSGW["WS Gateway<br/>ticket API · WebSocket proxy<br/>room_id consistent hashing"]
     end
 
-    subgraph Observability ["Observability Layer"]
+    subgraph Core ["Core Services"]
         direction LR
-        Alloy["Alloy"]
-        Prometheus[("Prometheus")]
-        Loki[("Loki")]
-        Tempo[("Tempo")]
-        Pyroscope[("Pyroscope")]
-        Grafana["Grafana"]
-
-        Alloy -- "metrics" --> Prometheus
-        Alloy -- "logs" --> Loki
-        Alloy -- "traces" --> Tempo
-        Prometheus & Loki & Tempo & Pyroscope --> Grafana
+        UserSvc["User Service<br/>users · rooms · memberships<br/>refresh token state"]
+        ChatSvc["Chat Service<br/>message persistence<br/>history lookup"]
+        WSSvc["WebSocket Service<br/>sessions · hubs<br/>broadcast · persistence queue"]
     end
 
-    Client == "WebSocket" ==> WSGW
-    Client == "REST" ==> AGW
+    subgraph Data ["Data Stores"]
+        direction LR
+        PG[("PostgreSQL<br/>users · rooms · memberships")]
+        MG[("MongoDB<br/>messages")]
+        RD[("Redis<br/>refresh token TTL<br/>ws tickets · rate limit<br/>membership")]
+    end
 
-    WSGW -- "L7 Proxy" --> WS_Cluster
+    subgraph Batch ["Batch"]
+        direction LR
+        Retention["retention-job<br/>rooms/users hard delete"]
+    end
 
-    AGW -- "gRPC" --> US
-    AGW -- "gRPC" --> CS
+    Browser == "REST /api" ==> AGW
+    Browser == "ticket /ws-api" ==> WSGW
+    Browser == "WebSocket /ws" ==> WSGW
 
-    WS_Cluster -- "gRPC" --> US
-    WS_Cluster -- "gRPC" --> CS
+    AGW -- "internal HTTP<br/>ticket delegation" --> WSGW
+    WSGW == "L7 proxy<br/>selected by room_id" ==> WSSvc
 
-    US --> PG
-    CS --> MG
+    AGW -- "gRPC" --> UserSvc
+    AGW -- "gRPC" --> ChatSvc
+    WSSvc -- "gRPC<br/>membership check" --> UserSvc
+    WSSvc -- "gRPC<br/>persist/history" --> ChatSvc
+
+    UserSvc --> PG
+    UserSvc --> RD
+    ChatSvc --> MG
     AGW --> RD
     WSGW --> RD
-    WS_Cluster --> RD
-    RJ -- "Purge once" --> PG
-
-    Alloy -. "pull: logs" .-> Services
-    Services -. "push: traces, metrics" .-> Alloy
-    Services -. "push: profiles" .-> Pyroscope
+    WSSvc --> RD
+    Retention --> PG

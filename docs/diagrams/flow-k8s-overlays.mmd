@@ -1,0 +1,40 @@
+flowchart TB
+    Base["deploy/k8s/base<br/>공통 리소스 원형"]
+
+    Base --> Common["공통 정의<br/>Deployment · Service · Ingress<br/>Job · CronJob · ConfigMap · Secret"]
+
+    Common --> Dev["overlays/dev<br/>로컬 개발 smoke"]
+    Common --> Test["overlays/test<br/>자동 e2e correctness"]
+    Common -. "planned" .-> QA["overlays/qa<br/>멀티 노드 · HPA · k6"]
+
+    subgraph DevPhases ["dev phase overlays"]
+        direction LR
+        DevFoundation["foundation<br/>namespace/config/data"]
+        DevObs["observability<br/>Grafana stack"]
+        DevMig["migrations<br/>DB schema jobs"]
+        DevApps["apps<br/>serving workloads"]
+    end
+
+    subgraph TestPhases ["test phase overlays"]
+        direction LR
+        TestFoundation["foundation<br/>namespace/config/data"]
+        TestObs["observability<br/>Grafana stack"]
+        TestMig["migrations<br/>DB schema jobs"]
+        TestApps["apps<br/>replicas=2 correctness gate"]
+    end
+
+    Dev --> DevFoundation
+    Dev --> DevObs
+    Dev --> DevMig
+    Dev --> DevApps
+
+    Test --> TestFoundation
+    Test --> TestObs
+    Test --> TestMig
+    Test --> TestApps
+
+    TestApps --> FixedReplicas["fixed-replicas patch<br/>api/ws/user/chat/websocket = 2"]
+    TestFoundation --> TestConfig["APP_ENV=k8s-test<br/>go-chat-test namespace"]
+    DevFoundation --> DevConfig["APP_ENV=k8s-dev<br/>go-chat-dev namespace"]
+
+    QA --> QANote["Phase 3<br/>k3s + Tailscale + HPA<br/>rollout/drain/load validation"]

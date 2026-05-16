@@ -1,0 +1,36 @@
+sequenceDiagram
+    autonumber
+
+    participant Dev as Developer or CI
+    participant Kube as Kubernetes API
+    participant Cron as retention-job CronJob
+    participant Job as retention-job-smoke Job
+    participant Pod as retention-job Pod
+    participant PG as PostgreSQL
+
+    Note over Dev, Cron: CronJob은 baseline에서 suspend=true로 유지
+    Dev->>Kube: kubectl get cronjob retention-job
+    Kube-->>Dev: CronJob template 확인
+
+    Note over Dev, Pod: 수동 smoke는 CronJob template을 one-shot Job으로 실행
+    Dev->>Kube: delete job retention-job-smoke --ignore-not-found
+    Dev->>Kube: create job retention-job-smoke<br/>--from=cronjob/retention-job
+    Kube->>Job: Job 생성
+    Job->>Pod: Pod 실행
+
+    Pod->>PG: PurgeDeletedRooms(threshold)
+    PG-->>Pod: purged room count
+    Pod->>PG: PurgeDeletedUsers(threshold)
+    PG-->>Pod: purged user count
+
+    alt 성공
+        Pod-->>Job: exit 0
+        Job-->>Kube: Complete
+        Kube-->>Dev: wait complete
+    else 실패
+        Pod-->>Job: exit non-zero
+        Job-->>Kube: Failed
+        Kube-->>Dev: describe job + logs 출력
+    end
+
+    Note over Dev, PG: 실제 schedule/concurrency/backoff 정책은 Phase 3 운영성 검증에서 결정
