@@ -48,12 +48,14 @@ MSA 구조로 REST, gRPC, WebSocket 서비스를 분리했고, Kubernetes dev/te
 | Go | 테스트 실행 |
 | Make | 로컬 실행 명령 단순화 |
 
+권장 로컬 사양은 CPU 4코어, 메모리 8GB 이상입니다. `dev`와 `test`를 동시에 띄우거나 e2e를 반복 실행할 경우 메모리 16GB 이상이 안정적입니다.
+
 > [!NOTE]
 > `kind`는 운영용 클러스터가 아니라 로컬에서 Kubernetes manifest, Ingress, Job/CronJob, e2e 흐름을 재현하기 위한 개발 및 검증 환경입니다.
 
-### Quick Start
+### 앱 실행
 
-`dev`는 로컬에서 앱 실행과 기본 기능을 확인하는 환경입니다. app 서비스는 단일 인스턴스로 실행합니다.
+프론트 화면을 확인하려면 `dev` 환경을 실행합니다. 앱 서비스는 단일 인스턴스로 실행됩니다.
 
 ```bash
 make dev-up
@@ -68,47 +70,26 @@ make dev-up
 5. `dev` overlay bootstrap
 6. 주요 Deployment rollout 대기
 
-Ingress는 kind host port `30080`으로 노출됩니다. 실행이 끝나면 브라우저에서 프론트엔드에 접속할 수 있습니다.
+Ingress는 kind host port `30080`으로 노출됩니다. 실행이 끝나면 브라우저에서 아래 URL에 접속할 수 있습니다.
 
 | 서비스 | URL |
 |:---|:---|
 | 프론트엔드 | http://localhost:30080/ |
 | API Gateway health | http://localhost:30080/api/health |
 | WS Gateway health | http://localhost:30080/ws-api/health |
+| Grafana | http://localhost:30080/grafana/ |
+| OpenAPI 문서 | http://localhost:30080/docs/ |
 
-Grafana는 port-forward로 접근합니다.
+### E2E 테스트
 
-```bash
-make grafana-dev
-```
-
-### Test Overlay와 E2E
-
-`test`는 자동화된 correctness gate입니다. app 서비스는 fixed replicas 2로 실행하고, e2e는 이 K8s namespace를 대상으로만 동작합니다.
+E2E는 `test` 환경을 먼저 띄운 뒤 `go test`로 실행합니다. 주요 앱 서비스는 2개씩 실행되어 멀티 인스턴스 상태를 검증합니다.
 
 ```bash
 make test-up
-make e2e
+go test -count=1 -tags=e2e ./test/e2e
 ```
 
-e2e endpoint는 필요하면 override할 수 있습니다.
-
-```bash
-E2E_GATEWAY_BASE_URL=http://localhost:30080/api \
-E2E_WS_BASE_URL=http://localhost:30080/ws-api \
-E2E_K8S_NAMESPACE=go-chat-test \
-go test -count=1 -tags e2e ./test/e2e
-```
-
-### Retention CronJob Smoke
-
-`retention-job` CronJob은 기본적으로 `suspend: true`입니다. schedule을 열기 전 smoke는 CronJob 템플릿으로 one-shot Job을 만들어 확인합니다.
-
-```bash
-make retention-smoke
-```
-
-### Cleanup
+### 정리
 
 ```bash
 make dev-down
@@ -147,10 +128,6 @@ flowchart TB
         RD[("Redis")]
     end
 
-    subgraph Batch ["Batch"]
-        Retention["retention-job"]
-    end
-
     Browser == "REST /api" ==> AGW
     Browser == "ticket /ws-api" ==> WSGW
     Browser == "WebSocket /ws" ==> WSGW
@@ -169,7 +146,6 @@ flowchart TB
     AGW --> RD
     WSGW --> RD
     WSSvc --> RD
-    Retention --> PG
 ```
 
 | 서비스 | 역할 | 프로토콜 | 저장소 |
@@ -179,7 +155,6 @@ flowchart TB
 | websocket-service | 실시간 메시지 브로드캐스트, 세션/룸 관리 | WebSocket | - |
 | user-service | 사용자 및 채팅방 CRUD, Bcrypt 워커 풀, refresh token 상태 관리 | gRPC | PostgreSQL, Redis |
 | chat-service | 메시지 저장 및 조회 | gRPC | MongoDB |
-| retention-job | 소프트 삭제된 채팅방/사용자 one-shot purge | CronJob | PostgreSQL |
 
 상세 흐름은 개별 다이어그램을 참고해 주세요.
 
@@ -191,7 +166,6 @@ flowchart TB
 - [WebSocket 라우팅 흐름](docs/diagrams/flow-ws-routing.mmd)
 - [인증 및 티켓 발급 시퀀스](docs/diagrams/seq-auth-ticket.mmd)
 - [Refresh Token rotation 시퀀스](docs/diagrams/seq-refresh-token-rotation.mmd)
-- [Retention CronJob smoke 시퀀스](docs/diagrams/seq-retention-cronjob.mmd)
 - [WebSocket 세션 생명주기](docs/diagrams/seq-websocket.mmd)
 
 ---
@@ -206,7 +180,7 @@ flowchart TB
 
 3. **Actor 모델 - WebSocket 계층 분리**: Router, Manager, Hub, Session 4계층으로 나누고, Manager와 Hub는 각각 단일 고루틴의 `select` 루프에서 상태를 순차 처리합니다. 외부와는 채널로만 통신하기 때문에 뮤텍스 없이 동시성 안전합니다.
 
-4. **Kubernetes CronJob - scheduled job 책임 분리**: serving Deployment 안에서 주기 작업을 실행하지 않고, one-shot entrypoint를 CronJob 템플릿으로 실행합니다. replica 수와 batch 실행 횟수가 결합되지 않도록 분리했습니다.
+4. **Kubernetes 실행 경로 단일화**: Docker Compose 실행 경로를 제거하고 dev/test 모두 K8s overlay로 실행합니다. `dev`는 단일 인스턴스 수동 확인, `test`는 2 replicas 기반 E2E 정합성 검증에 집중합니다.
 
 ---
 
@@ -230,12 +204,14 @@ OpenTelemetry SDK로 계측하고 Grafana 스택으로 4가지 신호를 통합 
 
 ## 테스트
 
+통합 테스트는 K8s를 사용하지 않고 Docker 기반 Testcontainers로 필요한 DB만 띄웁니다. E2E는 K8s `test` overlay가 떠 있어야 합니다.
+
 | 구분 | 실행 명령어 | 설명 |
 |:---|:---|:---|
 | 단위 | `go test ./...` | 테이블 기반, `t.Parallel()` 병렬 실행 |
-| 통합 | `go test -tags integration ./...` | Testcontainers로 실제 DB 사용, 서비스 단위 시나리오 검증 |
-| E2E | `go test -count=1 -tags e2e ./test/e2e` | K8s `test` overlay 대상 blackbox 및 멀티 인스턴스 정합성 검증 |
-| CronJob smoke | `NAMESPACE=go-chat-test bash deploy/k8s/scripts/retention-cronjob-smoke.sh` | suspended CronJob 템플릿에서 one-shot Job 생성 |
+| 통합 | `go test -count=1 -tags=integration ./...` | K8s 없이 Testcontainers로 실제 DB 사용 |
+| E2E | `go test -count=1 -tags=e2e ./test/e2e` | K8s `test` overlay 대상 blackbox 및 멀티 인스턴스 정합성 검증 |
+| 전체 | `go test -count=1 -tags=integration,e2e ./...` | 통합 테스트와 K8s e2e를 함께 실행 |
 
 ### k6 부하테스트 결과
 

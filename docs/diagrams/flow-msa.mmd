@@ -24,11 +24,6 @@ flowchart TB
         RD[("Redis<br/>refresh token TTL<br/>ws tickets · rate limit<br/>membership")]
     end
 
-    subgraph Batch ["Batch"]
-        direction LR
-        Retention["retention-job<br/>rooms/users hard delete"]
-    end
-
     Browser == "REST /api" ==> AGW
     Browser == "ticket /ws-api" ==> WSGW
     Browser == "WebSocket /ws" ==> WSGW
@@ -47,4 +42,3 @@ flowchart TB
     AGW --> RD
     WSGW --> RD
     WSSvc --> RD
-    Retention --> PG

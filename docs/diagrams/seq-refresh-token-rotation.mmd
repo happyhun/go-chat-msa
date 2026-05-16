@@ -15,7 +15,7 @@ sequenceDiagram
     Redis->>Redis: used old tombstone 생성<br/>남은 TTL 유지
     Redis->>Redis: active new 생성<br/>auth:rt:active:{new_digest}
     Redis-->>UserSvc: userID 반환
-    UserSvc->>DB: GetUserByID(userID)<br/>deleted_at IS NULL
+    UserSvc->>DB: GetUserByID(userID)
     DB-->>UserSvc: active user
     UserSvc-->>AGW: new access token + new refresh token
     AGW-->>Client: access token 반환<br/>refresh cookie 교체
@@ -38,6 +38,6 @@ sequenceDiagram
     Redis-->>UserSvc: revoked
 
     AGW->>UserSvc: DeleteUser(userID)
-    UserSvc->>DB: users.deleted_at 설정 + 방 나가기 처리
+    UserSvc->>DB: 방 나가기 처리 + users row 삭제
     UserSvc->>Redis: RevokeUser(userID)
     Redis->>Redis: auth:rt:user:{userID} 기반 active token 삭제

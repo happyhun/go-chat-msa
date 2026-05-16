@@ -59,9 +59,8 @@
 | api-gateway | REST API 진입점, 인증 위임, 버전 라우팅 | REST | - |
 | ws-gateway | WebSocket L7 리버스 프록시, Consistent Hashing | HTTP | - |
 | websocket-service | 실시간 메시지 브로드캐스트, 세션/룸 관리 | WebSocket | - |
-| user-service | 사용자 및 채팅방 CRUD, Bcrypt 워커 풀 | gRPC | PostgreSQL |
+| user-service | 사용자 및 채팅방 CRUD, Bcrypt 워커 풀, refresh token 상태 관리 | gRPC | PostgreSQL, Redis |
 | chat-service | 메시지 저장 및 조회 | gRPC | MongoDB |
-| retention-job | 소프트 삭제된 채팅방·사용자 one-shot 퍼지 | CronJob | PostgreSQL |
 
 ---
 
@@ -197,8 +196,8 @@ HTTP 미들웨어가 아닌 WebSocket `readPump` 안에서 메시지 단위로 �
 
 | 테이블 | 용도 |
 | :--- | :--- |
-| users | 사용자 계정 (소프트 삭제용 `deleted_at` 포함) |
-| rooms | 채팅방 (소프트 삭제용 `deleted_at` 포함) |
+| users | 사용자 계정 |
+| rooms | 채팅방 |
 | room_members | 채팅방 멤버십 (복합 PK: `user_id`, `room_id`) |
 
 PK는 애플리케이션에서 UUID v7로 생성합니다.
@@ -212,8 +211,7 @@ PK는 애플리케이션에서 UUID v7로 생성합니다.
 
 | 대상 | 종류 | 용도 |
 | :--- | :--- | :--- |
-| `users.username` | UNIQUE | 로그인, 중복 검사 (탈퇴자 row까지 포함하여 grace 기간 동안 동일 username 재가입 차단) |
-| `users.deleted_at` | INDEX (partial: `WHERE deleted_at IS NOT NULL`) | retention job이 grace 만료 행을 빠르게 스캔 |
+| `users.username` | UNIQUE | 로그인, 중복 검사 |
 | `room_members.(user_id, room_id)` | PK (복합) | 멤버십 조회 |
 | `room_members.room_id` | INDEX | 방별 멤버 목록 |
 | `rooms.manager_id` | INDEX | 방장별 방 조회 |
@@ -239,7 +237,7 @@ PK는 애플리케이션에서 UUID v7로 생성합니다.
 | 채팅방 생성 | 방 생성 + 방장 멤버 추가 원자성 | 트랜잭션 래핑 |
 | 채팅방 수정 | 정원 축소 시 현재 인원 수 검증, 참여/삭제와의 경쟁 조건 방지 | `rooms` 행 `FOR UPDATE` |
 | 채팅방 삭제 | 참여와의 경쟁 조건 방지, 방장 권한 검증 원자성 | `rooms` 행 `FOR UPDATE` |
-| 채팅방 나가기 | 방장 위임 경쟁 조건 방지, 빈 방 자동 soft delete | `rooms` 행 `FOR UPDATE` |
+| 채팅방 나가기 | 방장 위임 경쟁 조건 방지, 빈 방 자동 삭제 | `rooms` 행 `FOR UPDATE` |
 
 #### Redis (Auth Session State)
 
@@ -284,15 +282,16 @@ TTL 90일은 채팅 서비스 특성상 오래된 메시지의 조회 빈도가 
 
 ### 2.6 회원 라이프사이클
 
-회원탈퇴는 즉시 비활성화하되 일정 기간 데이터를 보존하는 3단계 정책을 따릅니다 (Google·GitHub 등의 표준 패턴).
+현재 프로젝트는 회원탈퇴를 기본 하드 삭제로 처리합니다. 이 프로젝트는 포트폴리오와 학습 목적의 채팅 시스템이며, 법적 보관, 감사 로그, 결제/정산처럼 탈퇴 후에도 사용자 row를 일정 기간 보존해야 하는 요구사항이 없습니다. 그래서 soft delete + grace period + retention batch를 기본값으로 두면 기능보다 운영 복잡도가 먼저 커집니다.
 
-| 시점 | 동작 |
-| :--- | :--- |
-| T0 (탈퇴 요청) | `users.deleted_at = now()` 설정. 비밀번호 재인증 후 진행. 모든 Refresh Token 즉시 폐기. 가입한 방마다 LeaveRoom 로직 적용(매니저면 위임 또는 빈 방 soft-delete). |
-| T0 ~ T+30일 (grace) | `GetUserByUsername`/`GetUserByID`가 `deleted_at IS NULL` 필터로 차단 → 로그인·토큰 갱신 실패. `users.username` UNIQUE 제약이 탈퇴자 row까지 포함해 동일 username 재가입을 막음(freeze). |
-| T+30일 이후 | retention job이 `deleted_at < now() - 30d` 행을 hard delete. CASCADE로 `room_members` 정리, `rooms.manager_id`는 SET NULL. username freeze 자연 해제. |
+탈퇴 요청은 다음 순서로 처리합니다.
 
-채팅방의 soft delete + 30일 grace + retention purge 패턴과 정확히 동일합니다. 운영 일관성을 위해 retention job이 두 도메인을 한 one-shot 실행 안에서 처리하며, `gochat_retention_purged_total{kind="rooms"|"users"}` 라벨로 분리 관측합니다.
+1. 비밀번호를 재검증합니다.
+2. 가입한 방마다 LeaveRoom 로직을 적용합니다. 사용자가 방장이면 다른 멤버에게 방장을 위임하고, 혼자 있는 방이면 방을 삭제합니다.
+3. Redis에 저장된 해당 사용자의 refresh token을 모두 폐기합니다.
+4. `users` row를 삭제합니다. `room_members`는 FK cascade로 정리됩니다.
+
+이 선택의 장점은 스키마와 쿼리가 단순해진다는 점입니다. 모든 사용자 조회에서 `deleted_at IS NULL` 조건을 기억할 필요가 없고, 동일 username도 삭제 직후 바로 재사용할 수 있습니다. 단점은 삭제 후 복구나 grace period 정책을 제공하지 않는다는 점입니다. 이후 보관 요구가 생기면 그때 soft delete 컬럼, retention 정책, 사용자명 freeze 정책, 감사 로그를 함께 설계하는 것이 맞습니다. 이 요구가 없는 현재 단계에서는 하드 삭제가 더 정직한 기본값입니다.
 
 ### 2.7 세션 생명주기
 
@@ -317,9 +316,9 @@ TTL 90일은 채팅 서비스 특성상 오래된 메시지의 조회 빈도가 
 방장이 채팅방을 삭제할 때 해당 방의 모든 세션을 종료합니다.
 
 1. API Gateway를 통해 삭제 API를 호출합니다.
-2. User Service가 해당 방 레코드에 `deleted_at`을 기록합니다.
+2. User Service가 해당 방 row를 삭제합니다.
 3. API Gateway가 비동기로 WS Gateway에 요청을 보내 해당 방의 모든 세션을 강제 종료합니다.
-4. 이후 해당 방은 검색이나 조회에서 제외됩니다.
+4. 이후 해당 방은 검색이나 조회에서 사라집니다.
 
 ### 2.8 메시지 흐름
 
@@ -356,7 +355,7 @@ REST API(`GET /rooms/{id}/messages`)에서 `last_seq` 쿼리 파라미터 유무
 
 메시지는 `senderId`만 저장하고 username은 저장하지 않습니다(정규화). 클라이언트가 메시지 페이지를 받으면 unique `sender_id`를 모아 `GET /users?ids=...`로 일괄 조회하여 user_id → username 매핑 캐시를 누적 갱신합니다(Slack/Discord 패턴).
 
-방을 떠난 사용자의 메시지도 user 본체가 살아있으면 정상적으로 username을 반환받지만, 회원탈퇴(soft-deleted) 또는 retention purge(hard-deleted)된 사용자는 응답에서 제외되어 클라이언트가 `(탈퇴한 사용자)` fallback으로 표시합니다. soft-deleted 사용자 정보는 DB 복구용으로만 남기고 외부 조회를 차단하는 정책과 일치합니다.
+방을 떠난 사용자의 메시지도 user row가 살아있으면 정상적으로 username을 반환받습니다. 회원탈퇴로 user row가 삭제된 사용자는 일괄 조회 응답에서 제외되며, 클라이언트가 `(탈퇴한 사용자)` fallback으로 표시합니다. 메시지에는 `senderId`만 남기기 때문에, 작성자 표시 실패가 메시지 조회 자체를 깨뜨리지 않습니다.
 
 대안으로 메시지에 username을 박제(비정규화)하는 패턴도 있으나, 본 프로젝트는 username 변경 기능이 없어 비정규화 이득이 없고 정규화가 변경 범위가 작습니다.
 
@@ -366,7 +365,6 @@ REST API(`GET /rooms/{id}/messages`)에서 `last_seq` 쿼리 파라미터 유무
 
 - **공통 타입 (`shared/config`)**: `HTTPServerConfig`, `JWTConfig`, `RateLimitConfig` 등 여러 서비스가 공유하는 설정 빌딩블록. validate 태그를 포함하여 로딩 시점에 검증합니다.
 - **서비스별 Config**: 공통 타입을 임베딩(`mapstructure:",squash"`)하거나 필드로 조합하여 서비스 고유의 설정 트리를 구성합니다. 서비스마다 필드 구성이 다른 래퍼 구조체(예: `RateLimitConfig`, `ServiceRegistry`)는 각 서비스 config 파일에 정의합니다.
-- **예외**: retention entrypoint는 Postgres만 사용하므로 공유 `DBConfig` 대신 자체 `DBConfig`를 정의합니다.
 
 #### 환경 격리
 
@@ -590,8 +588,8 @@ deploy/k8s
 │   ├── mongo.yaml
 │   ├── redis.yaml
 │   ├── migrations.yaml
-│   ├── cronjobs.yaml
 │   ├── observability.yaml
+│   ├── swagger-ui.yaml
 │   └── ingress.yaml
 └── overlays
     ├── dev
@@ -666,6 +664,10 @@ K8s는 manifest를 한 번에 적용할 수 있지만, 이 시스템은 순서�
 
 이 선택의 트레이드오프는 책임 위치입니다. Kubernetes Service가 L4 부하분산을 대신 해주는 구조보다 클라이언트 설정이 더 중요해집니다. 대신 gRPC의 장기 HTTP/2 연결 특성을 고려해 backend별 subchannel을 만들고 RPC를 분배할 수 있어, 다중 user/chat replica에서 더 의도한 방식으로 분산됩니다.
 
+dev/test baseline에서는 CPU request와 CPU limit을 모두 두지 않습니다. 이 두 환경의 목적은 성능 튜닝이 아니라 각각 “로컬에서 앱을 쉽게 띄워 확인하는 것”과 “고정 replica 상태에서 기능 정합성을 검증하는 것”입니다. 여기서 CPU를 예약하면 작은 로컬 머신에서 스케줄링 장벽이 올라가고, CPU limit을 두면 throttling 때문에 테스트 지연이 실제 애플리케이션 병목처럼 보일 수 있습니다. 그래서 dev/test는 CPU를 클러스터가 공유하도록 두고, 성능 기준값은 만들지 않습니다.
+
+memory는 CPU와 다릅니다. 메모리는 압축 가능한 자원이 아니어서 한 Pod가 계속 늘어나면 노드 전체가 불안정해질 수 있습니다. 그래서 dev/test baseline에서도 memory request와 memory limit은 둡니다. request는 로컬 클러스터가 대략적인 메모리 예약량을 계산하게 하고, limit은 runaway allocation이나 observability stack의 예기치 않은 증가를 막는 안전장치입니다. CPU request, HPA target, 부하 중 throttling 여부 같은 운영성 값은 Phase 3의 `qa` overlay에서 멀티 노드/k6 관측 결과를 기준으로 별도 설정합니다.
+
 ### 4.4 Local Data Layer
 
 Postgres, Mongo, Redis도 dev/test baseline에서는 K8s 안에 띄웁니다. 다만 이들은 운영용 DB manifest가 아니라 K8s 실행 경로와 e2e를 독립적으로 검증하기 위한 local data layer입니다.
@@ -690,6 +692,8 @@ Ingress는 브라우저와 테스트 클라이언트가 접근하는 외부 경�
 | `/api` | `api-gateway` | REST API |
 | `/ws-api` | `ws-gateway` | WebSocket ticket 발급 등 HTTP API |
 | `/ws` | `ws-gateway` | WebSocket upgrade |
+| `/docs` | `swagger-ui` | OpenAPI 문서 UI |
+| `/grafana` | `grafana` | 로컬 관측 대시보드 |
 
 프론트엔드와 API를 같은 origin 아래에 두는 이유는 인증 쿠키 때문입니다. refresh token은 `HttpOnly` 쿠키로 전달되므로 cross-origin 구조로 만들면 CORS와 credential 정책을 추가로 설계해야 합니다. local K8s baseline에서는 Ingress path routing으로 same-origin을 유지해 인증 흐름을 단순하게 만듭니다.
 
@@ -709,28 +713,32 @@ user-service와 chat-service의 gRPC health는 DB 상태를 반영합니다. 이
 
 WebSocket Service는 더 조심해야 합니다. 연결 중인 세션과 영속화 중인 메시지가 있기 때문에 Pod가 종료될 때 바로 끊으면 in-flight 메시지가 손실될 수 있습니다. 앱 내부의 graceful drain이 이미 fan-out한 메시지의 저장 ack를 기다리도록 설계되어 있으므로, K8s Deployment에는 `terminationGracePeriodSeconds`를 주어 이 drain이 끝날 시간을 확보합니다.
 
-### 4.7 CronJob과 Job
+### 4.7 Job/CronJob 판단 기준
 
-K8s에서는 serving process와 batch process를 분리합니다. Deployment replica가 2개면 그 안의 background goroutine도 2번 실행됩니다. 그래서 주기적으로 한 번만 실행되어야 하는 작업은 Deployment 내부 루프가 아니라 Job/CronJob으로 빼야 합니다.
+K8s에서는 serving process와 batch process를 분리하는 것이 기본 원칙입니다. Deployment replica가 2개면 그 안의 background goroutine도 2번 실행되기 때문에, 주기적으로 한 번만 실행되어야 하는 작업은 Deployment 내부 루프가 아니라 Job/CronJob으로 빼야 합니다.
 
-현재 남아 있는 주기 batch는 retention입니다.
+다만 이번 설계에서는 “CronJob을 어떻게 만들까”보다 “정말 CronJob이 필요한가”를 먼저 다시 봤습니다.
 
-| Job | 책임 | 현재 상태 |
+| 후보 작업 | 최종 판단 | 이유 |
 | :--- | :--- | :--- |
-| `retention-job` | soft-deleted rooms/users hard delete | CronJob manifest 유지, 수동 one-shot smoke 검증 |
+| refresh token 만료 정리 | 제거 | refresh token source of truth를 Redis TTL로 옮겨 만료 cleanup을 Redis가 담당 |
+| 탈퇴 사용자/삭제 방 retention purge | 제거 | 기본 정책을 hard delete로 단순화하여 별도 보관 기간과 purge 대상이 사라짐 |
 
-`retention-job` CronJob은 manifest에 존재하지만 dev/test baseline에서는 `suspend: true`로 둡니다. 실제 schedule 정책, concurrencyPolicy, history limit, alerting은 운영성 판단이 필요한 영역이므로 Phase 3로 미룹니다. 대신 `deploy/k8s/scripts/retention-cronjob-smoke.sh`가 `kubectl create job --from=cronjob/retention-job retention-job-smoke` 방식으로 CronJob template을 실제 one-shot Job으로 실행해 wiring을 검증합니다.
-
-Refresh token purge CronJob은 제거했습니다. refresh token을 Redis TTL로 옮기면서 만료 cleanup은 Redis가 담당하므로 별도 purge job이 필요하지 않습니다. 이 변화는 “K8s에 맞춰 CronJob을 잘 만드는 것”보다 “애초에 CronJob이 필요 없는 설계인지 다시 보는 것”이 더 중요하다는 교훈이었습니다.
-
-retention CronJob smoke 흐름은 [retention CronJob smoke 시퀀스](diagrams/seq-retention-cronjob.mmd)로 정리했습니다.
+현재 dev/test K8s overlay에는 애플리케이션 CronJob이 없습니다. 이후 감사 로그, 법적 보관, 휴면 데이터 삭제처럼 실제 배치 요구가 생기면 그때 one-shot command, CronJob manifest, concurrency policy, retry/backoff, 관측 지표를 함께 설계합니다. 이 결정은 “K8s 기능을 보여주기 위해 리소스를 남기는 것”보다 “현재 요구에 맞는 단순한 운영 모델을 유지하는 것”을 우선한 결과입니다.
 
 ### 4.8 E2E 실행 기준
 
 Docker Compose 실행 경로는 mainline에서 제거했습니다. 현재 e2e는 K8s `test` overlay가 이미 bootstrap되어 있다는 전제로 실행됩니다.
 
 ```bash
-go test -count=1 -tags e2e ./test/e2e
+make test-up
+go test -count=1 -tags=e2e ./test/e2e
+```
+
+통합 테스트까지 함께 확인할 때는 같은 `go test` 명령에 build tag를 같이 넘깁니다.
+
+```bash
+go test -count=1 -tags=integration,e2e ./...
 ```
 
 기본 endpoint는 다음입니다.
@@ -747,7 +755,7 @@ E2E cleanup에서는 Redis `FLUSHALL`을 사용하지 않습니다. Redis에는 
 
 ### 4.9 Docker Compose 제거와 기준점 보존
 
-Docker Compose는 더 이상 mainline의 실행 경로가 아닙니다. 개발 smoke, e2e, retention smoke 모두 K8s 기준으로 정리했습니다. 다만 Docker 자체는 계속 사용합니다. 로컬 이미지를 빌드하고 kind/OrbStack/K8s 클러스터에 이미지를 제공하기 위해 Dockerfile은 여전히 필요합니다.
+Docker Compose는 더 이상 mainline의 실행 경로가 아닙니다. 개발 확인과 e2e 모두 K8s 기준으로 정리했습니다. 다만 Docker 자체는 계속 사용합니다. 로컬 이미지를 빌드하고 kind/OrbStack/K8s 클러스터에 이미지를 제공하기 위해 Dockerfile은 여전히 필요합니다.
 
 Compose 제거 전에 `legacy-compose-baseline` annotated tag를 남겼습니다. Phase 3에서 “Compose 대비 K8s 성능 지표”를 비교하고 싶을 때, mainline에 Compose 파일을 계속 들고 갈 필요 없이 해당 tag를 기준점으로 참조할 수 있습니다.
 

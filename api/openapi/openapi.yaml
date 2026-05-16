@@ -82,7 +82,7 @@ paths:
       tags:
         - User
       summary: 사용자 일괄 조회
-      description: 채팅 메시지 작성자 표시 등을 위해 user_id 목록으로 활성 사용자 정보를 조회합니다. 탈퇴(soft/hard delete)된 사용자는 응답에서 제외됩니다. 한 요청당 최대 100개.
+      description: 채팅 메시지 작성자 표시 등을 위해 user_id 목록으로 사용자 정보를 조회합니다. 삭제된 사용자는 응답에서 제외됩니다. 한 요청당 최대 100개.
       operationId: batchGetUsers
       security:
         - bearerAuth: []
@@ -194,7 +194,7 @@ paths:
       tags:
         - Auth
       summary: 회원탈퇴
-      description: 본인 인증을 위해 비밀번호를 함께 받아 검증한 뒤 사용자 계정을 즉시 비활성화(soft delete)하고 모든 Refresh Token을 폐기합니다. 30일 grace 기간 동안 동일 username 재가입은 차단되며, 이후 retention job이 영구 삭제합니다.
+      description: 본인 인증을 위해 비밀번호를 함께 받아 검증한 뒤 사용자 계정을 즉시 삭제하고 모든 Refresh Token을 폐기합니다. 삭제 후 동일 username은 즉시 다시 사용할 수 있습니다.
       operationId: deleteUser
       security:
         - bearerAuth: []
@@ -352,7 +352,7 @@ paths:
       tags:
         - Room
       summary: 채팅방 삭제
-      description: 방장만 호출 가능하며, 채팅방을 삭제(Soft Delete)하고 해당 방의 모든 웹소켓 연결을 강제 종료합니다.
+      description: 방장만 호출 가능하며, 채팅방을 삭제하고 해당 방의 모든 웹소켓 연결을 강제 종료합니다.
       operationId: deleteRoom
       security:
         - bearerAuth: []

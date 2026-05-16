@@ -12,6 +12,7 @@ flowchart TB
         subgraph Edge ["Edge Deployments"]
             direction LR
             FE["Frontend Deployment<br/>replicas: dev/test=1"]
+            Docs["Swagger UI Deployment<br/>OpenAPI docs"]
             WSGW["WS Gateway Deployment<br/>replicas: dev=1, test=2"]
             AGW["API Gateway Deployment<br/>replicas: dev=1, test=2"]
 
@@ -23,10 +24,6 @@ flowchart TB
             WSS["WebSocket Service Deployment<br/>replicas: dev=1, test=2<br/>qa: HPA planned"]
             US["User Service Deployment<br/>Headless Service<br/>replicas: dev=1, test=2"]
             CS["Chat Service Deployment<br/>Headless Service<br/>replicas: dev=1, test=2"]
-        end
-
-        subgraph Jobs ["Batch Layer"]
-            RJ["retention-job CronJob<br/>suspend=true<br/>manual smoke Job"]
         end
 
         subgraph Data ["Local Data Layer"]
@@ -56,6 +53,8 @@ flowchart TB
     Ingress == "/" ==> FE
     Ingress == "/api" ==> AGW
     Ingress == "/ws-api, /ws" ==> WSGW
+    Ingress == "/docs" ==> Docs
+    Ingress == "/grafana" ==> Grafana
 
     WSGW -- "L7 Proxy<br/>room_id hashing" --> WSS
 
@@ -70,7 +69,6 @@ flowchart TB
     AGW --> RD
     WSGW --> RD
     WSS --> RD
-    RJ -- "Purge once" --> PG
 
     Alloy -. "pull: pod logs" .-> AGW
     Alloy -. "pull: pod logs" .-> WSGW
@@ -78,5 +76,5 @@ flowchart TB
     Alloy -. "pull: pod logs" .-> US
     Alloy -. "pull: pod logs" .-> CS
 
-    AGW & WSGW & WSS & US & CS & RJ -. "push: traces, metrics" .-> Alloy
+    AGW & WSGW & WSS & US & CS -. "push: traces, metrics" .-> Alloy
     AGW & WSGW & WSS & US & CS -. "push: profiles" .-> Pyroscope

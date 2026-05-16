@@ -14,7 +14,7 @@ flowchart TB
     MigrationJob["6. migration Job 재생성<br/>postgres-migrate · mongo-migrate"]
     MigrationWait{"7. migration 완료?"}
 
-    Apps["8. apps apply<br/>Deployment · Service · Ingress · CronJob"]
+    Apps["8. apps apply<br/>Deployment · Service · Ingress"]
     AppWait["9. app rollout/readiness smoke<br/>/health · /ready · gRPC health"]
     Done([K8s dev/test baseline ready])
 
@@ -24,5 +24,3 @@ flowchart TB
     ObsWait --> MigrationCM --> MigrationJob --> MigrationWait
     MigrationWait -- "yes" --> Apps --> AppWait --> Done
     MigrationWait -- "no" --> Fail
-
-    AppWait -. "retention smoke는 별도 실행" .-> Retention["retention-cronjob-smoke.sh<br/>CronJob template로 one-shot Job 생성"]
