@@ -88,6 +88,10 @@ create_migration_configmaps() {
   create_configmap_from_dir mongo-migrations "${REPO_ROOT}/db/migrations/mongo"
 }
 
+create_app_configmaps() {
+  create_configmap_from_file openapi-spec openapi.yaml "${REPO_ROOT}/api/openapi/openapi.yaml"
+}
+
 delete_previous_migration_jobs() {
   log "deleting previous migration jobs"
   kubectl -n "${NAMESPACE}" delete job postgres-migrate mongo-migrate --ignore-not-found=true
@@ -119,7 +123,8 @@ restart_edge_apps() {
   kubectl -n "${NAMESPACE}" rollout restart \
     deployment/api-gateway \
     deployment/ws-gateway \
-    deployment/frontend
+    deployment/frontend \
+    deployment/swagger-ui
 }
 
 main() {
@@ -144,14 +149,17 @@ main() {
   wait_job_complete postgres-migrate
   wait_job_complete mongo-migrate
 
+  create_app_configmaps
   apply_kustomize "${OVERLAY_DIR}/apps"
   restart_backend_apps
   wait_rollout user-service chat-service websocket-service
   restart_edge_apps
-  wait_rollout api-gateway ws-gateway frontend
+  wait_rollout api-gateway ws-gateway frontend swagger-ui
 
   log "${K8S_ENV} Kubernetes bootstrap completed"
-  log "Grafana: kubectl -n ${NAMESPACE} port-forward svc/grafana 3000:3000"
+  log "Frontend: http://localhost:30080/"
+  log "OpenAPI: http://localhost:30080/docs/"
+  log "Grafana: http://localhost:30080/grafana/"
 }
 
 main "$@"

@@ -12,8 +12,6 @@ help:
 	@printf 'Targets:\n'
 	@printf '  make dev-up          Create kind cluster, build/load dev images, bootstrap dev overlay\n'
 	@printf '  make test-up         Create kind cluster, build/load test images, bootstrap test overlay\n'
-	@printf '  make e2e             Run K8s e2e test suite against test overlay\n'
-	@printf '  make grafana-dev     Port-forward dev Grafana to http://localhost:3000\n'
 	@printf '  make dev-down        Delete dev namespace\n'
 	@printf '  make test-down       Delete test namespace\n'
 	@printf '  make kind-delete     Delete local kind cluster\n'
@@ -66,22 +64,12 @@ dev-up: kind-up build-load-dev-images
 	@printf '\nFrontend: http://localhost:30080/\n'
 	@printf 'API health: http://localhost:30080/api/health\n'
 	@printf 'WS health:  http://localhost:30080/ws-api/health\n'
+	@printf 'OpenAPI:    http://localhost:30080/docs/\n'
+	@printf 'Grafana:    http://localhost:30080/grafana/\n'
 
 .PHONY: test-up
 test-up: kind-up build-load-test-images
 	@K8S_ENV=test NAMESPACE=go-chat-test KUBECTL_TIMEOUT='$(KUBECTL_TIMEOUT)' bash deploy/k8s/scripts/bootstrap.sh
-
-.PHONY: e2e
-e2e:
-	go test -count=1 -tags e2e ./test/e2e
-
-.PHONY: grafana-dev
-grafana-dev:
-	kubectl -n go-chat-dev port-forward svc/grafana 3000:3000
-
-.PHONY: grafana-test
-grafana-test:
-	kubectl -n go-chat-test port-forward svc/grafana 3000:3000
 
 .PHONY: dev-down
 dev-down:

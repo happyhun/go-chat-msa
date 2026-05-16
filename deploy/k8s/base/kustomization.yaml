@@ -16,4 +16,5 @@ resources:
   - websocket-service.yaml
   - ws-gateway.yaml
   - frontend.yaml
+  - swagger-ui.yaml
   - ingress.yaml
