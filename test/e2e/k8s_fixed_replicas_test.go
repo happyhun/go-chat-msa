@@ -12,9 +12,6 @@ import (
 )
 
 func (s *E2ESuite) TestScenario_14_K8s_FixedReplicasReadinessAndMembership() {
-	if !s.isKubernetes() {
-		s.T().Skip("K8s fixed replica scenario")
-	}
 	ctx := s.T().Context()
 
 	for _, name := range []string{"api-gateway", "ws-gateway", "websocket-service", "user-service", "chat-service"} {
@@ -27,9 +24,6 @@ func (s *E2ESuite) TestScenario_14_K8s_FixedReplicasReadinessAndMembership() {
 }
 
 func (s *E2ESuite) TestScenario_15_K8s_RoomSequenceIsStrictlyIncreasing() {
-	if !s.isKubernetes() {
-		s.T().Skip("K8s fixed replica scenario")
-	}
 	ctx := s.T().Context()
 
 	alice := s.generateUniqueUsername("sa")
@@ -75,9 +69,6 @@ func (s *E2ESuite) TestScenario_15_K8s_RoomSequenceIsStrictlyIncreasing() {
 }
 
 func (s *E2ESuite) TestScenario_16_K8s_ReconnectCatchUpFromDatabaseHistory() {
-	if !s.isKubernetes() {
-		s.T().Skip("K8s fixed replica scenario")
-	}
 	ctx := s.T().Context()
 
 	alice := s.generateUniqueUsername("ka")

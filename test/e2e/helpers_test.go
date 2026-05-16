@@ -14,9 +14,6 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/jackc/pgx/v5"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 const (
@@ -34,50 +31,7 @@ func (e *HTTPError) Error() string {
 }
 
 func (s *E2ESuite) cleanupDatabases(ctx context.Context) {
-	if s.isKubernetes() {
-		s.cleanupKubernetesDatabases(ctx)
-		return
-	}
-	s.cleanupPostgres(ctx)
-	s.cleanupMongo(ctx)
-}
-
-func (s *E2ESuite) cleanupPostgres(ctx context.Context) {
-	connStr, err := s.postgres.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		s.T().Logf("cleanup: postgres connection string error: %v", err)
-		return
-	}
-
-	conn, err := pgx.Connect(ctx, connStr)
-	if err != nil {
-		s.T().Logf("cleanup: postgres connect error: %v", err)
-		return
-	}
-	defer conn.Close(ctx)
-
-	if _, err = conn.Exec(ctx, "TRUNCATE TABLE users, rooms, room_members RESTART IDENTITY CASCADE;"); err != nil {
-		s.T().Logf("cleanup: postgres truncate error: %v", err)
-	}
-}
-
-func (s *E2ESuite) cleanupMongo(ctx context.Context) {
-	endpoint, err := s.mongo.ConnectionString(ctx)
-	if err != nil {
-		s.T().Logf("cleanup: mongo connection string error: %v", err)
-		return
-	}
-
-	client, err := mongo.Connect(ctx, options.Client().ApplyURI(endpoint))
-	if err != nil {
-		s.T().Logf("cleanup: mongo connect error: %v", err)
-		return
-	}
-	defer client.Disconnect(ctx)
-
-	if err = client.Database("chat_service").Drop(ctx); err != nil {
-		s.T().Logf("cleanup: mongo drop error: %v", err)
-	}
+	s.cleanupKubernetesDatabases(ctx)
 }
 
 func (s *E2ESuite) signUp(ctx context.Context, username, password string) error {
