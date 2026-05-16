@@ -1,6 +1,12 @@
 apiVersion: v1
 kind: Service
 metadata:
+  name: swagger-ui
+$patch: delete
+---
+apiVersion: v1
+kind: Service
+metadata:
   name: api-gateway
 $patch: delete
 ---
@@ -109,6 +115,12 @@ $patch: delete
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+  name: swagger-ui
+$patch: delete
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
   name: api-gateway
 $patch: delete
 ---
@@ -196,10 +208,10 @@ metadata:
   name: ws-gateway
 $patch: delete
 ---
-apiVersion: batch/v1
-kind: CronJob
+apiVersion: networking.k8s.io/v1
+kind: Ingress
 metadata:
-  name: retention-job
+  name: swagger-ui
 $patch: delete
 ---
 apiVersion: networking.k8s.io/v1
@@ -212,6 +224,12 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: frontend
+$patch: delete
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grafana
 $patch: delete
 ---
 apiVersion: networking.k8s.io/v1

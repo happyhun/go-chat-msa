@@ -5,7 +5,7 @@ KIND_CLUSTER ?= go-chat
 KIND_CONFIG ?= deploy/k8s/clusters/kind-dev.yaml
 KUBECTL_TIMEOUT ?= 180s
 
-GO_SERVICES := api-gateway ws-gateway websocket-service user-service chat-service retention-job
+GO_SERVICES := api-gateway ws-gateway websocket-service user-service chat-service
 
 .PHONY: help
 help:
@@ -13,7 +13,6 @@ help:
 	@printf '  make dev-up          Create kind cluster, build/load dev images, bootstrap dev overlay\n'
 	@printf '  make test-up         Create kind cluster, build/load test images, bootstrap test overlay\n'
 	@printf '  make e2e             Run K8s e2e test suite against test overlay\n'
-	@printf '  make retention-smoke Run retention CronJob one-shot smoke in test namespace\n'
 	@printf '  make grafana-dev     Port-forward dev Grafana to http://localhost:3000\n'
 	@printf '  make dev-down        Delete dev namespace\n'
 	@printf '  make test-down       Delete test namespace\n'
@@ -75,10 +74,6 @@ test-up: kind-up build-load-test-images
 .PHONY: e2e
 e2e:
 	go test -count=1 -tags e2e ./test/e2e
-
-.PHONY: retention-smoke
-retention-smoke:
-	NAMESPACE=go-chat-test bash deploy/k8s/scripts/retention-cronjob-smoke.sh
 
 .PHONY: grafana-dev
 grafana-dev:

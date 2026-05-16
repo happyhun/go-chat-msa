@@ -22,8 +22,6 @@ images:
     newTag: dev
   - name: go-chat-msa/frontend
     newTag: dev
-  - name: go-chat-msa/retention-job
-    newTag: dev
 
 labels:
   - includeSelectors: true

@@ -16,5 +16,4 @@ resources:
   - websocket-service.yaml
   - ws-gateway.yaml
   - frontend.yaml
-  - cronjobs.yaml
   - ingress.yaml

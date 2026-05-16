@@ -26,8 +26,6 @@ images:
     newTag: test
   - name: go-chat-msa/frontend
     newTag: test
-  - name: go-chat-msa/retention-job
-    newTag: test
 
 labels:
   - includeSelectors: true
