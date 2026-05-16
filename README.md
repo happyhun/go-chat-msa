@@ -51,7 +51,7 @@ MSA 구조로 REST, gRPC, WebSocket 서비스를 분리했고, Kubernetes dev/te
 권장 로컬 사양은 CPU 4코어, 메모리 8GB 이상입니다. `dev`와 `test`를 동시에 띄우거나 e2e를 반복 실행할 경우 메모리 16GB 이상이 안정적입니다.
 
 > [!NOTE]
-> `kind`는 운영용 클러스터가 아니라 로컬에서 Kubernetes manifest, Ingress, Job/CronJob, e2e 흐름을 재현하기 위한 개발 및 검증 환경입니다.
+> `kind`는 운영용 클러스터가 아니라 로컬에서 Kubernetes manifest, Ingress, migration Job, e2e 흐름을 재현하기 위한 개발 및 검증 환경입니다.
 
 ### 앱 실행
 
@@ -74,11 +74,11 @@ Ingress는 kind host port `30080`으로 노출됩니다. 실행이 끝나면 브
 
 | 서비스 | URL |
 |:---|:---|
-| 프론트엔드 | http://localhost:30080/ |
-| API Gateway health | http://localhost:30080/api/health |
-| WS Gateway health | http://localhost:30080/ws-api/health |
-| Grafana | http://localhost:30080/grafana/ |
-| OpenAPI 문서 | http://localhost:30080/docs/ |
+| 프론트엔드 | http://dev.gochat.localhost:30080/ |
+| API Gateway health | http://dev.gochat.localhost:30080/api/health |
+| WS Gateway health | http://dev.gochat.localhost:30080/ws-api/health |
+| Grafana | http://dev.gochat.localhost:30080/grafana/ |
+| OpenAPI 문서 | http://dev.gochat.localhost:30080/docs/ |
 
 ### E2E 테스트
 

@@ -44,8 +44,8 @@ func (s *E2ESuite) TearDownTest() {
 
 func (s *E2ESuite) startKubernetes(ctx context.Context) {
 	s.namespace = getenvDefault("E2E_K8S_NAMESPACE", "go-chat-test")
-	s.gatewayBaseURL = strings.TrimRight(getenvDefault("E2E_GATEWAY_BASE_URL", "http://localhost:30080/api"), "/")
-	s.wsBaseURL = strings.TrimRight(getenvDefault("E2E_WS_BASE_URL", "http://localhost:30080/ws-api"), "/")
+	s.gatewayBaseURL = strings.TrimRight(getenvDefault("E2E_GATEWAY_BASE_URL", "http://test.gochat.localhost:30080/api"), "/")
+	s.wsBaseURL = strings.TrimRight(getenvDefault("E2E_WS_BASE_URL", "http://test.gochat.localhost:30080/ws-api"), "/")
 
 	s.Require().NoError(s.runKubectl(ctx, "get", "namespace", s.namespace))
 	for _, deployment := range []string{
@@ -91,6 +91,31 @@ func (s *E2ESuite) cleanupKubernetesDatabases(ctx context.Context) {
 	); err != nil {
 		s.T().Logf("cleanup: k8s mongo drop error: %v", err)
 	}
+
+	s.cleanupKubernetesRedis(ctx)
+}
+
+func (s *E2ESuite) cleanupKubernetesRedis(ctx context.Context) {
+	for _, pattern := range []string{
+		"auth:rt:*",
+		"ws:ticket:*",
+		"rate:*",
+	} {
+		keys, err := s.redisKeysE(ctx, pattern)
+		if err != nil {
+			s.T().Logf("cleanup: k8s redis scan error for %q: %v", pattern, err)
+			continue
+		}
+		if len(keys) == 0 {
+			continue
+		}
+
+		args := []string{"-n", s.namespace, "exec", "deployment/redis", "--", "redis-cli", "DEL"}
+		args = append(args, keys...)
+		if err := s.runKubectl(ctx, args...); err != nil {
+			s.T().Logf("cleanup: k8s redis delete error for %q: %v", pattern, err)
+		}
+	}
 }
 
 func (s *E2ESuite) requireDeploymentReadyReplicas(ctx context.Context, name string, expected int) {
@@ -102,12 +127,20 @@ func (s *E2ESuite) requireDeploymentReadyReplicas(ctx context.Context, name stri
 }
 
 func (s *E2ESuite) redisKeys(ctx context.Context, pattern string) []string {
+	keys, err := s.redisKeysE(ctx, pattern)
+	s.Require().NoError(err)
+	return keys
+}
+
+func (s *E2ESuite) redisKeysE(ctx context.Context, pattern string) ([]string, error) {
 	out, err := s.kubectlOutput(ctx, "-n", s.namespace, "exec", "deployment/redis", "--",
 		"redis-cli", "--raw", "KEYS", pattern,
 	)
-	s.Require().NoError(err)
-	if strings.TrimSpace(out) == "" {
-		return nil
+	if err != nil {
+		return nil, err
 	}
-	return strings.Fields(out)
+	if strings.TrimSpace(out) == "" {
+		return nil, nil
+	}
+	return strings.Fields(out), nil
 }

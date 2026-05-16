@@ -695,6 +695,8 @@ Ingress는 브라우저와 테스트 클라이언트가 접근하는 외부 경�
 | `/docs` | `swagger-ui` | OpenAPI 문서 UI |
 | `/grafana` | `grafana` | 로컬 관측 대시보드 |
 
+같은 kind 클러스터에 `dev`와 `test` namespace를 동시에 띄울 수 있으므로, Ingress는 overlay에서 host를 분리합니다. `dev`는 `dev.gochat.localhost:30080`, `test`는 `test.gochat.localhost:30080`을 사용합니다. namespace만 다르고 host/path가 같으면 ingress-nginx 입장에서는 외부 라우팅 규칙이 충돌할 수 있기 때문에, 환경 경계는 namespace와 Ingress host를 함께 사용해 나눕니다.
+
 프론트엔드와 API를 같은 origin 아래에 두는 이유는 인증 쿠키 때문입니다. refresh token은 `HttpOnly` 쿠키로 전달되므로 cross-origin 구조로 만들면 CORS와 credential 정책을 추가로 설계해야 합니다. local K8s baseline에서는 Ingress path routing으로 same-origin을 유지해 인증 흐름을 단순하게 만듭니다.
 
 WebSocket 경로는 일반 HTTP와 달리 upgrade 연결이 길게 유지됩니다. 그래서 Ingress에는 WebSocket timeout 관련 nginx annotation을 명시합니다. 짧은 기본 timeout에 의해 정상 채팅 연결이 끊기는 문제를 피하기 위한 설정입니다.
@@ -741,17 +743,17 @@ go test -count=1 -tags=e2e ./test/e2e
 go test -count=1 -tags=integration,e2e ./...
 ```
 
-기본 endpoint는 다음입니다.
+기본 endpoint는 다음입니다. 이 값은 사람이 브라우저로 접속하라고 노출하는 URL이 아니라, 클러스터 밖에서 실행되는 Go e2e runner가 Ingress를 통해 실제 HTTP/WebSocket 경로를 검증하기 위한 테스트 대상입니다.
 
 | 환경변수 | 기본값 | 용도 |
 | :--- | :--- | :--- |
-| `E2E_GATEWAY_BASE_URL` | `http://localhost:30080/api` | REST API |
-| `E2E_WS_BASE_URL` | `http://localhost:30080/ws-api` | WebSocket ticket/API |
+| `E2E_GATEWAY_BASE_URL` | `http://test.gochat.localhost:30080/api` | REST API |
+| `E2E_WS_BASE_URL` | `http://test.gochat.localhost:30080/ws-api` | WebSocket ticket/API |
 | `E2E_K8S_NAMESPACE` | `go-chat-test` | readiness/replica/membership 검증 대상 |
 
 `test` overlay는 api-gateway, ws-gateway, websocket-service, user-service, chat-service를 `replicas: 2`로 고정합니다. HPA를 바로 붙이지 않은 이유는 변수가 너무 많아지기 때문입니다. 먼저 “같은 코드가 두 개 떠도 정합성이 깨지지 않는가”를 고정 replica로 확인해야 합니다. 그 다음에야 HPA, node drain, k6 부하처럼 동적인 조건을 얹을 수 있습니다.
 
-E2E cleanup에서는 Redis `FLUSHALL`을 사용하지 않습니다. Redis에는 테스트 데이터뿐 아니라 WebSocket Service membership과 hash ring 검증 대상도 들어 있습니다. 전체 flush를 해버리면 테스트가 검증해야 할 control plane 상태를 스스로 지우는 셈입니다. 대신 Postgres/Mongo 데이터는 테스트 전용 데이터 정리로 격리하고, Redis는 TTL과 unique test data로 오염을 줄입니다.
+E2E cleanup에서는 Redis `FLUSHALL`을 사용하지 않습니다. Redis에는 테스트 데이터뿐 아니라 WebSocket Service membership과 hash ring 검증 대상도 들어 있습니다. 전체 flush를 해버리면 테스트가 검증해야 할 control plane 상태를 스스로 지우는 셈입니다. 대신 Postgres/Mongo 데이터는 테스트 전용 데이터 정리로 격리하고, Redis는 `auth:rt:*`, `ws:ticket:*`, `rate:*`처럼 테스트 요청이 만든 상태성 key만 선택적으로 삭제합니다. `wss:member:*` membership key는 검증 대상이므로 보존합니다.
 
 ### 4.9 Docker Compose 제거와 기준점 보존
 
