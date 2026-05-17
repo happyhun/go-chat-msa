@@ -18,8 +18,8 @@ Grafana Full Stack 기반 관측성 구성. Profiles를 제외한 시그널은 G
 
 | 시그널 | 백엔드 | 수집 방식 | 주기 | 보존 |
 |--------|--------|-----------|------|------|
-| Logs | Loki | Alloy가 Docker API로 컨테이너 로그 스트리밍 수신 → Loki HTTP push | 1s (Alloy 기본값) | 7일 |
-| Metrics | Prometheus | OTel SDK가 Alloy로 OTLP HTTP push → Alloy가 Prometheus remote write | 15s | 7일 |
+| Logs | Loki | K8s: Alloy가 Pod log 수집 → Loki HTTP push. Legacy compose: Docker API 로그 수집 | 1s (Alloy 기본값) | 7일 |
+| Metrics | Prometheus | OTel SDK OTLP push + Alloy의 kube-state-metrics/cAdvisor scrape → Prometheus remote write | 15s | 7일 |
 | Traces | Tempo | SDK가 Alloy로 OTLP HTTP push → Alloy가 Tempo로 OTLP HTTP push | 5s (SDK 기본값) | 7일 |
 | Profiles | Pyroscope | SDK가 Pyroscope로 HTTP push | 15s (SDK 기본값) | 7일 |
 
@@ -250,112 +250,31 @@ OTel resource에는 공통으로 `service.name`과 `service.instance.id`가 들�
 |--------|------|------|--------|
 | gochat_build_info | gauge | goversion, vcs_revision, vcs_time, vcs_modified | 전체 |
 | gochat_panic_recovered_total | counter | - | 앱 서비스 |
-| container_cpu_usage_seconds_total | counter | service, cpu | cAdvisor |
-| container_memory_rss | gauge | service | cAdvisor |
+| container_cpu_usage_seconds_total | counter | namespace, pod, container, node | K8s cAdvisor |
+| container_memory_working_set_bytes | gauge | namespace, pod, container, node | K8s cAdvisor |
+| kube_pod_info | gauge | namespace, pod, node | kube-state-metrics |
+| kube_pod_container_status_restarts_total | counter | namespace, pod, container | kube-state-metrics |
+| kube_deployment_status_replicas_ready | gauge | namespace, deployment | kube-state-metrics |
+| kube_horizontalpodautoscaler_status_current_replicas | gauge | namespace, horizontalpodautoscaler | kube-state-metrics |
 
 ### Go Runtime
 
-- 수집 규칙: `GoRuntimeMetricsRule` regexp `/gc/`, `/sched/`, `/memory/classes/` + 기본 Go collector
+- 수집 규칙: `go.opentelemetry.io/contrib/instrumentation/runtime v0.67.0`
 - 서비스: 전체
+- 기본값에서는 deprecated runtime metric을 켜지 않는다. 따라서 dashboard는 OTel semantic metric 이름을 Prometheus 변환 형태로 사용한다.
 
-#### GC
+#### Runtime
 
-| 메트릭 | 타입 |
-|--------|------|
-| go_gc_duration_seconds | summary |
-| go_gc_pauses_seconds | histogram |
-| go_gc_cycles_automatic_gc_cycles_total | counter |
-| go_gc_cycles_forced_gc_cycles_total | counter |
-| go_gc_cycles_total_gc_cycles_total | counter |
-| go_gc_heap_allocs_by_size_bytes | histogram |
-| go_gc_heap_allocs_bytes_total | counter |
-| go_gc_heap_allocs_objects_total | counter |
-| go_gc_heap_frees_by_size_bytes | histogram |
-| go_gc_heap_frees_bytes_total | counter |
-| go_gc_heap_frees_objects_total | counter |
-| go_gc_heap_goal_bytes | gauge |
-| go_gc_heap_live_bytes | gauge |
-| go_gc_heap_objects_objects | gauge |
-| go_gc_heap_tiny_allocs_objects_total | counter |
-| go_gc_gogc_percent | gauge |
-| go_gc_gomemlimit_bytes | gauge |
-| go_gc_limiter_last_enabled_gc_cycle | gauge |
-| go_gc_scan_globals_bytes | gauge |
-| go_gc_scan_heap_bytes | gauge |
-| go_gc_scan_stack_bytes | gauge |
-| go_gc_scan_total_bytes | gauge |
-| go_gc_stack_starting_size_bytes | gauge |
-| go_gc_cleanups_executed_cleanups_total | counter |
-| go_gc_cleanups_queued_cleanups_total | counter |
-| go_gc_finalizers_executed_finalizers_total | counter |
-| go_gc_finalizers_queued_finalizers_total | counter |
-
-#### Scheduler
-
-| 메트릭 | 타입 |
-|--------|------|
-| go_goroutines | gauge |
-| go_threads | gauge |
-| go_sched_gomaxprocs_threads | gauge |
-| go_sched_goroutines_goroutines | gauge |
-| go_sched_goroutines_created_goroutines_total | counter |
-| go_sched_goroutines_runnable_goroutines | gauge |
-| go_sched_goroutines_running_goroutines | gauge |
-| go_sched_goroutines_waiting_goroutines | gauge |
-| go_sched_goroutines_not_in_go_goroutines | gauge |
-| go_sched_latencies_seconds | histogram |
-| go_sched_pauses_stopping_gc_seconds | histogram |
-| go_sched_pauses_stopping_other_seconds | histogram |
-| go_sched_pauses_total_gc_seconds | histogram |
-| go_sched_pauses_total_other_seconds | histogram |
-| go_sched_threads_total_threads | gauge |
-
-#### Memory
-
-| 메트릭 | 타입 |
-|--------|------|
-| go_memstats_alloc_bytes | gauge |
-| go_memstats_alloc_bytes_total | counter |
-| go_memstats_sys_bytes | gauge |
-| go_memstats_heap_alloc_bytes | gauge |
-| go_memstats_heap_idle_bytes | gauge |
-| go_memstats_heap_inuse_bytes | gauge |
-| go_memstats_heap_objects | gauge |
-| go_memstats_heap_released_bytes | gauge |
-| go_memstats_heap_sys_bytes | gauge |
-| go_memstats_stack_inuse_bytes | gauge |
-| go_memstats_stack_sys_bytes | gauge |
-| go_memstats_mspan_inuse_bytes | gauge |
-| go_memstats_mspan_sys_bytes | gauge |
-| go_memstats_mcache_inuse_bytes | gauge |
-| go_memstats_mcache_sys_bytes | gauge |
-| go_memstats_buck_hash_sys_bytes | gauge |
-| go_memstats_gc_sys_bytes | gauge |
-| go_memstats_other_sys_bytes | gauge |
-| go_memstats_next_gc_bytes | gauge |
-| go_memstats_last_gc_time_seconds | gauge |
-| go_memstats_mallocs_total | counter |
-| go_memstats_frees_total | counter |
-| go_memory_classes_total_bytes | gauge |
-| go_memory_classes_heap_free_bytes | gauge |
-| go_memory_classes_heap_objects_bytes | gauge |
-| go_memory_classes_heap_released_bytes | gauge |
-| go_memory_classes_heap_stacks_bytes | gauge |
-| go_memory_classes_heap_unused_bytes | gauge |
-| go_memory_classes_metadata_mcache_free_bytes | gauge |
-| go_memory_classes_metadata_mcache_inuse_bytes | gauge |
-| go_memory_classes_metadata_mspan_free_bytes | gauge |
-| go_memory_classes_metadata_mspan_inuse_bytes | gauge |
-| go_memory_classes_metadata_other_bytes | gauge |
-| go_memory_classes_os_stacks_bytes | gauge |
-| go_memory_classes_other_bytes | gauge |
-| go_memory_classes_profiling_buckets_bytes | gauge |
-
-#### Other
-
-| 메트릭 | 타입 |
-|--------|------|
-| go_info | gauge |
+| 메트릭 | 타입 | 라벨 |
+|--------|------|------|
+| go_goroutine_count | updowncounter | namespace, service, pod, node, component |
+| go_processor_limit | updowncounter | namespace, service, pod, node, component |
+| go_config_gogc | updowncounter | namespace, service, pod, node, component |
+| go_memory_used | updowncounter | namespace, service, pod, node, component, go_memory_type |
+| go_memory_limit | updowncounter | namespace, service, pod, node, component |
+| go_memory_allocated_total | counter | namespace, service, pod, node, component |
+| go_memory_allocations_total | counter | namespace, service, pod, node, component |
+| go_memory_gc_goal | updowncounter | namespace, service, pod, node, component |
 
 ---
 
