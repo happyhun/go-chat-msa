@@ -142,7 +142,7 @@ main() {
 
   create_observability_configmaps
   apply_kustomize "${OVERLAY_DIR}/observability"
-  wait_rollout prometheus loki tempo pyroscope alloy grafana
+  wait_rollout kube-state-metrics prometheus loki tempo pyroscope alloy grafana
 
   create_migration_configmaps
   delete_previous_migration_jobs
