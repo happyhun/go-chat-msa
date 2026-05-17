@@ -8,7 +8,6 @@ resources:
   - ../../base
 
 patches:
-  - path: patches/mongo-glibc-tunables.yaml
   - path: patches/test-config.yaml
   - path: patches/fixed-replicas.yaml
   - path: patches/grafana-root-url.yaml

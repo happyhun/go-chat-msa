@@ -8,24 +8,6 @@ resources:
 
 patches:
   - path: patches/test-config.yaml
-  - target:
-      group: apps
-      version: v1
-      kind: Deployment
-      name: mongo
-    patch: |-
-      apiVersion: apps/v1
-      kind: Deployment
-      metadata:
-        name: mongo
-      spec:
-        template:
-          spec:
-            containers:
-              - name: mongo
-                env:
-                  - name: GLIBC_TUNABLES
-                    value: glibc.pthread.rseq=1
 
 patchesStrategicMerge:
   - delete-non-foundation.yaml
