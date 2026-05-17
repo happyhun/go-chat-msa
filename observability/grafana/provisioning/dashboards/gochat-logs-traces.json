@@ -1,0 +1,308 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {
+      "title": "GoChat Dashboards",
+      "type": "dashboards",
+      "tags": [
+        "gochat"
+      ],
+      "asDropdown": true,
+      "keepTime": true
+    }
+  ],
+  "liveNow": false,
+  "panels": [
+    {
+      "collapsed": false,
+      "id": 1,
+      "title": "Logs",
+      "type": "row",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": 2,
+      "title": "Recent Errors and Warnings",
+      "type": "logs",
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 16,
+        "h": 10
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "expr": "{namespace=~\"$namespace\", service=~\"$service\", pod=~\"$pod\", component=~\"$component\", level=~\"error|warn\"}",
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showTime": true,
+        "showLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": true
+      }
+    },
+    {
+      "id": 3,
+      "title": "Log Volume",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 16,
+        "y": 1,
+        "w": 8,
+        "h": 10
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "expr": "sum by(service,level) (count_over_time({namespace=~\"$namespace\", service=~\"$service\", pod=~\"$pod\", component=~\"$component\"}[$__rate_interval]))",
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "legendFormat": "{{service}} {{level}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "collapsed": false,
+      "id": 4,
+      "title": "Trace Entry Points",
+      "type": "row",
+      "gridPos": {
+        "x": 0,
+        "y": 11,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": 5,
+      "title": "Tempo Links",
+      "type": "text",
+      "gridPos": {
+        "x": 0,
+        "y": 12,
+        "w": 12,
+        "h": 5
+      },
+      "datasource": {
+        "type": "grafana",
+        "uid": "-- Grafana --"
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "Use the Loki panel trace_id derived field to jump to Tempo. Tempo is configured with traces-to-logs and service graph support; service graph validation is completed after qa traffic exists."
+      }
+    },
+    {
+      "id": 6,
+      "title": "Known Boundaries",
+      "type": "text",
+      "gridPos": {
+        "x": 12,
+        "y": 12,
+        "w": 12,
+        "h": 5
+      },
+      "datasource": {
+        "type": "grafana",
+        "uid": "-- Grafana --"
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "Message consistency verdicts remain in the M3.2 k6/e2e harness. This dashboard is an investigation surface, not the source of truth for pass/fail."
+      }
+    }
+  ],
+  "refresh": "15s",
+  "schemaVersion": 39,
+  "tags": [
+    "gochat",
+    "logs",
+    "traces"
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "namespace",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(kube_pod_info, namespace)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "sort": 1,
+        "includeAll": false,
+        "current": {
+          "selected": true,
+          "text": "go-chat-test",
+          "value": "go-chat-test"
+        }
+      },
+      {
+        "name": "service",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(gochat_build_info{namespace=~\"$namespace\"}, service)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "sort": 1,
+        "includeAll": true,
+        "allValue": "api-gateway|ws-gateway|websocket-service|user-service|chat-service|frontend",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "pod",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(kube_pod_info{namespace=~\"$namespace\"}, pod)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "sort": 1,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "node",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(kube_pod_info{namespace=~\"$namespace\"}, node)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "sort": 1,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "component",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(gochat_build_info{namespace=~\"$namespace\"}, component)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "sort": 1,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        }
+      }
+    ]
+  },
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "Asia/Seoul",
+  "title": "LOGS & TRACES",
+  "uid": "gochat-logs-traces",
+  "version": 1,
+  "weekStart": ""
+}

@@ -1,810 +1,655 @@
 {
-    "annotations": {
-        "list": [
-            {
-                "builtIn": 1,
-                "datasource": {
-                    "type": "grafana",
-                    "uid": "-- Grafana --"
-                },
-                "enable": true,
-                "hide": false,
-                "iconColor": "rgba(0, 211, 255, 1)",
-                "name": "Annotations & Alerts",
-                "type": "dashboard"
-            }
-        ]
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {
+      "title": "GoChat Dashboards",
+      "type": "dashboards",
+      "tags": [
+        "gochat"
+      ],
+      "asDropdown": true,
+      "keepTime": true
+    }
+  ],
+  "liveNow": false,
+  "panels": [
+    {
+      "collapsed": false,
+      "id": 1,
+      "title": "PostgreSQL",
+      "type": "row",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      }
     },
-    "graphTooltip": 1,
-    "id": null,
-    "links": [
+    {
+      "id": 2,
+      "title": "PG Ops",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 8,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
         {
-            "title": "← Overview",
-            "type": "link",
-            "url": "/d/gochat-overview"
+          "expr": "sum by(operation,status) (rate(gochat_pg_query_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "{{operation}} {{status}}"
         }
-    ],
-    "panels": [
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "ops",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 3,
+      "title": "PG Latency",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 8,
+        "y": 1,
+        "w": 8,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
         {
-            "collapsed": false,
-            "id": 1,
-            "title": "PostgreSQL",
-            "type": "row",
-            "gridPos": {
-                "x": 0,
-                "y": 0,
-                "w": 24,
-                "h": 1
-            }
+          "expr": "histogram_quantile(0.99, sum by(operation,le) (rate(gochat_pg_query_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "p99 {{operation}}"
         },
         {
-            "id": 2,
-            "title": "PG Ops",
-            "type": "timeseries",
-            "gridPos": {
-                "x": 0,
-                "y": 1,
-                "w": 8,
-                "h": 9
-            },
-            "datasource": {
-                "type": "prometheus",
-                "uid": "prometheus"
-            },
-            "fieldConfig": {
-                "defaults": {
-                    "unit": "ops",
-                    "custom": {
-                        "lineInterpolation": "smooth",
-                        "lineWidth": 2,
-                        "fillOpacity": 0,
-                        "showPoints": "never",
-                        "spanNulls": true
-                    },
-                    "color": {
-                        "mode": "palette-classic"
-                    }
-                },
-                "overrides": []
-            },
-            "options": {
-                "legend": {
-                    "displayMode": "table",
-                    "placement": "bottom",
-                    "calcs": [
-                        "lastNotNull",
-                        "max"
-                    ]
-                },
-                "tooltip": {
-                    "mode": "multi",
-                    "sort": "desc"
-                }
-            },
-            "targets": [
-                {
-                    "expr": "sum by(operation) (rate(gochat_pg_query_total[$__rate_interval]))",
-                    "legendFormat": "{{ operation }}",
-                    "refId": "A"
-                }
-            ]
-        },
-        {
-            "id": 3,
-            "title": "PG Error Rate",
-            "type": "timeseries",
-            "gridPos": {
-                "x": 8,
-                "y": 1,
-                "w": 6,
-                "h": 9
-            },
-            "datasource": {
-                "type": "prometheus",
-                "uid": "prometheus"
-            },
-            "fieldConfig": {
-                "defaults": {
-                    "unit": "percentunit",
-                    "custom": {
-                        "lineInterpolation": "smooth",
-                        "lineWidth": 2,
-                        "fillOpacity": 0,
-                        "showPoints": "never",
-                        "spanNulls": true
-                    },
-                    "color": {
-                        "mode": "fixed",
-                        "fixedColor": "red"
-                    }
-                },
-                "overrides": []
-            },
-            "options": {
-                "legend": {
-                    "displayMode": "table",
-                    "placement": "bottom",
-                    "calcs": [
-                        "lastNotNull",
-                        "max"
-                    ]
-                },
-                "tooltip": {
-                    "mode": "multi",
-                    "sort": "desc"
-                }
-            },
-            "targets": [
-                {
-                    "expr": "sum(rate(gochat_pg_query_total{status=\"error\"}[$__rate_interval])) / sum(rate(gochat_pg_query_total[$__rate_interval]))",
-                    "legendFormat": "Error Rate",
-                    "refId": "A"
-                }
-            ],
-            "links": []
-        },
-        {
-            "id": 4,
-            "title": "PG Latency",
-            "type": "timeseries",
-            "gridPos": {
-                "x": 14,
-                "y": 1,
-                "w": 10,
-                "h": 9
-            },
-            "datasource": {
-                "type": "prometheus",
-                "uid": "prometheus"
-            },
-            "fieldConfig": {
-                "defaults": {
-                    "unit": "s",
-                    "custom": {
-                        "lineInterpolation": "smooth",
-                        "lineWidth": 2,
-                        "fillOpacity": 0,
-                        "showPoints": "never",
-                        "spanNulls": true
-                    },
-                    "color": {
-                        "mode": "palette-classic"
-                    }
-                },
-                "overrides": [
-                    {
-                        "matcher": {
-                            "id": "byRegexp",
-                            "options": "^P50 .*"
-                        },
-                        "properties": [
-                            {
-                                "id": "custom.lineStyle",
-                                "value": {
-                                    "fill": "dash",
-                                    "dash": [
-                                        6,
-                                        4
-                                    ]
-                                }
-                            },
-                            {
-                                "id": "custom.lineWidth",
-                                "value": 1
-                            }
-                        ]
-                    }
-                ]
-            },
-            "options": {
-                "legend": {
-                    "displayMode": "table",
-                    "placement": "bottom",
-                    "calcs": [
-                        "lastNotNull",
-                        "max"
-                    ]
-                },
-                "tooltip": {
-                    "mode": "multi",
-                    "sort": "desc"
-                }
-            },
-            "targets": [
-                {
-                    "expr": "histogram_quantile(0.50, sum by(operation, le) (rate(gochat_pg_query_duration_seconds_bucket[$__rate_interval])))",
-                    "legendFormat": "P50 {{ operation }}",
-                    "refId": "A"
-                },
-                {
-                    "expr": "histogram_quantile(0.99, sum by(operation, le) (rate(gochat_pg_query_duration_seconds_bucket[$__rate_interval])))",
-                    "legendFormat": "P99 {{ operation }}",
-                    "refId": "B"
-                }
-            ]
-        },
-        {
-            "id": 11,
-            "title": "Pool Utilization",
-            "type": "timeseries",
-            "gridPos": {
-                "x": 0,
-                "y": 10,
-                "w": 8,
-                "h": 8
-            },
-            "datasource": {
-                "type": "prometheus",
-                "uid": "prometheus"
-            },
-            "fieldConfig": {
-                "defaults": {
-                    "unit": "short",
-                    "custom": {
-                        "lineInterpolation": "smooth",
-                        "lineWidth": 2,
-                        "fillOpacity": 0,
-                        "showPoints": "never",
-                        "spanNulls": true
-                    },
-                    "color": {
-                        "mode": "palette-classic"
-                    }
-                },
-                "overrides": [
-                    {
-                        "matcher": {
-                            "id": "byName",
-                            "options": "Max"
-                        },
-                        "properties": [
-                            {
-                                "id": "custom.lineStyle",
-                                "value": {
-                                    "fill": "dash",
-                                    "dash": [
-                                        6,
-                                        4
-                                    ]
-                                }
-                            },
-                            {
-                                "id": "color",
-                                "value": {
-                                    "mode": "fixed",
-                                    "fixedColor": "red"
-                                }
-                            }
-                        ]
-                    }
-                ]
-            },
-            "options": {
-                "legend": {
-                    "displayMode": "table",
-                    "placement": "bottom",
-                    "calcs": [
-                        "lastNotNull",
-                        "max"
-                    ]
-                },
-                "tooltip": {
-                    "mode": "multi",
-                    "sort": "desc"
-                }
-            },
-            "targets": [
-                {
-                    "expr": "gochat_pgxpool_acquired_conns",
-                    "legendFormat": "Acquired",
-                    "refId": "A"
-                },
-                {
-                    "expr": "gochat_pgxpool_idle_conns",
-                    "legendFormat": "Idle",
-                    "refId": "B"
-                },
-                {
-                    "expr": "gochat_pgxpool_total_conns",
-                    "legendFormat": "Total",
-                    "refId": "C"
-                },
-                {
-                    "expr": "gochat_pgxpool_max_conns",
-                    "legendFormat": "Max",
-                    "refId": "D"
-                }
-            ]
-        },
-        {
-            "id": 12,
-            "title": "Acquire Rate",
-            "type": "timeseries",
-            "gridPos": {
-                "x": 8,
-                "y": 10,
-                "w": 6,
-                "h": 8
-            },
-            "datasource": {
-                "type": "prometheus",
-                "uid": "prometheus"
-            },
-            "fieldConfig": {
-                "defaults": {
-                    "unit": "ops",
-                    "custom": {
-                        "lineInterpolation": "smooth",
-                        "lineWidth": 2,
-                        "fillOpacity": 0,
-                        "showPoints": "never",
-                        "spanNulls": true
-                    },
-                    "color": {
-                        "mode": "palette-classic"
-                    }
-                },
-                "overrides": []
-            },
-            "options": {
-                "legend": {
-                    "displayMode": "table",
-                    "placement": "bottom",
-                    "calcs": [
-                        "lastNotNull",
-                        "max"
-                    ]
-                },
-                "tooltip": {
-                    "mode": "multi",
-                    "sort": "desc"
-                }
-            },
-            "targets": [
-                {
-                    "expr": "rate(gochat_pgxpool_acquire_count_total[$__rate_interval])",
-                    "legendFormat": "Acquires/s",
-                    "refId": "A"
-                }
-            ]
-        },
-        {
-            "id": 13,
-            "title": "Acquire Wait",
-            "type": "timeseries",
-            "gridPos": {
-                "x": 14,
-                "y": 10,
-                "w": 5,
-                "h": 8
-            },
-            "datasource": {
-                "type": "prometheus",
-                "uid": "prometheus"
-            },
-            "fieldConfig": {
-                "defaults": {
-                    "unit": "s",
-                    "custom": {
-                        "lineInterpolation": "smooth",
-                        "lineWidth": 2,
-                        "fillOpacity": 0,
-                        "showPoints": "never",
-                        "spanNulls": true
-                    },
-                    "color": {
-                        "mode": "palette-classic"
-                    }
-                },
-                "overrides": []
-            },
-            "options": {
-                "legend": {
-                    "displayMode": "table",
-                    "placement": "bottom",
-                    "calcs": [
-                        "lastNotNull",
-                        "max"
-                    ]
-                },
-                "tooltip": {
-                    "mode": "multi",
-                    "sort": "desc"
-                }
-            },
-            "targets": [
-                {
-                    "expr": "rate(gochat_pgxpool_acquire_duration_seconds_total[$__rate_interval]) / rate(gochat_pgxpool_acquire_count_total[$__rate_interval])",
-                    "legendFormat": "Avg Wait",
-                    "refId": "A"
-                }
-            ]
-        },
-        {
-            "id": 14,
-            "title": "Pool Contention",
-            "type": "timeseries",
-            "gridPos": {
-                "x": 19,
-                "y": 10,
-                "w": 5,
-                "h": 8
-            },
-            "datasource": {
-                "type": "prometheus",
-                "uid": "prometheus"
-            },
-            "fieldConfig": {
-                "defaults": {
-                    "unit": "ops",
-                    "custom": {
-                        "lineInterpolation": "smooth",
-                        "lineWidth": 2,
-                        "fillOpacity": 0,
-                        "showPoints": "never",
-                        "spanNulls": true
-                    },
-                    "color": {
-                        "mode": "palette-classic"
-                    }
-                },
-                "overrides": []
-            },
-            "options": {
-                "legend": {
-                    "displayMode": "table",
-                    "placement": "bottom",
-                    "calcs": [
-                        "lastNotNull",
-                        "max"
-                    ]
-                },
-                "tooltip": {
-                    "mode": "multi",
-                    "sort": "desc"
-                }
-            },
-            "targets": [
-                {
-                    "expr": "rate(gochat_pgxpool_empty_acquire_count_total[$__rate_interval])",
-                    "legendFormat": "Empty Acquire",
-                    "refId": "A"
-                },
-                {
-                    "expr": "rate(gochat_pgxpool_canceled_acquire_count_total[$__rate_interval])",
-                    "legendFormat": "Canceled",
-                    "refId": "B"
-                }
-            ]
-        },
-        {
-            "collapsed": false,
-            "id": 30,
-            "title": "MongoDB",
-            "type": "row",
-            "gridPos": {
-                "x": 0,
-                "y": 18,
-                "w": 24,
-                "h": 1
-            }
-        },
-        {
-            "id": 31,
-            "title": "Mongo Ops",
-            "type": "timeseries",
-            "gridPos": {
-                "x": 0,
-                "y": 19,
-                "w": 8,
-                "h": 9
-            },
-            "datasource": {
-                "type": "prometheus",
-                "uid": "prometheus"
-            },
-            "fieldConfig": {
-                "defaults": {
-                    "unit": "ops",
-                    "custom": {
-                        "lineInterpolation": "smooth",
-                        "lineWidth": 2,
-                        "fillOpacity": 0,
-                        "showPoints": "never",
-                        "spanNulls": true
-                    },
-                    "color": {
-                        "mode": "palette-classic"
-                    }
-                },
-                "overrides": []
-            },
-            "options": {
-                "legend": {
-                    "displayMode": "table",
-                    "placement": "bottom",
-                    "calcs": [
-                        "lastNotNull",
-                        "max"
-                    ]
-                },
-                "tooltip": {
-                    "mode": "multi",
-                    "sort": "desc"
-                }
-            },
-            "targets": [
-                {
-                    "expr": "sum by(operation) (rate(gochat_mongo_query_total[$__rate_interval]))",
-                    "legendFormat": "{{ operation }}",
-                    "refId": "A"
-                }
-            ]
-        },
-        {
-            "id": 32,
-            "title": "Mongo Error Rate",
-            "type": "timeseries",
-            "gridPos": {
-                "x": 8,
-                "y": 19,
-                "w": 6,
-                "h": 9
-            },
-            "datasource": {
-                "type": "prometheus",
-                "uid": "prometheus"
-            },
-            "fieldConfig": {
-                "defaults": {
-                    "unit": "percentunit",
-                    "custom": {
-                        "lineInterpolation": "smooth",
-                        "lineWidth": 2,
-                        "fillOpacity": 0,
-                        "showPoints": "never",
-                        "spanNulls": true
-                    },
-                    "color": {
-                        "mode": "fixed",
-                        "fixedColor": "red"
-                    }
-                },
-                "overrides": []
-            },
-            "options": {
-                "legend": {
-                    "displayMode": "table",
-                    "placement": "bottom",
-                    "calcs": [
-                        "lastNotNull",
-                        "max"
-                    ]
-                },
-                "tooltip": {
-                    "mode": "multi",
-                    "sort": "desc"
-                }
-            },
-            "targets": [
-                {
-                    "expr": "sum(rate(gochat_mongo_query_total{status=\"error\"}[$__rate_interval])) / sum(rate(gochat_mongo_query_total[$__rate_interval]))",
-                    "legendFormat": "Error Rate",
-                    "refId": "A"
-                }
-            ],
-            "links": []
-        },
-        {
-            "id": 33,
-            "title": "Mongo Latency",
-            "type": "timeseries",
-            "gridPos": {
-                "x": 14,
-                "y": 19,
-                "w": 10,
-                "h": 9
-            },
-            "datasource": {
-                "type": "prometheus",
-                "uid": "prometheus"
-            },
-            "fieldConfig": {
-                "defaults": {
-                    "unit": "s",
-                    "custom": {
-                        "lineInterpolation": "smooth",
-                        "lineWidth": 2,
-                        "fillOpacity": 0,
-                        "showPoints": "never",
-                        "spanNulls": true
-                    },
-                    "color": {
-                        "mode": "palette-classic"
-                    }
-                },
-                "overrides": [
-                    {
-                        "matcher": {
-                            "id": "byRegexp",
-                            "options": "^P50 .*"
-                        },
-                        "properties": [
-                            {
-                                "id": "custom.lineStyle",
-                                "value": {
-                                    "fill": "dash",
-                                    "dash": [
-                                        6,
-                                        4
-                                    ]
-                                }
-                            },
-                            {
-                                "id": "custom.lineWidth",
-                                "value": 1
-                            }
-                        ]
-                    }
-                ]
-            },
-            "options": {
-                "legend": {
-                    "displayMode": "table",
-                    "placement": "bottom",
-                    "calcs": [
-                        "lastNotNull",
-                        "max"
-                    ]
-                },
-                "tooltip": {
-                    "mode": "multi",
-                    "sort": "desc"
-                }
-            },
-            "targets": [
-                {
-                    "expr": "histogram_quantile(0.50, sum by(operation, le) (rate(gochat_mongo_query_duration_seconds_bucket[$__rate_interval])))",
-                    "legendFormat": "P50 {{ operation }}",
-                    "refId": "A"
-                },
-                {
-                    "expr": "histogram_quantile(0.99, sum by(operation, le) (rate(gochat_mongo_query_duration_seconds_bucket[$__rate_interval])))",
-                    "legendFormat": "P99 {{ operation }}",
-                    "refId": "B"
-                }
-            ]
-        },
-        {
-            "id": 41,
-            "title": "Pool Utilization",
-            "type": "timeseries",
-            "gridPos": {
-                "x": 0,
-                "y": 28,
-                "w": 12,
-                "h": 8
-            },
-            "datasource": {
-                "type": "prometheus",
-                "uid": "prometheus"
-            },
-            "fieldConfig": {
-                "defaults": {
-                    "unit": "short",
-                    "custom": {
-                        "lineInterpolation": "smooth",
-                        "lineWidth": 2,
-                        "fillOpacity": 0,
-                        "showPoints": "never",
-                        "spanNulls": true
-                    },
-                    "color": {
-                        "mode": "palette-classic"
-                    }
-                },
-                "overrides": []
-            },
-            "options": {
-                "legend": {
-                    "displayMode": "table",
-                    "placement": "bottom",
-                    "calcs": [
-                        "lastNotNull",
-                        "max"
-                    ]
-                },
-                "tooltip": {
-                    "mode": "multi",
-                    "sort": "desc"
-                }
-            },
-            "targets": [
-                {
-                    "expr": "gochat_mongo_pool_checked_out_conns",
-                    "legendFormat": "Checked Out",
-                    "refId": "A"
-                },
-                {
-                    "expr": "gochat_mongo_pool_open_conns",
-                    "legendFormat": "Open",
-                    "refId": "B"
-                }
-            ]
-        },
-        {
-            "id": 42,
-            "title": "Pool Churn",
-            "type": "timeseries",
-            "gridPos": {
-                "x": 12,
-                "y": 28,
-                "w": 12,
-                "h": 8
-            },
-            "datasource": {
-                "type": "prometheus",
-                "uid": "prometheus"
-            },
-            "fieldConfig": {
-                "defaults": {
-                    "unit": "ops",
-                    "custom": {
-                        "lineInterpolation": "smooth",
-                        "lineWidth": 2,
-                        "fillOpacity": 0,
-                        "showPoints": "never",
-                        "spanNulls": true
-                    },
-                    "color": {
-                        "mode": "palette-classic"
-                    }
-                },
-                "overrides": []
-            },
-            "options": {
-                "legend": {
-                    "displayMode": "table",
-                    "placement": "bottom",
-                    "calcs": [
-                        "lastNotNull",
-                        "max"
-                    ]
-                },
-                "tooltip": {
-                    "mode": "multi",
-                    "sort": "desc"
-                }
-            },
-            "targets": [
-                {
-                    "expr": "rate(gochat_mongo_pool_created_total[$__rate_interval])",
-                    "legendFormat": "Created/s",
-                    "refId": "A"
-                },
-                {
-                    "expr": "rate(gochat_mongo_pool_closed_total[$__rate_interval])",
-                    "legendFormat": "Closed/s",
-                    "refId": "B"
-                }
-            ]
+          "expr": "histogram_quantile(0.50, sum by(operation,le) (rate(gochat_pg_query_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "p50 {{operation}}"
         }
-    ],
-    "refresh": "30s",
-    "schemaVersion": 39,
-    "tags": [
-        "gochat",
-        "database"
-    ],
-    "templating": {
-        "list": []
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "ms",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {}
     },
-    "time": {
-        "from": "now-1h",
-        "to": "now"
+    {
+      "id": 4,
+      "title": "PG Pool",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 16,
+        "y": 1,
+        "w": 8,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "gochat_pgxpool_acquired_conns{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "acquired"
+        },
+        {
+          "expr": "gochat_pgxpool_idle_conns{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "idle"
+        },
+        {
+          "expr": "gochat_pgxpool_total_conns{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}",
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "total"
+        },
+        {
+          "expr": "gochat_pgxpool_max_conns{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}",
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "max"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {}
     },
-    "timezone": "Asia/Seoul",
-    "title": "DATABASE",
-    "uid": "gochat-database",
-    "version": 1
+    {
+      "collapsed": false,
+      "id": 5,
+      "title": "MongoDB",
+      "type": "row",
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": 6,
+      "title": "Mongo Ops",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 9,
+        "w": 8,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by(operation,status) (rate(gochat_mongo_query_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "{{operation}} {{status}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "ops",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 7,
+      "title": "Mongo Latency",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 8,
+        "y": 9,
+        "w": 8,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by(operation,le) (rate(gochat_mongo_query_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "p99 {{operation}}"
+        },
+        {
+          "expr": "histogram_quantile(0.50, sum by(operation,le) (rate(gochat_mongo_query_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "p50 {{operation}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "ms",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 8,
+      "title": "Mongo Pool",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 16,
+        "y": 9,
+        "w": 8,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "gochat_mongo_pool_checked_out_conns{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "checked out"
+        },
+        {
+          "expr": "gochat_mongo_pool_open_conns{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "open"
+        },
+        {
+          "expr": "rate(gochat_mongo_pool_created_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval])",
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "created/s"
+        },
+        {
+          "expr": "rate(gochat_mongo_pool_closed_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval])",
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "closed/s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "short",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "collapsed": false,
+      "id": 9,
+      "title": "Redis",
+      "type": "row",
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": 10,
+      "title": "Redis Connections",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 17,
+        "w": 8,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "db_client_connections_usage{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\",db_system=\"redis\"}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "{{service}} {{state}}"
+        },
+        {
+          "expr": "db_client_connections_max{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\",db_system=\"redis\"}",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "{{service}} max"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 11,
+      "title": "Redis Waits",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 8,
+        "y": 17,
+        "w": 8,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "db_client_connections_waits{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\",db_system=\"redis\"}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "waits"
+        },
+        {
+          "expr": "db_client_connections_timeouts{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\",db_system=\"redis\"}",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "timeouts"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "short",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 12,
+      "title": "Redis Pool Use Time",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 16,
+        "y": 17,
+        "w": 8,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by(service,type,le) (rate(db_client_connections_use_time_milliseconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\",db_system=\"redis\"}[$__rate_interval])))",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "p99 {{service}} {{type}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "ms",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {}
+    }
+  ],
+  "refresh": "15s",
+  "schemaVersion": 39,
+  "tags": [
+    "gochat",
+    "database"
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "namespace",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(kube_pod_info, namespace)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "sort": 1,
+        "includeAll": false,
+        "current": {
+          "selected": true,
+          "text": "go-chat-test",
+          "value": "go-chat-test"
+        }
+      },
+      {
+        "name": "service",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(gochat_build_info{namespace=~\"$namespace\"}, service)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "sort": 1,
+        "includeAll": true,
+        "allValue": "api-gateway|ws-gateway|websocket-service|user-service|chat-service|frontend",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "pod",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(kube_pod_info{namespace=~\"$namespace\"}, pod)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "sort": 1,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "node",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(kube_pod_info{namespace=~\"$namespace\"}, node)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "sort": 1,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "component",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(gochat_build_info{namespace=~\"$namespace\"}, component)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "sort": 1,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        }
+      }
+    ]
+  },
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "Asia/Seoul",
+  "title": "DATABASE",
+  "uid": "gochat-database",
+  "version": 1,
+  "weekStart": ""
 }
