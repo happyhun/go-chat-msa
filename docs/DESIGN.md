@@ -190,6 +190,18 @@ HTTP 미들웨어가 아닌 WebSocket `readPump` 안에서 메시지 단위로 �
 
 사용자/채팅방은 관계가 중요하고(방장, 멤버십, 참조 무결성), 채팅 메시지는 단순 append 위주에 스키마 변경 가능성이 높습니다. 관계형 데이터에는 PostgreSQL, 메시지 저장에는 MongoDB를 사용하여 각 특성에 맞는 저장소를 선택했습니다.
 
+#### 데이터 저장소 버전 기준
+
+dev/test K8s 환경의 데이터 저장소는 특정 최신 major 기능이 필요하지 않으면 최신 major보다 한 단계 낮은 supported major를 기본으로 선택합니다. 충분히 운영 검증되고 레퍼런스가 많은 버전으로 실행 기준선을 안정화하기 위한 선택입니다.
+
+| 저장소 | 현재 이미지 | 적용 기준 |
+| :--- | :--- | :--- |
+| PostgreSQL | `postgres:17` | 트랜잭션, row lock, `pg_trgm` 중심이라 최신 major 전용 기능보다 운영 레퍼런스를 우선합니다. |
+| MongoDB | `mongo:7.0` | 메시지 저장, unique index, TTL index 중심이라 8 계열 전용 기능이 필요하지 않고, 커널/TCMalloc 이슈를 피합니다. |
+| Redis | `redis:7-alpine` | TTL, Lua script, keyspace notification 중심이라 최신 major 신규 기능보다 검증된 운영 사례를 우선합니다. |
+
+운영 배포로 확장할 때는 patch tag 또는 image digest pinning과 백업/복구, HA, 업그레이드 리허설을 별도로 설계합니다.
+
 #### PostgreSQL (User Service)
 
 사용자, 채팅방, 멤버십을 관리합니다. 리프레시 토큰은 TTL이 있는 임시 인증 상태이므로 Redis에서 관리합니다.

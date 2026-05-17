@@ -13,7 +13,7 @@ MSA 구조로 REST, gRPC, WebSocket 서비스를 분리했고, Kubernetes dev/te
 |:---|:---|
 | 언어 | Go 1.26 |
 | 통신 | `net/http`, `gorilla/websocket`, `google.golang.org/grpc` |
-| 데이터베이스 | PostgreSQL 17, MongoDB 8.0, Redis 7 |
+| 데이터베이스 | PostgreSQL 17, MongoDB 7.0, Redis 7 |
 | 인증 | `golang-jwt/jwt/v5` (HS256), `golang.org/x/crypto` (Bcrypt), Redis TTL Refresh Token Rotation |
 | 부하분산 | `buraksezer/consistent` (Consistent Hashing) |
 | 관측성 | OpenTelemetry, Grafana, Prometheus, Loki, Tempo, Pyroscope |
