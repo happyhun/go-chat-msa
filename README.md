@@ -216,7 +216,7 @@ OpenTelemetry SDK로 계측하고 Grafana 스택으로 4가지 신호를 통합 
 ### k6 부하테스트 결과
 
 10,000 동시접속 / 100개 방 / 2K Ingress, 200K Egress RPS 환경에서 모든 임계값을 통과했습니다(네트워크 RTT 제외).
-이 수치는 Kubernetes 이관 전 legacy baseline이며, Compose 기준점은 `legacy-compose-baseline` tag로 보존합니다.
+이 수치는 Kubernetes 이관 전 legacy baseline이며, 부하테스트 재현용 Compose 기준점은 `legacy-c10k-compose-baseline` tag로 보존합니다.
 Phase 3에서는 멀티 노드 K8s 환경에서 HPA, rollout/drain, P99, 메시지 정합성을 다시 측정합니다.
 
 상세 분석은 [C10K 보고서](docs/C10K_REPORT.md)와 [트러블슈팅 기록](docs/C10K_TROUBLESHOOTING.md)을 참고해 주세요.
