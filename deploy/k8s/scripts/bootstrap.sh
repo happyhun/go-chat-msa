@@ -16,9 +16,11 @@ TMP_FILES=()
 
 cleanup_tmp_files() {
   local file
-  for file in "${TMP_FILES[@]}"; do
-    [[ -f "${file}" ]] && rm -f "${file}"
-  done
+  if ((${#TMP_FILES[@]})); then
+    for file in "${TMP_FILES[@]}"; do
+      [[ -f "${file}" ]] && rm -f "${file}"
+    done
+  fi
 }
 trap cleanup_tmp_files EXIT
 
