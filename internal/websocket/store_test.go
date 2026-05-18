@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -83,4 +84,24 @@ func TestChatStoreAdapter_GetLastSequenceNumber(t *testing.T) {
 	seq, err := a.GetLastSequenceNumber(context.Background(), "room-1")
 	assert.NoError(t, err)
 	assert.Equal(t, int64(42), seq)
+}
+
+func TestChatStoreAdapter_GetLastSequenceNumberTimeout(t *testing.T) {
+	t.Parallel()
+
+	mockClient := mocks.NewMockChatServiceClient(t)
+	mockClient.EXPECT().GetLastSequenceNumber(mock.Anything, &chatpb.GetLastSequenceNumberRequest{
+		RoomId: "room-1",
+	}).RunAndReturn(func(ctx context.Context, _ *chatpb.GetLastSequenceNumberRequest, _ ...grpc.CallOption) (*chatpb.GetLastSequenceNumberResponse, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	})
+
+	a := newChatStoreAdapter(mockClient, 10*time.Millisecond)
+	startedAt := time.Now()
+	seq, err := a.GetLastSequenceNumber(context.Background(), "room-1")
+
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Zero(t, seq)
+	assert.Less(t, time.Since(startedAt), 200*time.Millisecond)
 }

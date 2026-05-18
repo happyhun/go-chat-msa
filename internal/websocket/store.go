@@ -21,6 +21,9 @@ func newChatStoreAdapter(client chatpb.ChatServiceClient, rpcTimeout time.Durati
 }
 
 func (a *chatStoreAdapter) GetLastSequenceNumber(ctx context.Context, roomID string) (int64, error) {
+	ctx, cancel := context.WithTimeout(ctx, a.rpcTimeout)
+	defer cancel()
+
 	resp, err := a.client.GetLastSequenceNumber(ctx, &chatpb.GetLastSequenceNumberRequest{
 		RoomId: roomID,
 	})
