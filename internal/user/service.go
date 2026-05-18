@@ -154,6 +154,49 @@ func (s *Service) VerifyUser(ctx context.Context, req *pb.VerifyUserRequest) (*p
 }
 
 func (s *Service) RefreshToken(ctx context.Context, req *pb.RefreshTokenRequest) (*pb.RefreshTokenResponse, error) {
+	validation, err := s.tokens.Validate(ctx, req.RefreshToken)
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to validate refresh token", "error", err)
+		return nil, status.Error(codes.Internal, "failed to refresh token")
+	}
+
+	switch validation.Status {
+	case RefreshTokenValidationInvalid:
+		return nil, status.Error(codes.Unauthenticated, "invalid refresh token")
+	case RefreshTokenValidationReused:
+		authTokenReuseTotal.Add(ctx, 1)
+		slog.WarnContext(ctx, "refresh token reuse detected, revoking all tokens", "user_id", validation.UserID)
+		return nil, status.Error(codes.Unauthenticated, "refresh token reuse detected")
+	case RefreshTokenValidationActive:
+	default:
+		slog.ErrorContext(ctx, "unexpected refresh token validation status", "status", validation.Status)
+		return nil, status.Error(codes.Internal, "failed to refresh token")
+	}
+
+	userUUID, err := toPGUUID(validation.UserID)
+	if err != nil {
+		slog.ErrorContext(ctx, "invalid user id in refresh token store", "user_id", validation.UserID, "error", err)
+		return nil, status.Error(codes.Internal, "failed to refresh token")
+	}
+
+	user, err := s.queries.GetUserByID(ctx, userUUID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			if revokeErr := s.tokens.RevokeUser(ctx, validation.UserID); revokeErr != nil {
+				slog.WarnContext(ctx, "failed to revoke refresh tokens for missing user", "user_id", validation.UserID, "error", revokeErr)
+			}
+			return nil, status.Error(codes.Unauthenticated, "user no longer exists")
+		}
+		slog.ErrorContext(ctx, "failed to get user for refresh", "error", err)
+		return nil, status.Error(codes.Internal, "failed to get user")
+	}
+
+	accessToken, err := s.issueAccessToken(user.ID, user.Username)
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to generate access token", "error", err)
+		return nil, status.Error(codes.Internal, "failed to generate access token")
+	}
+
 	refreshToken := uuid.NewString()
 	rotation, err := s.tokens.Rotate(ctx, req.RefreshToken, refreshToken, s.refreshTokenTTL())
 	if err != nil {
@@ -169,33 +212,16 @@ func (s *Service) RefreshToken(ctx context.Context, req *pb.RefreshTokenRequest)
 		slog.WarnContext(ctx, "refresh token reuse detected, revoking all tokens", "user_id", rotation.UserID)
 		return nil, status.Error(codes.Unauthenticated, "refresh token reuse detected")
 	case RefreshTokenRotated:
+		if rotation.UserID != validation.UserID {
+			slog.ErrorContext(ctx, "refresh token owner changed during rotation",
+				"validated_user_id", validation.UserID,
+				"rotated_user_id", rotation.UserID,
+			)
+			return nil, status.Error(codes.Internal, "failed to refresh token")
+		}
 	default:
 		slog.ErrorContext(ctx, "unexpected refresh token rotation status", "status", rotation.Status)
 		return nil, status.Error(codes.Internal, "failed to refresh token")
-	}
-
-	userUUID, err := toPGUUID(rotation.UserID)
-	if err != nil {
-		slog.ErrorContext(ctx, "invalid user id in refresh token store", "user_id", rotation.UserID, "error", err)
-		return nil, status.Error(codes.Internal, "failed to refresh token")
-	}
-
-	user, err := s.queries.GetUserByID(ctx, userUUID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			if revokeErr := s.tokens.RevokeUser(ctx, rotation.UserID); revokeErr != nil {
-				slog.WarnContext(ctx, "failed to revoke refresh tokens for missing user", "user_id", rotation.UserID, "error", revokeErr)
-			}
-			return nil, status.Error(codes.Unauthenticated, "user no longer exists")
-		}
-		slog.ErrorContext(ctx, "failed to get user for refresh", "error", err)
-		return nil, status.Error(codes.Internal, "failed to get user")
-	}
-
-	accessToken, err := s.issueAccessToken(user.ID, user.Username)
-	if err != nil {
-		slog.ErrorContext(ctx, "failed to generate access token", "error", err)
-		return nil, status.Error(codes.Internal, "failed to generate access token")
 	}
 
 	return &pb.RefreshTokenResponse{
@@ -426,6 +452,14 @@ func (s *Service) JoinRoom(ctx context.Context, req *pb.JoinRoomRequest) (*pb.Jo
 			return err
 		}
 
+		exists, err := qtx.ExistsRoomMember(ctx, db.ExistsRoomMemberParams{RoomID: roomUUID, UserID: userUUID})
+		if err != nil {
+			return err
+		}
+		if exists {
+			return nil
+		}
+
 		count, err := qtx.GetRoomMemberCount(ctx, roomUUID)
 		if err != nil {
 			return err
@@ -441,11 +475,6 @@ func (s *Service) JoinRoom(ctx context.Context, req *pb.JoinRoomRequest) (*pb.Jo
 			RoomID:   roomUUID,
 			JoinedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
 		}); err != nil {
-			var pgErr *pgconn.PgError
-			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-				roomJoinTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("status", "error")))
-				return status.Error(codes.AlreadyExists, "already a member of the room")
-			}
 			return err
 		}
 		return nil
@@ -455,7 +484,6 @@ func (s *Service) JoinRoom(ctx context.Context, req *pb.JoinRoomRequest) (*pb.Jo
 			switch st.Code() {
 			case codes.NotFound:
 				roomJoinTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("status", "error")))
-			case codes.AlreadyExists:
 			case codes.FailedPrecondition:
 			default:
 				roomJoinTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("status", "error")))

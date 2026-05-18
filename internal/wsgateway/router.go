@@ -27,8 +27,6 @@ import (
 
 const readinessTimeout = 2 * time.Second
 
-// RingRefresher는 백엔드의 misdirect 응답을 받았을 때 ring을 즉시
-// 갱신하도록 트리거하는 인터페이스. *membership.Watcher가 만족.
 type RingRefresher interface {
 	ForceReconcile()
 }

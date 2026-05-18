@@ -12,6 +12,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"go-chat-msa/internal/shared/httpio"
 )
 
 var (
@@ -40,7 +42,7 @@ func RecoveryMiddleware(next http.Handler) http.Handler {
 					"method", r.Method,
 					"path", r.URL.Path,
 				)
-				w.WriteHeader(http.StatusInternalServerError)
+				httpio.WriteProblem(r.Context(), w, http.StatusInternalServerError, "internal server error")
 			}
 		}()
 		next.ServeHTTP(w, r)

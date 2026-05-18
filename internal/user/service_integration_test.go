@@ -44,6 +44,7 @@ type UserSuite struct {
 	redisServer *miniredis.Miniredis
 	redisClient *redis.Client
 	tokenStore  *user.RedisRefreshTokenStore
+	hasherPool  *hasher.Pool
 	client      *user.Service
 }
 
@@ -79,8 +80,8 @@ func (s *UserSuite) SetupSuite() {
 	s.redisClient = redis.NewClient(&redis.Options{Addr: s.redisServer.Addr()})
 	s.tokenStore = user.NewRedisRefreshTokenStore(s.redisClient)
 
-	hp := hasher.NewPool(hasher.DefaultPoolConfig())
-	s.client = user.NewService(db.New(s.db), cfg.UserService, "integration_test_secret", hp).
+	s.hasherPool = hasher.NewPool(hasher.DefaultPoolConfig())
+	s.client = user.NewService(db.New(s.db), cfg.UserService, "integration_test_secret", s.hasherPool).
 		WithRefreshTokenStore(s.tokenStore).
 		WithRunInTx(func(ctx context.Context, fn func(db.Querier) error) error {
 			tx, err := s.db.Begin(ctx)
@@ -120,6 +121,9 @@ func (s *UserSuite) runMigrations(ctx context.Context) {
 }
 
 func (s *UserSuite) TearDownSuite() {
+	if s.hasherPool != nil {
+		s.hasherPool.Close()
+	}
 	if s.redisClient != nil {
 		s.Require().NoError(s.redisClient.Close())
 	}
@@ -468,7 +472,7 @@ func (s *UserSuite) TestJoinRoom_AlreadyMember() {
 	createRes, err := s.client.CreateRoom(s.T().Context(), &pb.CreateRoomRequest{
 		Name:      "Already Member Room",
 		ManagerId: aliceID,
-		Capacity:  100,
+		Capacity:  1,
 	})
 	s.Require().NoError(err)
 	roomID := createRes.RoomId
