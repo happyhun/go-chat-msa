@@ -52,6 +52,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	logger.InitLogger(cfg.Env)
 
 	if cfg.Telemetry.OTelEndpoint != "" {
 		shutdown, err := telemetry.InitOTel(ctx, "websocket-service", cfg.Telemetry.OTelEndpoint)
@@ -103,10 +104,7 @@ func run(ctx context.Context) error {
 }
 
 func loadConfig() (*websocket.Config, error) {
-	env := config.GetEnv()
-	logger.InitLogger(env)
-
-	return config.Load[websocket.Config]("configs", "base", env)
+	return config.LoadRuntime[websocket.Config]()
 }
 
 const grpcRoundRobinServiceConfig = `{"loadBalancingConfig":[{"round_robin":{}}]}`

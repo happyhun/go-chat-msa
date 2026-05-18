@@ -43,6 +43,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	logger.InitLogger(cfg.Env)
 
 	if cfg.Telemetry.OTelEndpoint != "" {
 		shutdown, err := telemetry.InitOTel(ctx, "chat-service", cfg.Telemetry.OTelEndpoint)
@@ -115,10 +116,7 @@ func run(ctx context.Context) error {
 }
 
 func loadConfig() (*chat.Config, error) {
-	env := config.GetEnv()
-	logger.InitLogger(env)
-
-	return config.Load[chat.Config]("configs", "base", env)
+	return config.LoadRuntime[chat.Config]()
 }
 
 func runServer(ctx context.Context, cfg *chat.Config, grpcServer *grpc.Server, healthServer *health.Server) error {

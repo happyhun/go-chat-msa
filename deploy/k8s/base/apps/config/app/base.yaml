@@ -18,11 +18,11 @@ PORT:
 # Service Registry
 REGISTRY:
   USER_SERVICE:
-    HOST: "" # 오버라이드 필수
+    HOST: "user-service"
   CHAT_SERVICE:
-    HOST: "" # 오버라이드 필수
+    HOST: "chat-service"
   WS_GATEWAY:
-    HOST: "" # 오버라이드 필수
+    HOST: "ws-gateway"
 
 # Security
 JWT:
@@ -38,7 +38,7 @@ DB:
 
 # Redis
 REDIS:
-  ADDR: "" # 오버라이드 필수
+  ADDR: "redis:6379"
 
 # API Gateway
 API_GATEWAY:
