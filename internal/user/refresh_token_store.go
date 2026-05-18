@@ -25,8 +25,22 @@ type RefreshTokenRotation struct {
 	UserID string
 }
 
+type RefreshTokenValidationStatus int
+
+const (
+	RefreshTokenValidationInvalid RefreshTokenValidationStatus = iota
+	RefreshTokenValidationActive
+	RefreshTokenValidationReused
+)
+
+type RefreshTokenValidation struct {
+	Status RefreshTokenValidationStatus
+	UserID string
+}
+
 type RefreshTokenStore interface {
 	Issue(ctx context.Context, userID, token string, ttl time.Duration) error
+	Validate(ctx context.Context, token string) (RefreshTokenValidation, error)
 	Rotate(ctx context.Context, oldToken, newToken string, ttl time.Duration) (RefreshTokenRotation, error)
 	Revoke(ctx context.Context, token string) error
 	RevokeUser(ctx context.Context, userID string) error
@@ -38,6 +52,10 @@ type missingRefreshTokenStore struct{}
 
 func (missingRefreshTokenStore) Issue(context.Context, string, string, time.Duration) error {
 	return errRefreshTokenStoreNotConfigured
+}
+
+func (missingRefreshTokenStore) Validate(context.Context, string) (RefreshTokenValidation, error) {
+	return RefreshTokenValidation{}, errRefreshTokenStoreNotConfigured
 }
 
 func (missingRefreshTokenStore) Rotate(context.Context, string, string, time.Duration) (RefreshTokenRotation, error) {
@@ -84,6 +102,32 @@ redis.call("ZREMRANGEBYSCORE", user_index_key, "-inf", expires_at_ms - ttl_ms)
 redis.call("ZADD", user_index_key, expires_at_ms, digest)
 redis.call("PEXPIRE", user_index_key, ttl_ms)
 return 1
+`)
+
+var validateRefreshTokenScript = redis.NewScript(`
+local active_key = KEYS[1]
+local used_key = KEYS[2]
+
+local user_index_prefix = ARGV[1]
+local active_prefix = ARGV[2]
+
+local user_id = redis.call("GET", active_key)
+if user_id then
+	return {1, user_id}
+end
+
+user_id = redis.call("GET", used_key)
+if user_id then
+	local user_index_key = user_index_prefix .. user_id
+	local active_digests = redis.call("ZRANGE", user_index_key, 0, -1)
+	for _, digest in ipairs(active_digests) do
+		redis.call("DEL", active_prefix .. digest)
+	end
+	redis.call("DEL", user_index_key)
+	return {2, user_id}
+end
+
+return {0, ""}
 `)
 
 var rotateRefreshTokenScript = redis.NewScript(`
@@ -181,6 +225,27 @@ func (s *RedisRefreshTokenStore) Issue(ctx context.Context, userID, token string
 		return errors.New("issue refresh token: digest already active")
 	}
 	return nil
+}
+
+func (s *RedisRefreshTokenStore) Validate(ctx context.Context, token string) (RefreshTokenValidation, error) {
+	if err := s.validateClient(); err != nil {
+		return RefreshTokenValidation{}, err
+	}
+	if token == "" {
+		return RefreshTokenValidation{}, errors.New("refresh token is required")
+	}
+
+	digest := auth.HashToken(token)
+	result, err := validateRefreshTokenScript.Run(ctx, s.client,
+		[]string{s.activeKey(digest), s.usedKey(digest)},
+		refreshTokenUserPrefix,
+		refreshTokenActivePrefix,
+	).Result()
+	if err != nil {
+		return RefreshTokenValidation{}, fmt.Errorf("validate refresh token: %w", err)
+	}
+
+	return parseRefreshTokenValidation(result)
 }
 
 func (s *RedisRefreshTokenStore) Rotate(ctx context.Context, oldToken, newToken string, ttl time.Duration) (RefreshTokenRotation, error) {
@@ -281,6 +346,33 @@ func validateRefreshTokenStoreInput(userID, token string, ttl time.Duration) err
 		return errors.New("refresh token ttl must be positive")
 	}
 	return nil
+}
+
+func parseRefreshTokenValidation(result any) (RefreshTokenValidation, error) {
+	values, ok := result.([]interface{})
+	if !ok || len(values) != 2 {
+		return RefreshTokenValidation{}, fmt.Errorf("unexpected refresh token validation result: %T", result)
+	}
+
+	statusCode, err := parseLuaInt(values[0])
+	if err != nil {
+		return RefreshTokenValidation{}, err
+	}
+	userID, ok := values[1].(string)
+	if !ok {
+		return RefreshTokenValidation{}, fmt.Errorf("unexpected refresh token validation user id type: %T", values[1])
+	}
+
+	switch statusCode {
+	case 0:
+		return RefreshTokenValidation{Status: RefreshTokenValidationInvalid}, nil
+	case 1:
+		return RefreshTokenValidation{Status: RefreshTokenValidationActive, UserID: userID}, nil
+	case 2:
+		return RefreshTokenValidation{Status: RefreshTokenValidationReused, UserID: userID}, nil
+	default:
+		return RefreshTokenValidation{}, fmt.Errorf("unexpected refresh token validation status: %d", statusCode)
+	}
 }
 
 func parseRefreshTokenRotation(result any) (RefreshTokenRotation, error) {

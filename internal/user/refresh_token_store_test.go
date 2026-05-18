@@ -42,6 +42,12 @@ func TestRedisRefreshTokenStore_IssueAndRotate(t *testing.T) {
 	assert.Equal(t, userID, mustGetRedisString(t, mr, refreshTokenActivePrefix+oldDigest))
 	assert.True(t, mr.Exists(refreshTokenUserPrefix+userID))
 
+	validation, err := store.Validate(ctx, oldToken)
+	require.NoError(t, err)
+	assert.Equal(t, RefreshTokenValidationActive, validation.Status)
+	assert.Equal(t, userID, validation.UserID)
+	assert.Equal(t, userID, mustGetRedisString(t, mr, refreshTokenActivePrefix+oldDigest))
+
 	rotation, err := store.Rotate(ctx, oldToken, newToken, ttl)
 	require.NoError(t, err)
 	assert.Equal(t, RefreshTokenRotated, rotation.Status)
@@ -64,6 +70,17 @@ func TestRedisRefreshTokenStore_RotateInvalid(t *testing.T) {
 	assert.Empty(t, rotation.UserID)
 }
 
+func TestRedisRefreshTokenStore_ValidateInvalid(t *testing.T) {
+	t.Parallel()
+
+	store, _ := newTestRefreshTokenStore(t)
+
+	validation, err := store.Validate(t.Context(), "missing-token")
+	require.NoError(t, err)
+	assert.Equal(t, RefreshTokenValidationInvalid, validation.Status)
+	assert.Empty(t, validation.UserID)
+}
+
 func TestRedisRefreshTokenStore_ReuseRevokesUserTokens(t *testing.T) {
 	t.Parallel()
 
@@ -81,6 +98,28 @@ func TestRedisRefreshTokenStore_ReuseRevokesUserTokens(t *testing.T) {
 	reuse, err := store.Rotate(ctx, oldToken, "attacker-new-token", time.Hour)
 	require.NoError(t, err)
 	assert.Equal(t, RefreshTokenReused, reuse.Status)
+	assert.Equal(t, userID, reuse.UserID)
+	assert.False(t, mr.Exists(refreshTokenActivePrefix+auth.HashToken(newToken)))
+	assert.False(t, mr.Exists(refreshTokenUserPrefix+userID))
+}
+
+func TestRedisRefreshTokenStore_ValidateReuseRevokesUserTokens(t *testing.T) {
+	t.Parallel()
+
+	store, mr := newTestRefreshTokenStore(t)
+	ctx := t.Context()
+	userID := "user-1"
+	oldToken := "old-refresh-token"
+	newToken := "new-refresh-token"
+
+	require.NoError(t, store.Issue(ctx, userID, oldToken, time.Hour))
+	rotation, err := store.Rotate(ctx, oldToken, newToken, time.Hour)
+	require.NoError(t, err)
+	require.Equal(t, RefreshTokenRotated, rotation.Status)
+
+	reuse, err := store.Validate(ctx, oldToken)
+	require.NoError(t, err)
+	assert.Equal(t, RefreshTokenValidationReused, reuse.Status)
 	assert.Equal(t, userID, reuse.UserID)
 	assert.False(t, mr.Exists(refreshTokenActivePrefix+auth.HashToken(newToken)))
 	assert.False(t, mr.Exists(refreshTokenUserPrefix+userID))
