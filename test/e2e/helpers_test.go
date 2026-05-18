@@ -63,7 +63,10 @@ func (s *E2ESuite) login(ctx context.Context, username, password string) (string
 
 func (s *E2ESuite) loginWithCookie(ctx context.Context, username, password string) (string, *http.Cookie, error) {
 	reqBody := fmt.Sprintf(`{"username":"%s","password":"%s"}`, username, password)
-	req, _ := http.NewRequestWithContext(ctx, "POST", s.gatewayBaseURL+"/auth/token", strings.NewReader(reqBody))
+	req, err := http.NewRequestWithContext(ctx, "POST", s.gatewayBaseURL+"/auth/token", strings.NewReader(reqBody))
+	if err != nil {
+		return "", nil, err
+	}
 	req.Header.Set("Content-Type", "application/json")
 	client := &http.Client{Timeout: httpClientTimeout}
 	resp, err := client.Do(req)
@@ -174,7 +177,10 @@ func (s *E2ESuite) getWSTicket(ctx context.Context, token string) (string, error
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return "", fmt.Errorf("응답 바디 읽기 실패: %w", err)
+		}
 		return "", &HTTPError{StatusCode: resp.StatusCode, Body: string(bodyBytes)}
 	}
 

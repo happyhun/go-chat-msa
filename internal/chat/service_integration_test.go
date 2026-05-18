@@ -66,7 +66,7 @@ func (s *ChatSuite) SetupSuite() {
 
 func (s *ChatSuite) TearDownSuite() {
 	if s.mongoClient != nil {
-		_ = s.mongoClient.Disconnect(context.Background())
+		s.Require().NoError(s.mongoClient.Disconnect(context.Background()))
 	}
 	if s.container != nil {
 		s.container.Terminate(context.Background())
@@ -77,7 +77,8 @@ func (s *ChatSuite) SetupTest() {
 	db := s.mongoClient.Database("chat_service")
 	err := db.Collection("messages").Drop(s.T().Context())
 	s.Require().NoError(err)
-	_ = db.Collection("schema_migrations").Drop(s.T().Context())
+	err = db.Collection("schema_migrations").Drop(s.T().Context())
+	s.Require().NoError(err)
 
 	s.runMigrations()
 }
@@ -139,8 +140,8 @@ func (s *ChatSuite) TestBatchCreateMessages_DuplicateIdempotent() {
 
 func (s *ChatSuite) TestListMessages_DescSort() {
 	roomID := "room_history_sort"
-	_ = sendHelperWithSeq(s, roomID, "u1", "First", "m1", 1)
-	_ = sendHelperWithSeq(s, roomID, "u2", "Second", "m2", 2)
+	s.Require().NoError(sendHelperWithSeq(s, roomID, "u1", "First", "m1", 1))
+	s.Require().NoError(sendHelperWithSeq(s, roomID, "u2", "Second", "m2", 2))
 
 	req := &pb.ListMessagesRequest{
 		RoomId: roomID,
@@ -160,7 +161,7 @@ func (s *ChatSuite) TestListMessages_DescSort() {
 func (s *ChatSuite) TestListMessages_Pagination() {
 	roomID := "room_history_paging"
 	for i := 1; i <= 5; i++ {
-		_ = sendHelperWithSeq(s, roomID, "u1", "Msg "+fmt.Sprint(i), "m"+fmt.Sprint(i), int64(i))
+		s.Require().NoError(sendHelperWithSeq(s, roomID, "u1", "Msg "+fmt.Sprint(i), "m"+fmt.Sprint(i), int64(i)))
 	}
 
 	req := &pb.ListMessagesRequest{
@@ -180,26 +181,31 @@ func (s *ChatSuite) TestListMessages_JoinedAtFiltering() {
 	roomID := "room_history_joined"
 	sender := "u1"
 
-	u1, _ := uuid.NewV7()
-	_, _ = s.client.BatchCreateMessages(s.T().Context(), &pb.BatchCreateMessagesRequest{
+	u1, err := uuid.NewV7()
+	s.Require().NoError(err)
+	_, err = s.client.BatchCreateMessages(s.T().Context(), &pb.BatchCreateMessagesRequest{
 		Requests: []*pb.CreateMessageRequest{{
 			RoomId: roomID, SenderId: sender, Content: "Old Msg", ClientMsgId: "m1", SequenceNumber: 1, MessageId: u1.String(),
 		}},
 	})
+	s.Require().NoError(err)
 
 	time.Sleep(10 * time.Millisecond)
 
-	u_ref, _ := uuid.NewV7()
+	u_ref, err := uuid.NewV7()
+	s.Require().NoError(err)
 	joinedAt := time.Unix(u_ref.Time().UnixTime())
 
 	time.Sleep(10 * time.Millisecond)
 
-	u2, _ := uuid.NewV7()
-	_, _ = s.client.BatchCreateMessages(s.T().Context(), &pb.BatchCreateMessagesRequest{
+	u2, err := uuid.NewV7()
+	s.Require().NoError(err)
+	_, err = s.client.BatchCreateMessages(s.T().Context(), &pb.BatchCreateMessagesRequest{
 		Requests: []*pb.CreateMessageRequest{{
 			RoomId: roomID, SenderId: sender, Content: "New Msg", ClientMsgId: "m2", SequenceNumber: 2, MessageId: u2.String(),
 		}},
 	})
+	s.Require().NoError(err)
 
 	resAll, err := s.client.ListMessages(s.T().Context(), &pb.ListMessagesRequest{
 		RoomId: roomID,
@@ -249,7 +255,7 @@ func (s *ChatSuite) TestSyncMessages() {
 	roomID := "room_sync"
 
 	for i := 1; i <= 10; i++ {
-		_ = sendHelperWithSeq(s, roomID, "u1", "Content "+fmt.Sprint(i), "id"+fmt.Sprint(i), int64(i))
+		s.Require().NoError(sendHelperWithSeq(s, roomID, "u1", "Content "+fmt.Sprint(i), "id"+fmt.Sprint(i), int64(i)))
 	}
 
 	req := &pb.SyncMessagesRequest{
@@ -271,32 +277,39 @@ func (s *ChatSuite) TestSyncMessages_JoinedAtFiltering() {
 	roomID := uuid.New().String()
 	sender := "u1"
 
-	u1, _ := uuid.NewV7()
-	_, _ = s.client.BatchCreateMessages(s.T().Context(), &pb.BatchCreateMessagesRequest{
+	u1, err := uuid.NewV7()
+	s.Require().NoError(err)
+	_, err = s.client.BatchCreateMessages(s.T().Context(), &pb.BatchCreateMessagesRequest{
 		Requests: []*pb.CreateMessageRequest{{
 			RoomId: roomID, SenderId: sender, Content: "Msg 1", ClientMsgId: "m1", SequenceNumber: 1, MessageId: u1.String(),
 		}},
 	})
+	s.Require().NoError(err)
 
 	time.Sleep(10 * time.Millisecond)
 
-	u_ref, _ := uuid.NewV7()
+	u_ref, err := uuid.NewV7()
+	s.Require().NoError(err)
 	joinedAt := time.Unix(u_ref.Time().UnixTime())
 
 	time.Sleep(10 * time.Millisecond)
 
-	u2, _ := uuid.NewV7()
-	_, _ = s.client.BatchCreateMessages(s.T().Context(), &pb.BatchCreateMessagesRequest{
+	u2, err := uuid.NewV7()
+	s.Require().NoError(err)
+	_, err = s.client.BatchCreateMessages(s.T().Context(), &pb.BatchCreateMessagesRequest{
 		Requests: []*pb.CreateMessageRequest{{
 			RoomId: roomID, SenderId: sender, Content: "Msg 2", ClientMsgId: "m2", SequenceNumber: 2, MessageId: u2.String(),
 		}},
 	})
-	u3, _ := uuid.NewV7()
-	_, _ = s.client.BatchCreateMessages(s.T().Context(), &pb.BatchCreateMessagesRequest{
+	s.Require().NoError(err)
+	u3, err := uuid.NewV7()
+	s.Require().NoError(err)
+	_, err = s.client.BatchCreateMessages(s.T().Context(), &pb.BatchCreateMessagesRequest{
 		Requests: []*pb.CreateMessageRequest{{
 			RoomId: roomID, SenderId: sender, Content: "Msg 3", ClientMsgId: "m3", SequenceNumber: 3, MessageId: u3.String(),
 		}},
 	})
+	s.Require().NoError(err)
 
 	res, err := s.client.SyncMessages(s.T().Context(), &pb.SyncMessagesRequest{
 		RoomId:             roomID,
