@@ -44,6 +44,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	logger.InitLogger(cfg.Env)
 
 	if cfg.Telemetry.OTelEndpoint != "" {
 		shutdown, err := telemetry.InitOTel(ctx, "user-service", cfg.Telemetry.OTelEndpoint)
@@ -133,10 +134,7 @@ func run(ctx context.Context) error {
 }
 
 func loadConfig() (*user.Config, error) {
-	env := config.GetEnv()
-	logger.InitLogger(env)
-
-	return config.Load[user.Config]("configs", "base", env)
+	return config.LoadRuntime[user.Config]()
 }
 
 func runServer(ctx context.Context, cfg *user.Config, grpcServer *grpc.Server, userService *user.Service, healthServer *health.Server) error {

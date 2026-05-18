@@ -44,6 +44,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	logger.InitLogger(cfg.Env)
 
 	if cfg.Telemetry.OTelEndpoint != "" {
 		shutdown, err := telemetry.InitOTel(ctx, "api-gateway", cfg.Telemetry.OTelEndpoint)
@@ -89,10 +90,7 @@ func run(ctx context.Context) error {
 }
 
 func loadConfig() (*apigateway.Config, error) {
-	env := config.GetEnv()
-	logger.InitLogger(env)
-
-	return config.Load[apigateway.Config]("configs", "base", env)
+	return config.LoadRuntime[apigateway.Config]()
 }
 
 const grpcRoundRobinServiceConfig = `{"loadBalancingConfig":[{"round_robin":{}}]}`

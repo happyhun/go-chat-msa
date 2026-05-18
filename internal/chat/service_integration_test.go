@@ -51,7 +51,7 @@ func (s *ChatSuite) SetupSuite() {
 
 	s.mongoClient = dbClient
 
-	cfgPath, err := filepath.Abs("../../configs")
+	cfgPath, err := filepath.Abs("../../deploy/k8s/base/apps/config/app")
 	s.Require().NoError(err)
 
 	cfg, err := config.Load[chatIntegrationConfig](cfgPath, "base", "")

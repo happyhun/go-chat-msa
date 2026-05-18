@@ -39,7 +39,6 @@ RUN apk add --no-cache ca-certificates tzdata
 # 빌더에서 생성된 정적 바이너리와 health_probe 복사
 COPY --from=builder /app/server .
 COPY --from=builder /bin/grpc_health_probe /bin/grpc_health_probe
-COPY --from=builder /app/configs/base.yaml ./configs/base.yaml
 
 # 컨테이너 실행 명령
 CMD ["./server"]

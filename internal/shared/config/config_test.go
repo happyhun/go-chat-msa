@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -16,7 +18,7 @@ type TestConfig struct {
 
 func TestLoad(t *testing.T) {
 	t.Parallel()
-	configPath := "../../../configs"
+	configPath := testConfigPath(t)
 
 	tests := []struct {
 		name     string
@@ -25,8 +27,8 @@ func TestLoad(t *testing.T) {
 		wantPort string
 	}{
 		{
-			name:     "Success: base 및 dev 설정 파일 정상 로드",
-			files:    []string{"base", "dev"},
+			name:     "Success: base 및 override 설정 파일 정상 로드",
+			files:    []string{"base", "override"},
 			wantEnv:  "dev",
 			wantPort: "8080",
 		},
@@ -46,7 +48,7 @@ func TestLoad(t *testing.T) {
 
 func TestLoad_ValidationFailure(t *testing.T) {
 	t.Parallel()
-	configPath := "../../../configs"
+	configPath := testConfigPath(t)
 
 	tests := []struct {
 		name       string
@@ -65,7 +67,7 @@ func TestLoad_ValidationFailure(t *testing.T) {
 			type InvalidConfig struct {
 				NonExistent string `mapstructure:"NON_EXISTENT" validate:"required"`
 			}
-			_, err := Load[InvalidConfig](configPath, "base", "dev")
+			_, err := Load[InvalidConfig](configPath, "base", "override")
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.errContain)
 		})
@@ -100,4 +102,27 @@ func TestLoad_FileNotFound(t *testing.T) {
 			assert.Contains(t, err.Error(), tt.errContain)
 		})
 	}
+}
+
+func testConfigPath(t *testing.T) string {
+	t.Helper()
+
+	configPath := t.TempDir()
+	writeConfig(t, configPath, "base", `
+ENV: "base"
+PORT:
+  API_GATEWAY: "8080"
+`)
+	writeConfig(t, configPath, "override", `
+ENV: "dev"
+`)
+
+	return configPath
+}
+
+func writeConfig(t *testing.T, configPath, name, content string) {
+	t.Helper()
+
+	err := os.WriteFile(filepath.Join(configPath, name+".yaml"), []byte(content), 0o600)
+	require.NoError(t, err)
 }

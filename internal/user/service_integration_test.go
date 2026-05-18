@@ -67,7 +67,7 @@ func (s *UserSuite) SetupSuite() {
 	s.db, err = database.NewPostgres(connStr)
 	s.Require().NoError(err)
 
-	cfgPath, err := filepath.Abs("../../configs")
+	cfgPath, err := filepath.Abs("../../deploy/k8s/base/apps/config/app")
 	s.Require().NoError(err)
 
 	cfg, err := config.Load[userIntegrationConfig](cfgPath, "base", "")

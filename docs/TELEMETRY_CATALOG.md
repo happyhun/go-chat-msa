@@ -69,7 +69,7 @@ OTel resource에는 공통으로 `service.name`과 `service.instance.id`가 들�
 | level | info, warn, error, debug |
 | time | RFC3339Nano |
 | msg | 로그 메시지 |
-| service | 서비스명 (Docker label) |
+| service | 서비스명 (K8s app label 또는 앱 로그 필드) |
 | source | 호출 위치 (function, file, line) |
 | trace_id | OTel 트레이스 ID |
 | span_id | OTel 스팬 ID |

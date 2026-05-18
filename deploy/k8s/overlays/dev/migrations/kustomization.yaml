@@ -4,10 +4,7 @@ kind: Kustomization
 namespace: go-chat-dev
 
 resources:
-  - ../../../base
-
-patchesStrategicMerge:
-  - delete-non-migrations.yaml
+  - ../../../base/migrations
 
 labels:
   - includeSelectors: true

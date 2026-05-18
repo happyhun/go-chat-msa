@@ -4,23 +4,26 @@ flowchart TB
     Env["K8S_ENV 선택<br/>dev 기본, test/e2e 가능"]
     NS["Namespace 결정<br/>go-chat-dev 또는 go-chat-test"]
 
-    Foundation["1. foundation apply<br/>Namespace · ConfigMap · Secret<br/>Postgres · Mongo · Redis"]
+    Foundation["1. foundation apply<br/>Secret · Postgres · Mongo · Redis"]
     DataWait["2. data layer rollout wait<br/>Postgres/Mongo/Redis Ready"]
 
-    Observability["3. observability apply<br/>Alloy · Prometheus · Grafana<br/>Loki · Tempo · Pyroscope"]
-    ObsWait["4. observability rollout wait<br/>telemetry 수신 대상 준비"]
+    ObservabilityCM["3. observability ConfigMap 생성<br/>Alloy/Prometheus/Loki/Tempo/Pyroscope/Grafana 설정"]
+    Observability["4. observability apply<br/>Alloy · Prometheus · Grafana<br/>Loki · Tempo · Pyroscope"]
+    ObsWait["5. observability rollout wait<br/>telemetry 수신 대상 준비"]
 
-    MigrationCM["5. migration ConfigMap 생성<br/>db/migrations/postgres<br/>db/migrations/mongo"]
-    MigrationJob["6. migration Job 재생성<br/>postgres-migrate · mongo-migrate"]
-    MigrationWait{"7. migration 완료?"}
+    MigrationCM["6. migration ConfigMap 생성<br/>db/migrations/postgres<br/>db/migrations/mongo"]
+    MigrationJob["7. migration Job 재생성<br/>postgres-migrate · mongo-migrate"]
+    MigrationWait{"8. migration 완료?"}
 
-    Apps["8. apps apply<br/>Deployment · Service · Ingress"]
-    AppWait["9. app rollout/readiness smoke<br/>/health · /ready · gRPC health"]
+    OpenAPICM["9. OpenAPI ConfigMap 생성<br/>Swagger UI spec"]
+    Apps["10. apps apply<br/>App ConfigMap · Deployment · Service · Ingress"]
+    BackendRestart["11. backend rollout restart/wait<br/>mounted config 반영"]
+    EdgeRestart["12. edge rollout restart/wait"]
     Done([K8s dev/test baseline ready])
 
     Fail["중단<br/>describe/logs 확인 후 수정"]
 
-    Start --> Env --> NS --> Foundation --> DataWait --> Observability --> ObsWait
+    Start --> Env --> NS --> Foundation --> DataWait --> ObservabilityCM --> Observability --> ObsWait
     ObsWait --> MigrationCM --> MigrationJob --> MigrationWait
-    MigrationWait -- "yes" --> Apps --> AppWait --> Done
+    MigrationWait -- "yes" --> OpenAPICM --> Apps --> BackendRestart --> EdgeRestart --> Done
     MigrationWait -- "no" --> Fail

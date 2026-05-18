@@ -40,6 +40,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	logger.InitLogger(cfg.Env)
 
 	if cfg.Telemetry.OTelEndpoint != "" {
 		shutdown, err := telemetry.InitOTel(ctx, "ws-gateway", cfg.Telemetry.OTelEndpoint)
@@ -80,10 +81,7 @@ func run(ctx context.Context) error {
 }
 
 func loadConfig() (*wsgateway.Config, error) {
-	env := config.GetEnv()
-	logger.InitLogger(env)
-
-	return config.Load[wsgateway.Config]("configs", "base", env)
+	return config.LoadRuntime[wsgateway.Config]()
 }
 
 func runServer(ctx context.Context, cfg *wsgateway.Config, router *wsgateway.Router, watcher *membership.Watcher) error {

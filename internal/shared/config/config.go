@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -155,12 +154,14 @@ type RateLimitConfig struct {
 	TTL   time.Duration `mapstructure:"TTL"   validate:"required,gt=0"`
 }
 
-func GetEnv() string {
-	env := os.Getenv("APP_ENV")
-	if env == "" {
-		return "dev"
-	}
-	return env
+const (
+	RuntimeConfigPath  = "configs"
+	BaseConfigName     = "base"
+	OverrideConfigName = "override"
+)
+
+func LoadRuntime[T any]() (*T, error) {
+	return Load[T](RuntimeConfigPath, BaseConfigName, OverrideConfigName)
 }
 
 func Load[T any](configPath, baseName, overrideName string) (*T, error) {

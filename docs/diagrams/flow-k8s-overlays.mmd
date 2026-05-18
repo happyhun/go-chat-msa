@@ -1,7 +1,7 @@
 flowchart TB
     Base["deploy/k8s/base<br/>공통 리소스 원형"]
 
-    Base --> Common["공통 정의<br/>Deployment · Service · Ingress<br/>Job · CronJob · ConfigMap · Secret"]
+    Base --> Common["공통 정의<br/>Deployment · Service · Ingress<br/>Job · ConfigMap · Secret"]
 
     Common --> Dev["overlays/dev<br/>로컬 개발 smoke"]
     Common --> Test["overlays/test<br/>자동 e2e correctness"]
@@ -9,18 +9,18 @@ flowchart TB
 
     subgraph DevPhases ["dev phase overlays"]
         direction LR
-        DevFoundation["foundation<br/>namespace/config/data"]
+        DevFoundation["foundation<br/>secret/data"]
         DevObs["observability<br/>Grafana stack"]
         DevMig["migrations<br/>DB schema jobs"]
-        DevApps["apps<br/>serving workloads"]
+        DevApps["apps<br/>app config + serving workloads"]
     end
 
     subgraph TestPhases ["test phase overlays"]
         direction LR
-        TestFoundation["foundation<br/>namespace/config/data"]
+        TestFoundation["foundation<br/>secret/data"]
         TestObs["observability<br/>Grafana stack"]
         TestMig["migrations<br/>DB schema jobs"]
-        TestApps["apps<br/>replicas=2 correctness gate"]
+        TestApps["apps<br/>app config + replicas=2 gate"]
     end
 
     Dev --> DevFoundation
@@ -34,7 +34,7 @@ flowchart TB
     Test --> TestApps
 
     TestApps --> FixedReplicas["fixed-replicas patch<br/>api/ws/user/chat/websocket = 2"]
-    TestFoundation --> TestConfig["APP_ENV=k8s-test<br/>go-chat-test namespace"]
-    DevFoundation --> DevConfig["APP_ENV=k8s-dev<br/>go-chat-dev namespace"]
+    TestApps --> TestConfig["override.yaml: ENV=k8s-test<br/>go-chat-test namespace"]
+    DevApps --> DevConfig["override.yaml: ENV=k8s-dev<br/>go-chat-dev namespace"]
 
     QA --> QANote["Phase 3<br/>k3s + Tailscale + HPA<br/>rollout/drain/load validation"]
