@@ -36,6 +36,10 @@ MSA 구조로 REST, gRPC, WebSocket 서비스를 분리했고, Kubernetes dev/te
 
 로컬 Kubernetes는 `kind` 기준으로 실행합니다. Docker는 Compose 실행용이 아니라 이미지 빌드와 kind image load 용도로 사용합니다.
 
+앱 설정은 apps phase의 Kustomize가 `gochat-app-config` ConfigMap으로 생성해 `/app/configs`에 마운트합니다. 공통 기본값은 `deploy/k8s/base/apps/config/app/base.yaml`, 환경별 override는 `deploy/k8s/overlays/{dev,test}/apps/config/app/override.yaml`에서 관리합니다.
+
+`deploy/k8s`는 로컬 dev/test baseline입니다. `apps`는 실제 앱 manifest, `foundation`과 `observability`는 로컬 재현을 위한 번들 인프라입니다. 운영 환경에서는 DB/Redis/observability를 managed service나 platform chart/repo로 분리하는 것을 전제로 합니다.
+
 ### Prerequisites
 
 아래 소프트웨어가 필요합니다.
@@ -69,6 +73,12 @@ make dev-up
 4. kind 클러스터로 이미지 load
 5. `dev` overlay bootstrap
 6. 주요 Deployment rollout 대기
+
+Kustomize 렌더링만 빠르게 확인하려면 아래 target을 사용합니다.
+
+```bash
+make k8s-validate
+```
 
 Ingress는 kind host port `30080`으로 노출됩니다. 실행이 끝나면 브라우저에서 아래 URL에 접속할 수 있습니다.
 

@@ -56,8 +56,8 @@
 
 | 서비스 | 역할 | 프로토콜 | 저장소 |
 | :--- | :--- | :--- | :--- |
-| api-gateway | REST API 진입점, 인증 위임, 버전 라우팅 | REST | - |
-| ws-gateway | WebSocket L7 리버스 프록시, Consistent Hashing | HTTP | - |
+| api-gateway | REST API 진입점, 인증 위임, 버전 라우팅 | REST | Redis |
+| ws-gateway | WebSocket L7 리버스 프록시, Consistent Hashing | HTTP | Redis |
 | websocket-service | 실시간 메시지 브로드캐스트, 세션/룸 관리 | WebSocket | - |
 | user-service | 사용자 및 채팅방 CRUD, Bcrypt 워커 풀, refresh token 상태 관리 | gRPC | PostgreSQL, Redis |
 | chat-service | 메시지 저장 및 조회 | gRPC | MongoDB |
@@ -380,11 +380,16 @@ REST API(`GET /rooms/{id}/messages`)에서 `last_seq` 쿼리 파라미터 유무
 
 #### 환경 격리
 
-환경별로 설정 파일을 분리합니다.
-- `configs/base.yaml`: 기본 설정값
-- `configs/dev.yaml`: 개발 환경 설정값 (오버라이드 필수 값 위주)
+K8s-only 실행 경로를 기준으로 설정 파일은 Kustomize가 소유합니다.
+- `deploy/k8s/base/apps/config/app/base.yaml`: 환경 독립 기본 설정값
+- `deploy/k8s/overlays/dev/apps/config/app/override.yaml`: dev 환경 override 파일
+- `deploy/k8s/overlays/test/apps/config/app/override.yaml`: test 환경 override 파일
 - `deploy/k8s/overlays/dev`: 로컬 개발 smoke용 K8s 설정
 - `deploy/k8s/overlays/test`: E2E correctness 검증용 K8s 설정
+
+K8s base는 `foundation`, `migrations`, `observability`, `apps`로 나누어 phase overlay가 필요한 리소스 묶음만 직접 참조합니다. 앱 런타임 설정은 독립 phase가 아니라 apps phase의 일부입니다.
+
+이미지에는 설정 파일을 포함하지 않습니다. 각 서비스는 K8s가 마운트한 `/app/configs/base.yaml`과 `/app/configs/override.yaml`을 순서대로 로드합니다. 어떤 override가 들어갈지는 Kustomize overlay가 결정합니다.
 
 #### 상수 vs YAML
 
@@ -590,19 +595,11 @@ K8s manifest는 `base`와 `overlay`로 나눕니다.
 ```text
 deploy/k8s
 ├── base
-│   ├── api-gateway.yaml
-│   ├── ws-gateway.yaml
-│   ├── websocket-service.yaml
-│   ├── user-service.yaml
-│   ├── chat-service.yaml
-│   ├── frontend.yaml
-│   ├── postgres.yaml
-│   ├── mongo.yaml
-│   ├── redis.yaml
-│   ├── migrations.yaml
-│   ├── observability.yaml
-│   ├── swagger-ui.yaml
-│   └── ingress.yaml
+│   ├── apps
+│   │   └── config
+│   ├── foundation
+│   ├── migrations
+│   └── observability
 └── overlays
     ├── dev
     │   ├── foundation
@@ -632,27 +629,32 @@ deploy/k8s
 
 K8s는 manifest를 한 번에 적용할 수 있지만, 이 시스템은 순서가 중요합니다. 앱이 뜨기 전에 DB가 준비되어야 하고, DB schema migration이 끝나기 전에 user-service/chat-service가 트래픽을 받으면 실패합니다. 또한 observability backend가 없는 상태에서 앱을 먼저 띄우면 exporter 실패 로그가 반복되어 실제 문제와 잡음을 구분하기 어렵습니다.
 
-그래서 전체 overlay와 별도로 bootstrap script가 사용할 phase overlay를 둡니다.
+그래서 환경 루트 overlay는 전체 렌더링 확인용 inventory로만 두고, 실제 실행은 bootstrap script가 사용할 phase overlay를 따릅니다.
 
 | Phase | 포함 리소스 | 목적 |
 | :--- | :--- | :--- |
-| `foundation` | Namespace, ConfigMap, Secret, Postgres, Mongo, Redis | 앱이 의존하는 기본 실행 기반 |
-| `observability` | Alloy, Prometheus, Grafana, Loki, Tempo, Pyroscope | 앱 rollout 전에 telemetry 수신 대상 준비 |
+| `foundation` | Secret, Postgres, Mongo, Redis | 앱이 의존하는 기본 실행 기반 |
+| `observability` | Alloy, Prometheus, Grafana, Loki, Tempo, Pyroscope, Grafana Ingress | 앱 rollout 전에 telemetry 수신 대상 준비 |
 | `migrations` | `postgres-migrate`, `mongo-migrate` Job | schema/index를 앱 시작 전에 확정 |
-| `apps` | 앱 Deployment, Service, Ingress, CronJob | 실제 serving workload 기동 |
+| `apps` | `gochat-app-config` ConfigMap, 앱 Deployment, Service, app Ingress | 실제 serving workload 기동 |
+
+dev/test는 같은 kind 클러스터에 동시에 올라갈 수 있으므로, observability overlay는 Alloy cAdvisor용 `ClusterRole`/`ClusterRoleBinding` 이름을 환경별로 분리합니다. namespaced 리소스는 namespace로 격리하고, cluster-scoped 리소스는 이름으로 격리합니다.
 
 `deploy/k8s/scripts/bootstrap.sh`는 이 순서를 강제합니다.
 
 ```text
-1. foundation apply
-2. Postgres/Mongo/Redis rollout wait
-3. observability apply
-4. Alloy/Prometheus/Grafana/Loki/Tempo/Pyroscope rollout wait
-5. migration ConfigMap 생성
-6. migration Job 삭제 후 재생성
-7. migration Job completion wait
-8. apps apply
-9. app rollout/readiness smoke
+1. namespace 보장
+2. foundation apply
+3. Postgres/Mongo/Redis rollout wait
+4. observability ConfigMap 생성
+5. observability apply
+6. Alloy/Prometheus/Grafana/Loki/Tempo/Pyroscope rollout wait
+7. migration ConfigMap 생성
+8. migration Job 삭제 후 재생성
+9. migration Job completion wait
+10. OpenAPI ConfigMap 생성
+11. apps apply
+12. backend/edge Deployment restart와 rollout wait
 ```
 
 마이그레이션 Job은 재실행 가능하도록 기존 Job을 먼저 삭제한 뒤 다시 만듭니다. Kubernetes Job은 완료된 뒤 같은 이름으로 다시 실행되지 않으므로, dev/test 환경에서 반복 bootstrap을 하려면 이 삭제-재생성 흐름이 필요합니다. migration 실패 시 app rollout을 중단합니다. 스키마가 불확실한 상태에서 앱을 띄워 더 큰 에러를 만들지 않기 위한 fail-fast 전략입니다.
