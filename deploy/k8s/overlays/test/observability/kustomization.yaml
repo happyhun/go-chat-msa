@@ -4,18 +4,45 @@ kind: Kustomization
 namespace: go-chat-test
 
 resources:
-  - ../../../base
+  - ../../../base/observability
 
 patches:
-  - path: patches/test-config.yaml
-  - path: patches/grafana-root-url.yaml
-  - path: patches/ingress-host.yaml
-    target:
+  - target:
+      kind: ClusterRole
+      name: gochat-alloy-cadvisor
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: gochat-alloy-cadvisor-test
+  - target:
+      kind: ClusterRoleBinding
+      name: gochat-alloy-cadvisor
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: gochat-alloy-cadvisor-test
+      - op: replace
+        path: /roleRef/name
+        value: gochat-alloy-cadvisor-test
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: grafana
+      spec:
+        template:
+          spec:
+            containers:
+              - name: grafana
+                env:
+                  - name: GF_SERVER_ROOT_URL
+                    value: "http://test.gochat.localhost:30080/grafana/"
+  - target:
       kind: Ingress
-      name: grafana
-
-patchesStrategicMerge:
-  - delete-non-observability.yaml
+    patch: |-
+      - op: add
+        path: /spec/rules/0/host
+        value: test.gochat.localhost
 
 labels:
   - includeSelectors: true

@@ -72,7 +72,7 @@ create_alloy_configmap() {
   local rendered
   rendered="$(mktemp)"
   TMP_FILES+=("${rendered}")
-  sed "s/__GOCHAT_NAMESPACE__/${NAMESPACE}/g" "${K8S_DIR}/config/alloy/config.alloy" > "${rendered}"
+  sed "s/__GOCHAT_NAMESPACE__/${NAMESPACE}/g" "${K8S_DIR}/base/observability/config/alloy/config.alloy" > "${rendered}"
   create_configmap_from_file alloy-config config.alloy "${rendered}"
 }
 
@@ -114,7 +114,7 @@ wait_job_complete() {
 }
 
 restart_backend_apps() {
-  log "restarting backend deployments to pick up mounted config"
+  log "restarting backend deployments after image/config apply"
   kubectl -n "${NAMESPACE}" rollout restart \
     deployment/user-service \
     deployment/chat-service \

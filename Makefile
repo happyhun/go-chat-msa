@@ -2,19 +2,40 @@ SHELL := /usr/bin/env bash
 .NOTPARALLEL:
 
 KIND_CLUSTER ?= go-chat
-KIND_CONFIG ?= deploy/k8s/clusters/kind-dev.yaml
+KIND_CONFIG ?= deploy/k8s/clusters/kind-local.yaml
 KUBECTL_TIMEOUT ?= 180s
 
 GO_SERVICES := api-gateway ws-gateway websocket-service user-service chat-service
+K8S_KUSTOMIZE_TARGETS := \
+	deploy/k8s/base \
+	deploy/k8s/base/foundation \
+	deploy/k8s/base/migrations \
+	deploy/k8s/base/observability \
+	deploy/k8s/base/apps \
+	deploy/k8s/overlays/dev \
+	deploy/k8s/overlays/dev/foundation \
+	deploy/k8s/overlays/dev/observability \
+	deploy/k8s/overlays/dev/migrations \
+	deploy/k8s/overlays/dev/apps \
+	deploy/k8s/overlays/test \
+	deploy/k8s/overlays/test/foundation \
+	deploy/k8s/overlays/test/observability \
+	deploy/k8s/overlays/test/migrations \
+	deploy/k8s/overlays/test/apps
 
 .PHONY: help
 help:
 	@printf 'Targets:\n'
 	@printf '  make dev-up          Create kind cluster, build/load dev images, bootstrap dev overlay\n'
 	@printf '  make test-up         Create kind cluster, build/load test images, bootstrap test overlay\n'
+	@printf '  make k8s-validate    Render all Kustomize bases/overlays\n'
 	@printf '  make dev-down        Delete dev namespace\n'
 	@printf '  make test-down       Delete test namespace\n'
 	@printf '  make kind-delete     Delete local kind cluster\n'
+
+.PHONY: check-kubectl
+check-kubectl:
+	@command -v kubectl >/dev/null || { printf 'missing required command: kubectl\n' >&2; exit 1; }
 
 .PHONY: check-prereqs
 check-prereqs:
@@ -22,6 +43,13 @@ check-prereqs:
 	@command -v kind >/dev/null || { printf 'missing required command: kind\n' >&2; exit 1; }
 	@command -v kubectl >/dev/null || { printf 'missing required command: kubectl\n' >&2; exit 1; }
 	@command -v go >/dev/null || { printf 'missing required command: go\n' >&2; exit 1; }
+
+.PHONY: k8s-validate
+k8s-validate: check-kubectl
+	@for target in $(K8S_KUSTOMIZE_TARGETS); do \
+		printf 'kubectl kustomize %s\n' "$$target"; \
+		kubectl kustomize "$$target" >/dev/null; \
+	done
 
 .PHONY: kind-up
 kind-up: check-prereqs

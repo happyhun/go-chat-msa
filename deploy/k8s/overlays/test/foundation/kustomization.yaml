@@ -4,13 +4,17 @@ kind: Kustomization
 namespace: go-chat-test
 
 resources:
-  - ../../../base
+  - ../../../base/foundation
 
 patches:
-  - path: patches/test-config.yaml
-
-patchesStrategicMerge:
-  - delete-non-foundation.yaml
+  - patch: |-
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: gochat-secret
+      stringData:
+        APP_JWT_SECRET: e2e_secret
+        APP_INTERNAL_SECRET: e2e_internal_secret
 
 labels:
   - includeSelectors: true

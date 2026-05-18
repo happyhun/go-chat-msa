@@ -4,32 +4,24 @@ kind: Kustomization
 namespace: go-chat-dev
 
 resources:
-  - ../../../base
+  - ../../../base/apps
+
+configMapGenerator:
+  - name: gochat-app-config
+    behavior: merge
+    files:
+      - override.yaml=config/app/override.yaml
+
+generatorOptions:
+  disableNameSuffixHash: true
 
 patches:
-  - path: patches/ingress-host.yaml
-    target:
+  - target:
       kind: Ingress
-      name: api-gateway
-  - path: patches/ingress-host.yaml
-    target:
-      kind: Ingress
-      name: ws-gateway-api
-  - path: patches/ingress-host.yaml
-    target:
-      kind: Ingress
-      name: ws-gateway-websocket
-  - path: patches/ingress-host.yaml
-    target:
-      kind: Ingress
-      name: swagger-ui
-  - path: patches/ingress-host.yaml
-    target:
-      kind: Ingress
-      name: frontend
-
-patchesStrategicMerge:
-  - delete-non-apps.yaml
+    patch: |-
+      - op: add
+        path: /spec/rules/0/host
+        value: dev.gochat.localhost
 
 images:
   - name: go-chat-msa/api-gateway

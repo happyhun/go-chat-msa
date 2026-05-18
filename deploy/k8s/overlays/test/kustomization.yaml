@@ -1,58 +1,10 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-namespace: go-chat-test
-
+# Render-only inventory. Runtime bootstrap applies phase overlays in order.
 resources:
   - namespace.yaml
-  - ../../base
-
-patches:
-  - path: patches/test-config.yaml
-  - path: patches/fixed-replicas.yaml
-  - path: patches/grafana-root-url.yaml
-  - path: patches/ingress-host.yaml
-    target:
-      kind: Ingress
-      name: api-gateway
-  - path: patches/ingress-host.yaml
-    target:
-      kind: Ingress
-      name: ws-gateway-api
-  - path: patches/ingress-host.yaml
-    target:
-      kind: Ingress
-      name: ws-gateway-websocket
-  - path: patches/ingress-host.yaml
-    target:
-      kind: Ingress
-      name: swagger-ui
-  - path: patches/ingress-host.yaml
-    target:
-      kind: Ingress
-      name: grafana
-  - path: patches/ingress-host.yaml
-    target:
-      kind: Ingress
-      name: frontend
-
-images:
-  - name: go-chat-msa/api-gateway
-    newTag: test
-  - name: go-chat-msa/ws-gateway
-    newTag: test
-  - name: go-chat-msa/websocket-service
-    newTag: test
-  - name: go-chat-msa/user-service
-    newTag: test
-  - name: go-chat-msa/chat-service
-    newTag: test
-  - name: go-chat-msa/frontend
-    newTag: test
-
-labels:
-  - includeSelectors: true
-    includeTemplates: true
-    pairs:
-      app.kubernetes.io/part-of: go-chat-msa
-      app.kubernetes.io/instance: go-chat-test
+  - foundation
+  - observability
+  - migrations
+  - apps

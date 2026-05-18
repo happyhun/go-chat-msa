@@ -4,13 +4,7 @@ kind: Kustomization
 namespace: go-chat-test
 
 resources:
-  - ../../../base
-
-patches:
-  - path: patches/test-config.yaml
-
-patchesStrategicMerge:
-  - delete-non-migrations.yaml
+  - ../../../base/migrations
 
 labels:
   - includeSelectors: true

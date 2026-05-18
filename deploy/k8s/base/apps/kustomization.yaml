@@ -1,0 +1,20 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - user-service.yaml
+  - chat-service.yaml
+  - api-gateway.yaml
+  - websocket-service.yaml
+  - ws-gateway.yaml
+  - frontend.yaml
+  - swagger-ui.yaml
+  - ingress.yaml
+
+configMapGenerator:
+  - name: gochat-app-config
+    files:
+      - base.yaml=config/app/base.yaml
+
+generatorOptions:
+  disableNameSuffixHash: true

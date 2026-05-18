@@ -43,8 +43,6 @@ spec:
             - name: grpc
               containerPort: 50052
           envFrom:
-            - configMapRef:
-                name: gochat-config
             - secretRef:
                 name: gochat-secret
           env:
@@ -53,13 +51,8 @@ spec:
                 fieldRef:
                   fieldPath: metadata.name
           volumeMounts:
-            - name: config-files
-              mountPath: /app/configs/k8s-dev.yaml
-              subPath: k8s-dev.yaml
-              readOnly: true
-            - name: config-files
-              mountPath: /app/configs/k8s-test.yaml
-              subPath: k8s-test.yaml
+            - name: app-config
+              mountPath: /app/configs
               readOnly: true
           startupProbe:
             tcpSocket:
@@ -83,6 +76,6 @@ spec:
             limits:
               memory: 512Mi
       volumes:
-        - name: config-files
+        - name: app-config
           configMap:
-            name: gochat-config-files
+            name: gochat-app-config
