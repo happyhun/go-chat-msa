@@ -448,7 +448,9 @@ WebSocket Service를 다중 인스턴스로 운영할 때, 같은 방의 메시�
 
 WS Gateway가 `room_id` 기반 Consistent Hashing으로 대상 WebSocket Service 노드를 결정합니다. 일반 해시(`hash(roomID) % nodeCount`)는 노드가 추가되거나 제거될 때 모든 키의 할당이 뒤바뀌어 전체 재연결이 필요하지만, Consistent Hashing은 영향받는 키가 `1/N` 수준으로 최소화됩니다. Consistent Hashing은 결정적이므로 같은 노드 목록이면 어떤 Gateway 인스턴스에서도 동일한 결과가 보장됩니다.
 
-**노드 목록은 동적**입니다. WebSocket Service 인스턴스가 부팅 시 Redis(`wss:member:{addr}` 키, TTL 30s)에 자기 주소를 등록하고 10초마다 `SET key value EX ttl`로 갱신합니다. 단순 `EXPIRE`만 호출하면 키가 이미 만료된 경우 false만 반환하고 재등록이 되지 않으므로, heartbeat는 항상 lease refresh로 봅니다. WS Gateway는 keyspace notification + 30초 SCAN 안전망으로 멤버 변경을 watch하고 자기 hash ring을 자동 동기화합니다. K8s 환경에서 HPA 스케일아웃 시 신규 파드가 자연 ring에 포함되고, 사라진 파드는 TTL 만료로 자동 제거됩니다.
+**노드 목록은 동적**입니다. WebSocket Service 인스턴스가 부팅 시 Redis(`wss:member:{addr}` 키, TTL 30s)에 자기 주소를 등록하고 10초마다 `SET key value EX ttl`로 갱신합니다. K8s에서는 이 주소가 `websocket-service` Service DNS나 ClusterIP가 아니라 각 Pod의 `POD_IP:8081`입니다. WS Gateway는 Redis membership에서 고른 owner 주소로 직접 reverse proxy하므로, room owner routing 경로에서는 Service VIP를 거치지 않습니다. Service DNS를 membership에 넣으면 모든 Pod가 같은 `websocket-service:8081` 주소로 보이고, Kubernetes Service가 다시 임의 endpoint로 분산할 수 있어 “room_id -> 특정 Pod owner”라는 Consistent Hashing 결정이 깨집니다. 단순 `EXPIRE`만 호출하면 키가 이미 만료된 경우 false만 반환하고 재등록이 되지 않으므로, heartbeat는 항상 lease refresh로 봅니다. WS Gateway는 keyspace notification + 30초 SCAN 안전망으로 멤버 변경을 watch하고 자기 hash ring을 자동 동기화합니다. K8s 환경에서 HPA 스케일아웃 시 신규 파드가 자연 ring에 포함되고, 사라진 파드는 TTL 만료로 자동 제거됩니다.
+
+애플리케이션은 membership 등록 전에 별도 bootstrap gate를 두지 않습니다. 의존성 준비와 트래픽 투입 여부는 Kubernetes startup/readiness/liveness probe와 Deployment rollout이 제어합니다. `websocket-service`의 최종 `/ready`는 Redis, user/chat gRPC health, persist queue 상태, 자기 `POD_IP:8081`의 hash ring 관측 여부를 확인하므로, K8s는 이 신호를 기준으로 Pod Ready 상태를 관리합니다.
 
 빠른 재시작 시 이전 프로세스의 정리가 새 프로세스의 lease를 지우는 사고를 막기 위해 lease token(프로세스별 UUID v4 — WebSocket ticket·refresh token과 동일한 생성 컨벤션)을 도입했습니다. Redis value에 token을 함께 저장하고, 종료 시 단순 `DEL`이 아닌 compare-and-delete Lua로 자기 token이 맞을 때만 삭제합니다.
 
@@ -668,12 +670,12 @@ dev/test는 같은 kind 클러스터에 동시에 올라갈 수 있으므로, ob
 | :--- | :--- | :--- |
 | `api-gateway` | REST API 진입점 | ClusterIP |
 | `ws-gateway` | WebSocket ticket/API 및 WebSocket reverse proxy | ClusterIP |
-| `websocket-service` | 실제 WebSocket 세션과 방별 Hub 관리 | ClusterIP |
+| `websocket-service` | 실제 WebSocket 세션과 방별 Hub 관리 | 없음 |
 | `user-service` | 사용자/방/멤버십 gRPC backend | Headless |
 | `chat-service` | 메시지 저장/조회 gRPC backend | Headless |
 | `frontend` | 정적 프론트엔드 | ClusterIP |
 
-`api-gateway`, `ws-gateway`, `frontend`, `websocket-service`는 ClusterIP Service를 사용합니다. 이들은 Ingress 또는 다른 서비스가 안정적인 DNS 이름으로 접근하면 충분합니다.
+`api-gateway`, `ws-gateway`, `frontend`는 ClusterIP Service를 사용합니다. Ingress 또는 다른 서비스가 안정적인 DNS 이름으로 접근하면 충분하기 때문입니다. `websocket-service`는 의도적으로 Service를 두지 않습니다. 실제 WebSocket room owner routing은 Redis membership에 등록된 Pod IP로 직접 들어가며, Service VIP를 거치면 Consistent Hashing이 고른 owner가 Kubernetes Service load balancing으로 다시 바뀔 수 있습니다. readiness와 rollout은 Pod/Deployment 상태만으로 판단할 수 있으므로 이 경로에는 Service가 필요하지 않습니다.
 
 반면 `user-service`와 `chat-service`는 Headless Service를 사용합니다. 일반 ClusterIP는 Service 가상 IP 하나로 트래픽을 숨기기 때문에 gRPC 클라이언트 입장에서는 backend Pod 목록을 직접 보기 어렵습니다. 이 프로젝트는 gRPC `dns:///user-service:50051`와 `round_robin` 정책을 사용하므로, DNS가 여러 Pod IP를 반환해야 RPC 단위 분산이 가능합니다. Headless Service는 `clusterIP: None`으로 Service VIP를 만들지 않고 endpoint Pod IP들을 DNS 응답으로 노출합니다.
 
