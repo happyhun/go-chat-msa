@@ -716,6 +716,8 @@ Ingress는 브라우저와 테스트 클라이언트가 접근하는 외부 경�
 
 같은 kind 클러스터에 `dev`와 `test` namespace를 동시에 띄울 수 있으므로, Ingress는 overlay에서 host를 분리합니다. `dev`는 `dev.gochat.localhost:30080`, `test`는 `test.gochat.localhost:30080`을 사용합니다. namespace만 다르고 host/path가 같으면 ingress-nginx 입장에서는 외부 라우팅 규칙이 충돌할 수 있기 때문에, 환경 경계는 namespace와 Ingress host를 함께 사용해 나눕니다.
 
+kind 로컬 클러스터에서는 control-plane node에만 `30080 -> 80`, `30443 -> 443` host port mapping을 둡니다. 따라서 ingress-nginx controller도 그 node에 떠야 로컬 브라우저 요청이 자연스럽게 Ingress controller로 들어갑니다. `deploy/k8s/clusters/kind-local.yaml`은 control-plane node에 `ingress-ready=true` 커스텀 라벨을 붙이고, `make kind-up`은 ingress-nginx controller Deployment에 `nodeSelector`를 patch해 이 라벨이 있는 node로 스케줄되게 합니다. 이 라벨명은 Kubernetes 표준 라벨이 아니라 kind 로컬 Ingress 진입점을 맞추기 위한 프로젝트 컨벤션입니다.
+
 프론트엔드와 API를 같은 origin 아래에 두는 이유는 인증 쿠키 때문입니다. refresh token은 `HttpOnly` 쿠키로 전달되므로 cross-origin 구조로 만들면 CORS와 credential 정책을 추가로 설계해야 합니다. local K8s baseline에서는 Ingress path routing으로 same-origin을 유지해 인증 흐름을 단순하게 만듭니다.
 
 WebSocket 경로는 일반 HTTP와 달리 upgrade 연결이 길게 유지됩니다. 그래서 Ingress에는 WebSocket timeout 관련 nginx annotation을 명시합니다. 짧은 기본 timeout에 의해 정상 채팅 연결이 끊기는 문제를 피하기 위한 설정입니다.
