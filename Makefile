@@ -9,8 +9,8 @@ GO_SERVICES := api-gateway ws-gateway websocket-service user-service chat-servic
 K8S_KUSTOMIZE_TARGETS := \
 	deploy/k8s/base \
 	deploy/k8s/base/foundation \
-	deploy/k8s/base/migrations \
 	deploy/k8s/base/observability \
+	deploy/k8s/base/migrations \
 	deploy/k8s/base/apps \
 	deploy/k8s/overlays/dev \
 	deploy/k8s/overlays/dev/foundation \
