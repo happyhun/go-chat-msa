@@ -37,12 +37,17 @@ func (f fakeHealthClient) Watch(context.Context, *grpc_health_v1.HealthCheckRequ
 	return nil, nil
 }
 
-func TestRouter_Ready(t *testing.T) {
-	t.Parallel()
+func newTestRedisClient(t *testing.T) *redis.Client {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	redisClient := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = redisClient.Close() })
+	return redisClient
+}
 
-	const selfAddr = "self:8081"
-	cfg := WebSocketConfig{
-		AdvertisedAddr: selfAddr,
+func testWebSocketConfig(advertisedAddr string) WebSocketConfig {
+	return WebSocketConfig{
+		AdvertisedAddr: advertisedAddr,
 		Manager: config.ManagerConfig{
 			WriteWait:   time.Second,
 			PongWait:    time.Second,
@@ -55,16 +60,20 @@ func TestRouter_Ready(t *testing.T) {
 			WSMessage: config.RateLimitConfig{RPS: 100, Burst: 100, TTL: time.Minute},
 		},
 	}
+}
+
+func TestRouter_Ready(t *testing.T) {
+	t.Parallel()
+
+	const selfAddr = "self:8081"
+	cfg := testWebSocketConfig(selfAddr)
+	serving := fakeHealthClient{status: grpc_health_v1.HealthCheckResponse_SERVING}
 
 	t.Run("Success: dependencies and self ring member ready", func(t *testing.T) {
 		t.Parallel()
-		mr := miniredis.RunT(t)
-		redisClient := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-		t.Cleanup(func() { _ = redisClient.Close() })
 
-		serving := fakeHealthClient{status: grpc_health_v1.HealthCheckResponse_SERVING}
 		r := NewRouter(nil, nil, cfg, loadbalance.New([]string{selfAddr}),
-			WithRedisClient(redisClient),
+			WithRedisClient(newTestRedisClient(t)),
 			WithHealthClients(serving, serving))
 
 		w := httptest.NewRecorder()
@@ -74,13 +83,9 @@ func TestRouter_Ready(t *testing.T) {
 
 	t.Run("Failure: self not present in ring", func(t *testing.T) {
 		t.Parallel()
-		mr := miniredis.RunT(t)
-		redisClient := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-		t.Cleanup(func() { _ = redisClient.Close() })
 
-		serving := fakeHealthClient{status: grpc_health_v1.HealthCheckResponse_SERVING}
 		r := NewRouter(nil, nil, cfg, loadbalance.New([]string{"other:8081"}),
-			WithRedisClient(redisClient),
+			WithRedisClient(newTestRedisClient(t)),
 			WithHealthClients(serving, serving))
 
 		w := httptest.NewRecorder()

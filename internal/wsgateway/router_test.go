@@ -81,6 +81,30 @@ func testRouterWithRefresher(t *testing.T, hashRing *loadbalance.HashRing, refre
 	return NewRouter(testConfig(), hashRing, refresher, client)
 }
 
+func TestRouter_Ready(t *testing.T) {
+	t.Parallel()
+
+	t.Run("Success: redis and membership ready", func(t *testing.T) {
+		t.Parallel()
+
+		r := testRouterWithRefresher(t, loadbalance.New([]string{"node-1"}), &fakeRingRefresher{observed: true})
+
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/ready", nil))
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("Failure: ring empty", func(t *testing.T) {
+		t.Parallel()
+
+		r := testRouterWithRefresher(t, loadbalance.New(nil), &fakeRingRefresher{observed: true})
+
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/ready", nil))
+		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	})
+}
+
 func TestRouter_HandleInternalBroadcast(t *testing.T) {
 	t.Parallel()
 	r := testRouter(t, loadbalance.New([]string{"node1", "node2"}))

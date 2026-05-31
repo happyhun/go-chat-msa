@@ -36,6 +36,14 @@ func (f fakeHealthClient) Watch(context.Context, *grpc_health_v1.HealthCheckRequ
 	return nil, nil
 }
 
+func newTestRedisClient(t *testing.T) *redis.Client {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	redisClient := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = redisClient.Close() })
+	return redisClient
+}
+
 func TestRouter_Ready(t *testing.T) {
 	t.Parallel()
 
@@ -56,12 +64,9 @@ func TestRouter_Ready(t *testing.T) {
 
 	t.Run("Success: all dependencies ready", func(t *testing.T) {
 		t.Parallel()
-		mr := miniredis.RunT(t)
-		redisClient := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-		t.Cleanup(func() { _ = redisClient.Close() })
 
 		serving := fakeHealthClient{status: grpc_health_v1.HealthCheckResponse_SERVING}
-		r := NewRouter(cfg, nil, nil, redisClient, WithHealthClients(serving, serving))
+		r := NewRouter(cfg, nil, nil, newTestRedisClient(t), WithHealthClients(serving, serving))
 
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/ready", nil))
@@ -70,13 +75,10 @@ func TestRouter_Ready(t *testing.T) {
 
 	t.Run("Failure: grpc dependency not serving", func(t *testing.T) {
 		t.Parallel()
-		mr := miniredis.RunT(t)
-		redisClient := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-		t.Cleanup(func() { _ = redisClient.Close() })
 
 		serving := fakeHealthClient{status: grpc_health_v1.HealthCheckResponse_SERVING}
 		notServing := fakeHealthClient{status: grpc_health_v1.HealthCheckResponse_NOT_SERVING}
-		r := NewRouter(cfg, nil, nil, redisClient, WithHealthClients(notServing, serving))
+		r := NewRouter(cfg, nil, nil, newTestRedisClient(t), WithHealthClients(notServing, serving))
 
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/ready", nil))
