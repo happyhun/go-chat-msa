@@ -907,4 +907,10 @@ k3s `qa` overlay에서 HPA 스케일아웃·스케일인, rolling update, `kubec
 
 ### 7.4 프로덕션 보안
 
-프로덕션용 JWT 시크릿과 내부 통신 시크릿을 YAML 파일이 아닌 환경변수로 주입해야 합니다. 또한, 처리율 제한의 클라이언트 IP 추출도 Trusted Proxy 기반 파싱으로 전환이 필요합니다.
+현재 `local-secret.yaml`에 들어 있는 값은 로컬 dev/test를 쉽게 띄우기 위한 샘플입니다. Git에 올라가도 되는 값은 이런 샘플 값뿐입니다.
+
+운영용 JWT secret, 내부 통신 secret, DB 비밀번호 같은 실제 credential은 YAML 파일에 평문으로 적어서 Git에 올리면 안 됩니다. Kubernetes Secret도 기본적으로는 base64 인코딩된 API object라서, 그것만으로 안전한 비밀 저장소라고 보면 안 됩니다.
+
+운영으로 확장한다면 Secret 값은 Git 밖의 안전한 저장소나 배포 파이프라인에서 주입하는 방향으로 분리해야 합니다. 그때 어떤 도구를 쓸지는 실제 운영 환경에 맞춰 정하고, 접근 권한, 암호화, 주기적 교체 절차를 함께 설계합니다.
+
+또한, 처리율 제한의 클라이언트 IP 추출도 Trusted Proxy 기반 파싱으로 전환이 필요합니다.
