@@ -433,6 +433,7 @@ Go `http.Server.Shutdown`은 WebSocket처럼 hijack된 연결을 기다리지 �
 각 서비스는 타겟당 단일 `grpc.ClientConn`을 공유합니다.  
 `ClientConn`은 HTTP/2 multiplexing으로 다중 요청을 동시 처리하며, keepalive 파라미터로 장기 유휴 연결을 유지합니다.  
 내부적으로는 DNS resolver가 반환한 backend endpoint마다 subchannel(=long-lived HTTP/2 connection)을 두고, `round_robin` LB 정책으로 RPC를 subchannel들 사이에 분배합니다. 따라서 `ClientConn`은 single connection 추상이 아니라 backend별 connection 집합 + LB 정책을 묶은 채널이며, K8s Headless Service의 multi-A 응답과 결합해 RPC 단위 분산을 달성합니다.  
+이 endpoint 집합은 DNS re-resolve가 일어날 때 갱신됩니다. gRPC-Go는 RPC마다 DNS를 조회하지 않으며, 기존 subchannel 연결 실패, channel idle 재진입, `ResolveNow` 트리거 같은 시점에 재조회합니다. 따라서 HPA scale-down은 끊긴 subchannel을 통해 비교적 자연스럽게 감지되지만, scale-up은 기존 subchannel이 모두 정상일 경우 새 Pod가 즉시 round_robin 대상에 들어간다고 보장하지 않습니다. gRPC-Go v1.79.2의 DNS `MinResolutionInterval = 30s`는 주기 polling이 아니라 재조회 rate limit입니다. 운영 HPA에서 scale-up 반영 지연이 문제가 되면 EndpointSlice watch 기반 resolver, xDS/service mesh, connection recycling 같은 보완책을 별도로 검토합니다.  
 저장 파이프라인은 배치 워커 풀로, 핸드셰이크 경로는 ws-gateway rate limiter로 동시 호출 수를 억제해 HTTP/2 권장치(연결당 ~100 스트림) 이내로 유도합니다.  
 추후 권장치를 초과하는 병목이 관측되면 커넥션 풀을 도입할 예정입니다.
 
@@ -678,9 +679,11 @@ dev/test는 같은 kind 클러스터에 동시에 올라갈 수 있으므로, ob
 
 이 선택의 트레이드오프는 책임 위치입니다. Kubernetes Service가 L4 부하분산을 대신 해주는 구조보다 클라이언트 설정이 더 중요해집니다. 대신 gRPC의 장기 HTTP/2 연결 특성을 고려해 backend별 subchannel을 만들고 RPC를 분배할 수 있어, 다중 user/chat replica에서 더 의도한 방식으로 분산됩니다.
 
+다만 Headless DNS는 endpoint 변경을 gRPC client에 push하는 discovery 채널이 아닙니다. Pod 삭제는 기존 연결 실패로 재조회가 유도되기 쉽지만, Pod 추가는 기존 연결이 건강하면 다음 re-resolve 전까지 반영되지 않을 수 있습니다. 현재 dev/test baseline은 replica 수를 고정해 멀티 인스턴스 정합성을 검증하는 환경이므로 이 한계를 허용합니다. HPA처럼 Pod 수가 동적으로 바뀌는 환경에서는 EndpointSlice/CoreDNS 상태와 실제 Pod별 gRPC request 분포를 함께 보고 scale-up 반영 지연을 측정합니다.
+
 dev/test baseline에서는 CPU request와 CPU limit을 모두 두지 않습니다. 이 두 환경의 목적은 성능 튜닝이 아니라 각각 “로컬에서 앱을 쉽게 띄워 확인하는 것”과 “고정 replica 상태에서 기능 정합성을 검증하는 것”입니다. 여기서 CPU를 예약하면 작은 로컬 머신에서 스케줄링 장벽이 올라가고, CPU limit을 두면 throttling 때문에 테스트 지연이 실제 애플리케이션 병목처럼 보일 수 있습니다. 그래서 dev/test는 CPU를 클러스터가 공유하도록 두고, 성능 기준값은 만들지 않습니다.
 
-memory는 CPU와 다릅니다. 메모리는 압축 가능한 자원이 아니어서 한 Pod가 계속 늘어나면 노드 전체가 불안정해질 수 있습니다. 그래서 dev/test baseline에서도 memory request와 memory limit은 둡니다. request는 로컬 클러스터가 대략적인 메모리 예약량을 계산하게 하고, limit은 runaway allocation이나 observability stack의 예기치 않은 증가를 막는 안전장치입니다. CPU request, HPA target, 부하 중 throttling 여부 같은 운영성 값은 Phase 3의 `qa` overlay에서 멀티 노드/k6 관측 결과를 기준으로 별도 설정합니다.
+memory는 CPU와 다릅니다. 메모리는 압축 가능한 자원이 아니어서 한 Pod가 계속 늘어나면 노드 전체가 불안정해질 수 있습니다. 그래서 dev/test baseline에서도 memory request와 memory limit은 둡니다. request는 로컬 클러스터가 대략적인 메모리 예약량을 계산하게 하고, limit은 runaway allocation이나 observability stack의 예기치 않은 증가를 막는 안전장치입니다. CPU request, HPA target, 부하 중 throttling 여부 같은 운영성 값은 향후 `qa` overlay에서 멀티 노드/k6 관측 결과를 기준으로 별도 설정합니다.
 
 ### 4.4 Local Data Layer
 
@@ -692,7 +695,7 @@ Postgres, Mongo, Redis도 dev/test baseline에서는 K8s 안에 띄웁니다. �
 | Mongo | Deployment + ClusterIP | `emptyDir` | message schema/index와 catch-up 검증 |
 | Redis | Deployment + ClusterIP | 메모리 | refresh token TTL, WebSocket ticket, membership 검증 |
 
-운영 환경이라면 StatefulSet, PVC, backup/restore, replication, credential rotation, network policy까지 고려해야 합니다. 하지만 이 프로젝트의 Phase 2 목표는 “로컬 K8s에서 앱 실행 모델을 검증하는 것”입니다. 그래서 data layer는 단순하게 두고, 운영형 persistence 설계는 Phase 3 이후 과제로 분리했습니다.
+운영 환경이라면 StatefulSet, PVC, backup/restore, replication, credential rotation, network policy까지 고려해야 합니다. 하지만 현재 dev/test 목표는 “로컬 K8s에서 앱 실행 모델을 검증하는 것”입니다. 그래서 data layer는 단순하게 두고, 운영형 persistence 설계는 별도 과제로 분리했습니다.
 
 이 결정은 의도적인 절충입니다. 처음부터 운영형 DB 배포까지 넣으면 학습 범위가 지나치게 넓어지고, WebSocket owner, gRPC discovery, readiness, migration, e2e 같은 핵심 마이그레이션 검증이 흐려집니다. 대신 local data layer는 매번 깨끗하게 재생성 가능하고 e2e cleanup도 단순해집니다.
 
@@ -773,7 +776,7 @@ E2E cleanup에서는 Redis `FLUSHALL`을 사용하지 않습니다. Redis에는 
 
 Docker Compose는 더 이상 mainline의 실행 경로가 아닙니다. 개발 확인과 e2e 모두 K8s 기준으로 정리했습니다. 다만 Docker 자체는 계속 사용합니다. 로컬 이미지를 빌드하고 kind/OrbStack/K8s 클러스터에 이미지를 제공하기 위해 Dockerfile은 여전히 필요합니다.
 
-Compose 제거 전에 `legacy-compose-baseline` annotated tag를 남겼습니다. Phase 3에서 “Compose 대비 K8s 성능 지표”를 비교하고 싶을 때, mainline에 Compose 파일을 계속 들고 갈 필요 없이 해당 tag를 기준점으로 참조할 수 있습니다.
+Compose 제거 전에 `legacy-compose-baseline` annotated tag를 남겼습니다. 나중에 “Compose 대비 K8s 성능 지표”를 비교하고 싶을 때, mainline에 Compose 파일을 계속 들고 갈 필요 없이 해당 tag를 기준점으로 참조할 수 있습니다.
 
 이 결정의 장점은 현재 실행 경로가 단순해진다는 점입니다. 문서와 e2e가 K8s 하나만 바라보므로 “Compose에서는 되는데 K8s에서는 안 되는” 이중 현실이 줄어듭니다. 단점은 K8s bootstrap이 선행되어야 하므로 처음 실행 장벽이 올라간다는 것입니다. 그래서 README는 K8s dev/test 실행 명령을 authoritative runbook으로 두고, 디자인 문서는 왜 그런 구조가 되었는지를 설명하는 역할로 나눕니다.
 
@@ -896,7 +899,7 @@ Mac/Windows 호스트의 Linux VM을 Tailscale로 연결하고, k3s 기반 멀�
 
 ### 7.2 K8s 분산 동작 검증
 
-k3s `qa` overlay에서 HPA 스케일아웃·스케일인, rolling update, `kubectl delete pod`, node drain 시나리오를 검증합니다. 특히 WebSocket owner rebalance 중 in-flight 메시지가 저장 ack 이후 close되는지, gRPC round_robin이 user/chat 다중 파드로 분산되는지 확인합니다.
+k3s `qa` overlay에서 HPA 스케일아웃·스케일인, rolling update, `kubectl delete pod`, node drain 시나리오를 검증합니다. 특히 WebSocket owner rebalance 중 in-flight 메시지가 저장 ack 이후 close되는지, gRPC round_robin이 user/chat 다중 파드로 분산되는지, HPA scale-up 후 새 user/chat Pod가 각 client의 subchannel 목록에 들어오기까지 지연이 어느 정도인지 확인합니다.
 
 ### 7.3 Custom Metrics HPA
 
