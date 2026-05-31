@@ -790,7 +790,7 @@ Compose 제거 전에 `legacy-compose-baseline` annotated tag를 남겼습니다
 
 | 구분 | 빌드 태그 | 파일 네이밍 | 함수 네이밍 | 실행 방식 |
 | :--- | :--- | :--- | :--- | :--- |
-| 단위 테스트 | 없음 | `*_test.go` | `TestStruct_Method`, `TestFunc`, `Test_func` | 테이블 기반, `t.Parallel()` |
+| 단위 테스트 | 없음 | `*_test.go` | `TestStruct_Method`, `TestFunc`, `Test_func` | mock/stub/fake/miniredis, 테이블 기반, `t.Parallel()` |
 | 통합 테스트 | `//go:build integration` | `*_integration_test.go` | `(s *Suite) TestMethod_Scenario` | testify/suite, 순차 실행 |
 | E2E 테스트 | `//go:build e2e` | `test/e2e/*_test.go` | `(s *E2ESuite) TestScenario_##_Name` | testify/suite, 순차 실행 |
 
@@ -798,13 +798,15 @@ Compose 제거 전에 `legacy-compose-baseline` annotated tag를 남겼습니다
 
 #### 단위 테스트
 
-- 외부 의존성을 모두 모킹
+- 외부 프로세스나 네트워크에 의존하지 않는다. 필요한 의존성은 mock, stub, fake, in-memory test double로 대체한다.
+- `miniredis`는 Redis fake로 보고 단위 테스트에서 허용한다. 단, 실제 Redis 서버 설정이나 이벤트 호환성을 검증하는 목적이면 통합 테스트로 승격한다.
 - 테이블 기반 서브테스트(`t.Run`)로 정의하여 `t.Parallel()` 병렬 실행
 - 서브테스트 네이밍: `Success: 설명` / `Failure: 설명 (에러코드)`
 
 #### 통합 테스트
 
-- Testcontainers로 실제 DB를 띄우고 시나리오 위주로 검증
+- Testcontainers로 실제 DB/Redis를 띄우고 시나리오 위주로 검증
+- Redis keyspace notification, expire 이벤트, 실제 서버 설정처럼 fake 구현과 운영 Redis의 차이가 의미 있는 동작은 통합 테스트에서 검증한다.
 - 데이터 오염 방지를 위해 순차 실행, 매 테스트마다 데이터 초기화
 
 #### E2E 테스트
