@@ -17,13 +17,14 @@ flowchart TB
 
     OpenAPICM["9. OpenAPI ConfigMap 생성<br/>Swagger UI spec"]
     Apps["10. apps apply<br/>App ConfigMap · Deployment · Service · Ingress"]
-    BackendRestart["11. backend rollout restart/wait<br/>mounted config 반영"]
-    EdgeRestart["12. edge rollout restart/wait"]
+    CoreRestart["11. user/chat rollout restart/wait<br/>gRPC backend 먼저 안정화"]
+    WSRestart["12. websocket rollout restart/wait<br/>새 gRPC endpoint 기준 연결"]
+    EdgeRestart["13. edge rollout restart/wait"]
     Done([K8s dev/test baseline ready])
 
     Fail["중단<br/>describe/logs 확인 후 수정"]
 
     Start --> Env --> NS --> Foundation --> DataWait --> ObservabilityCM --> Observability --> ObsWait
     ObsWait --> MigrationCM --> MigrationJob --> MigrationWait
-    MigrationWait -- "yes" --> OpenAPICM --> Apps --> BackendRestart --> EdgeRestart --> Done
+    MigrationWait -- "yes" --> OpenAPICM --> Apps --> CoreRestart --> WSRestart --> EdgeRestart --> Done
     MigrationWait -- "no" --> Fail

@@ -13,14 +13,14 @@ sequenceDiagram
     end
 
     Note over Reg1, Ring: 1. 부팅 시 등록 및 초기 reconcile
-    Reg1->>Reg1: lease token 생성 (UUID v4)
+    Reg1->>Reg1: membership token 생성 (UUID v4)
     Reg1->>Redis: SET wss:member:addr {token} EX 30
     Watcher->>Redis: PSUBSCRIBE __keyspace@0__:wss:member:*
     Watcher->>Redis: SCAN wss:member:*
     Redis-->>Watcher: 현재 멤버 목록 (dedupe)
     Watcher->>Ring: Set(addrs)
 
-    Note over Reg1, Ring: 2. 정상 운영 (heartbeat = lease refresh)
+    Note over Reg1, Ring: 2. 정상 운영 (heartbeat = membership refresh)
     loop 10초마다
         Reg1->>Redis: SET wss:member:addr {token} EX 30
     end

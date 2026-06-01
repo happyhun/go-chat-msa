@@ -6,6 +6,7 @@ sequenceDiagram
     participant Ring_G as Gateway Ring
     participant WSS as WebSocket Service
     participant Ring_W as WSS Ring
+    participant Manager as WSS Manager
     participant Watcher_G as Gateway Watcher
 
     Note over Client, Watcher_G: 정상 경로 — ring 동기화 완료
@@ -16,8 +17,23 @@ sequenceDiagram
     Gateway->>WSS: 프록시 (Upgrade)
     WSS->>Ring_W: Locate(R)
     Ring_W-->>WSS: WSS addr (== self)
+    WSS->>Manager: PrepareRegister(R)
+    Manager-->>WSS: ready
     WSS-->>Gateway: 101 Switching Protocols
     Gateway-->>Client: hijack 후 양방향 터널
+
+    Note over Client, Watcher_G: handoff 경로 — owner는 맞지만 이전 lease가 아직 남음
+
+    Client->>Gateway: GET /ws?room_id=R&ticket=T
+    Gateway->>Ring_G: Locate(R)
+    Ring_G-->>Gateway: WSS-B addr
+    Gateway->>WSS: 프록시 (WSS-B)
+    WSS->>Ring_W: Locate(R)
+    Ring_W-->>WSS: WSS-B addr (== self)
+    WSS->>Manager: PrepareRegister(R)
+    Manager-->>WSS: lease busy / handoff in progress
+    WSS-->>Gateway: HTTP 503 Retry-After: 1
+    Gateway-->>Client: 503 Service Unavailable
 
     Note over Client, Watcher_G: 이상 경로 — 멤버십 lag (Gateway 정보 stale)
 

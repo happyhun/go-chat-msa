@@ -128,14 +128,14 @@ flowchart TB
         direction LR
         UserSvc["User Service<br/>users · rooms · memberships<br/>refresh token state"]
         ChatSvc["Chat Service<br/>message persistence<br/>history lookup"]
-        WSSvc["WebSocket Service<br/>sessions · hubs<br/>broadcast · persistence queue"]
+        WSSvc["WebSocket Service<br/>sessions · hubs<br/>room lease · persistence queue"]
     end
 
     subgraph Data ["Data Stores"]
         direction LR
         PG[("PostgreSQL")]
         MG[("MongoDB")]
-        RD[("Redis")]
+        RD[("Redis<br/>membership · room lease")]
     end
 
     Browser == "REST /api" ==> AGW
@@ -162,7 +162,7 @@ flowchart TB
 |:---|:---|:---|:---|
 | api-gateway | REST API 진입점, 인증 위임, 버전 라우팅 | REST | Redis |
 | ws-gateway | WebSocket L7 리버스 프록시, Consistent Hashing | HTTP | Redis |
-| websocket-service | 실시간 메시지 브로드캐스트, 세션/룸 관리 | WebSocket | - |
+| websocket-service | 실시간 메시지 브로드캐스트, 세션/룸 관리, room handoff | WebSocket | Redis(control plane) |
 | user-service | 사용자 및 채팅방 CRUD, Bcrypt 워커 풀, refresh token 상태 관리 | gRPC | PostgreSQL, Redis |
 | chat-service | 메시지 저장 및 조회 | gRPC | MongoDB |
 
@@ -177,6 +177,7 @@ flowchart TB
 - [인증 및 티켓 발급 시퀀스](docs/diagrams/seq-auth-ticket.mmd)
 - [Refresh Token rotation 시퀀스](docs/diagrams/seq-refresh-token-rotation.mmd)
 - [WebSocket 세션 생명주기](docs/diagrams/seq-websocket.mmd)
+- [WebSocket room handoff 시퀀스](docs/diagrams/seq-rebalance.mmd)
 
 ---
 
@@ -186,9 +187,9 @@ flowchart TB
 
 1. **Bcrypt 워커 풀 - CPU 경합 방지**: 무제한 고루틴 대신 CPU 코어수의 워커로 동시성을 제한하여 CPU 바운드 작업 효율성을 높였습니다. 대기열이 꽉 차면 즉시 거부해서 연쇄 장애를 막습니다.
 
-2. **채팅방 기반 라우팅 - WebSocket 분배**: Redis Pub/Sub으로 노드 간 중계하는 대신, 동일 채팅방의 모든 세션을 한 노드에 모아 인메모리 브로드캐스트합니다. 외부 인프라 병목을 줄이고, 네트워크 RTT를 없애 성능을 높였습니다.
+2. **채팅방 기반 라우팅 - WebSocket 분배**: Redis Pub/Sub으로 노드 간 중계하는 대신, 동일 채팅방의 모든 세션을 한 노드에 모아 인메모리 브로드캐스트합니다. Redis는 membership과 room lease 같은 control plane에만 사용하고, 메시지 hot path에서는 외부 왕복을 제거했습니다.
 
-3. **Actor 모델 - WebSocket 계층 분리**: Router, Manager, Hub, Session 4계층으로 나누고, Manager와 Hub는 각각 단일 고루틴의 `select` 루프에서 상태를 순차 처리합니다. 외부와는 채널로만 통신하기 때문에 뮤텍스 없이 동시성 안전합니다.
+3. **Actor 모델 - WebSocket 계층 분리**: Router, Manager, Hub, Session 4계층으로 나누고, Manager와 Hub는 각각 단일 고루틴의 `select` 루프에서 상태를 순차 처리합니다. Router는 upgrade 전 owner/lease 상태를 확인하고, Manager는 room lease와 Hub 생명주기를 관리하며, Hub는 sequence/fan-out/persist drain에 집중합니다.
 
 4. **Kubernetes 실행 경로 단일화**: Docker Compose 실행 경로를 제거하고 dev/test 모두 K8s overlay로 실행합니다. `dev`는 단일 인스턴스 수동 확인, `test`는 2 replicas 기반 E2E 정합성 검증에 집중합니다.
 

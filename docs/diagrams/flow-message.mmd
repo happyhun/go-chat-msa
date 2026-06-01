@@ -19,6 +19,7 @@ flowchart TB
         direction TB
         HubLoop(("Hub Actor Loop"))
         Idempotency["Dedup LRU"]
+        Seq["room sequence_number"]
         Pending["pendingPersist"]
     end
 
@@ -41,8 +42,12 @@ flowchart TB
 
     ManagerLoop -- "시스템 메시지 주입" --> HubLoop
 
-    HubLoop -. "중복 검사" .-> Idempotency
-    HubLoop ==>|"브로드캐스트"| Buffer
+    HubLoop -. "client_msg_id 중복 검사" .-> Idempotency
+    HubLoop -- "persist slot reserve" --> PersistCh
+    PersistCh -. "queue full" .-> RP
+    RP -. "transient error<br/>sequence 증가 없음" .-> Socket
+    HubLoop -. "slot 확보 후 sequence++" .-> Seq
+    HubLoop ==>|"fan-out"| Buffer
     Buffer ==> WP
     WP ==> Socket
     Socket ==> Client
@@ -52,6 +57,7 @@ flowchart TB
     PersistCh --> WorkerPool
     WorkerPool -- "배치 저장" --> ChatService
     WorkerPool -. "성공 / idempotent success" .-> Pending
+    WorkerPool -. "sequence conflict<br/>split-brain metric" .-> Pending
     WorkerPool -. "retryable 실패" .-> RetryCh
     RetryCh -. "재시도 대기" .-> RetryWorker
     RetryWorker -. "지수 백오프 재시도" .-> ChatService

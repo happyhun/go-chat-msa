@@ -58,7 +58,7 @@
 | :--- | :--- | :--- | :--- |
 | api-gateway | REST API 진입점, 인증 위임, 버전 라우팅 | REST | Redis |
 | ws-gateway | WebSocket L7 리버스 프록시, Consistent Hashing | HTTP | Redis |
-| websocket-service | 실시간 메시지 브로드캐스트, 세션/룸 관리 | WebSocket | - |
+| websocket-service | 실시간 메시지 브로드캐스트, 세션/룸 관리, room handoff | WebSocket | Redis(control plane) |
 | user-service | 사용자 및 채팅방 CRUD, Bcrypt 워커 풀, refresh token 상태 관리 | gRPC | PostgreSQL, Redis |
 | chat-service | 메시지 저장 및 조회 | gRPC | MongoDB |
 
@@ -311,9 +311,11 @@ TTL 90일은 채팅 서비스 특성상 오래된 메시지의 조회 빈도가 
 
 1. 클라이언트가 WS Gateway에 티켓을 제시하여 WebSocket 연결을 요청합니다.
 2. WS Gateway가 티켓을 검증하고, Consistent Hashing으로 대상 노드를 선택하여 프록시합니다.
-3. WebSocket Service의 Router가 User Service에 멤버십을 검증한 뒤 연결을 업그레이드합니다.
-4. Router가 Manager에 세션 등록을 요청하면, Manager가 해당 채팅방의 Hub를 찾거나 새로 생성합니다.
-5. Hub가 세션을 생성하고 읽기/쓰기 펌프를 가동합니다.
+3. WebSocket Service의 Router가 User Service에 멤버십을 검증하고, 자기 hash ring 기준 owner인지 self-check합니다.
+4. Router가 upgrade 전에 `Manager.PrepareRegister`를 호출합니다. 이 단계에서 기존 Hub를 찾거나, 새 Hub를 만들기 위해 room lease를 먼저 획득합니다.
+5. room lease가 busy이거나 handoff 중이면 upgrade하지 않고 `503 Service Unavailable`과 `Retry-After: 1`을 반환합니다.
+6. 준비가 끝난 뒤에만 WebSocket upgrade를 수행하고, upgrade 성공 시 `Commit`으로 Hub에 세션을 등록합니다. upgrade 또는 commit 실패로 새 Hub에 세션이 없으면 lease를 반납하고 Hub를 닫습니다.
+7. Hub가 세션을 생성하고 읽기/쓰기 펌프를 가동합니다.
 
 #### 세션 충돌 감지
 
@@ -341,15 +343,17 @@ WebSocket은 실시간 전송 전용이고, 히스토리 조회나 동기화는 
 1. 클라이언트가 `client_msg_id`를 담아 메시지를 보냅니다.
 2. Session의 `readPump`에서 필수 필드(`content`, `client_msg_id`)를 검증하고, rate limit을 체크합니다.
 3. Hub의 LRU 캐시에서 `client_msg_id`를 검사해 중복이면 버립니다.
-4. 검증된 메시지는 방의 모든 참여자에게 즉시 브로드캐스트합니다. 전송 버퍼가 가득 찬 세션에는 연결을 끊지 않고 해당 메시지를 버립니다. (Load Shedding)
+4. Hub가 persist queue 슬롯을 먼저 확보합니다. 슬롯을 확보하지 못하면 sender에게 transient error를 보내고 sequence를 증가시키지 않습니다.
+5. 슬롯 확보 후 Hub memory에서 `sequence_number`를 증가시키고, 방의 모든 참여자에게 브로드캐스트합니다. 전송 버퍼가 가득 찬 세션에는 연결을 끊지 않고 해당 메시지를 버립니다. (Load Shedding)
 
 #### 멱등성과 저장
 
-브로드캐스트 완료 후 비동기로 저장합니다.
+브로드캐스트는 persist task enqueue가 확인된 뒤 수행하고, 저장 자체는 비동기 배치 워커가 처리합니다. 이 순서 때문에 클라이언트가 받은 persistent chat message는 최소한 저장 파이프라인에 들어간 상태이며, queue full 상황에서 fan-out 후 저장만 드랍되는 상태를 만들지 않습니다.
 
 - 저장 실패 시 재시도 워커가 jitter 적용 지수 백오프로 최대 5회 재시도
-- 재시도 시 MongoDB의 `{ roomId, clientMsgId }` 유니크 인덱스가 중복 삽입 방지
-- 영속화 채널이 꽉 차면 해당 메시지의 저장을 드랍. 브로드캐스트는 이미 완료된 상태
+- 재시도 시 MongoDB의 `{ roomId, clientMsgId }` 유니크 인덱스는 idempotent success로 처리
+- MongoDB의 `{ roomId, sequenceNumber }` 유니크 충돌은 split-brain 또는 handoff 정합성 실패로 보고 error log와 `gochat_ws_sequence_conflict_total`을 남김
+- 영속화 채널이 꽉 차면 fan-out하지 않고 sequence counter도 증가시키지 않음
 
 #### 메시지 동기화
 
@@ -361,7 +365,7 @@ REST API(`GET /rooms/{id}/messages`)에서 `last_seq` 쿼리 파라미터 유무
 클라이언트는 로컬에 저장된 `last_seq`를 기준으로 동작합니다.
 - 최초 진입 시 API로 최근 메시지를 불러오고 가장 큰 `sequence_number`를 `last_seq`로 저장
 - 실시간 수신 중에는 WebSocket 메시지를 받으면서 `last_seq` 갱신
-- 재연결 시 `last_seq` 이후의 누락분을 REST API로 보충
+- 재연결 시 새 WebSocket ticket을 발급하고, 연결 성공 직후 `last_seq` 이후의 누락분을 REST API로 보충한 뒤 disconnected 상태에서 queue한 메시지를 기존 `client_msg_id`로 replay
 
 #### 메시지 작성자 표시
 
@@ -411,8 +415,9 @@ YAML 키는 환경변수로 오버라이드할 수 있습니다. viper의 `SetEn
 1. 종료 신호를 받으면 HTTP 서버가 새 연결 수신을 중단하고 진행 중인 HTTP 요청 완료를 기다립니다.
 2. Manager가 모든 Hub에 drain을 지시합니다. Hub는 신규 register/broadcast를 거절하고, 이미 `broadcastCh`에 들어온 메시지를 계속 fan-out합니다.
 3. Hub가 fan-out한 메시지는 ack 가능한 persistence task로 Manager의 배치 워커에 전달됩니다. Hub는 `broadcastCh`가 비고 `pendingPersist == 0`이 될 때까지, 또는 `shutdown_timeout`이 만료될 때까지 기다립니다.
-4. Manager는 모든 Hub가 멈춘 뒤 `persistCh`를 닫고, 배치 워커와 retry worker가 남은 저장 작업을 처리하도록 기다립니다.
-5. gRPC 연결과 텔레메트리 수집기를 정리합니다.
+4. room handoff나 pod 종료로 Hub가 멈추면 Manager는 drain 상태를 확인한 뒤 자기 token이 맞을 때만 Redis room lease를 release합니다. Persist 실패가 확정된 Hub는 새 owner가 같은 sequence를 재발급하지 않도록 lease를 즉시 지우지 않고 TTL/renew 정책으로 fail-closed 합니다.
+5. Manager는 모든 Hub가 멈춘 뒤 `persistCh`를 닫고, 배치 워커와 retry worker가 남은 저장 작업을 처리하도록 기다립니다.
+6. gRPC 연결과 텔레메트리 수집기를 정리합니다.
 
 Go `http.Server.Shutdown`은 WebSocket처럼 hijack된 연결을 기다리지 않으므로, WebSocket drain은 HTTP 서버가 아니라 Hub/Manager 레벨에서 별도로 수행합니다. Timeout이 발생하면 종료는 계속 진행하지만 `gochat_ws_persist_drain_total{status="timeout"}`와 duration metric을 남겨 0-loss 보장이 깨진 상황을 관측 가능하게 합니다.
 
@@ -448,11 +453,20 @@ WebSocket Service를 다중 인스턴스로 운영할 때, 같은 방의 메시�
 
 WS Gateway가 `room_id` 기반 Consistent Hashing으로 대상 WebSocket Service 노드를 결정합니다. 일반 해시(`hash(roomID) % nodeCount`)는 노드가 추가되거나 제거될 때 모든 키의 할당이 뒤바뀌어 전체 재연결이 필요하지만, Consistent Hashing은 영향받는 키가 `1/N` 수준으로 최소화됩니다. Consistent Hashing은 결정적이므로 같은 노드 목록이면 어떤 Gateway 인스턴스에서도 동일한 결과가 보장됩니다.
 
-**노드 목록은 동적**입니다. WebSocket Service 인스턴스가 부팅 시 Redis(`wss:member:{addr}` 키, TTL 30s)에 자기 주소를 등록하고 10초마다 `SET key value EX ttl`로 갱신합니다. K8s에서는 이 주소가 `websocket-service` Service DNS나 ClusterIP가 아니라 각 Pod의 `POD_IP:8081`입니다. WS Gateway는 Redis membership에서 고른 owner 주소로 직접 reverse proxy하므로, room owner routing 경로에서는 Service VIP를 거치지 않습니다. Service DNS를 membership에 넣으면 모든 Pod가 같은 `websocket-service:8081` 주소로 보이고, Kubernetes Service가 다시 임의 endpoint로 분산할 수 있어 “room_id -> 특정 Pod owner”라는 Consistent Hashing 결정이 깨집니다. 단순 `EXPIRE`만 호출하면 키가 이미 만료된 경우 false만 반환하고 재등록이 되지 않으므로, heartbeat는 항상 lease refresh로 봅니다. WS Gateway는 keyspace notification + 30초 SCAN 안전망으로 멤버 변경을 watch하고 자기 hash ring을 자동 동기화합니다. K8s 환경에서 HPA 스케일아웃 시 신규 파드가 자연 ring에 포함되고, 사라진 파드는 TTL 만료로 자동 제거됩니다.
+**노드 목록은 동적**입니다. WebSocket Service 인스턴스가 부팅 시 Redis(`wss:member:{addr}` 키, TTL 30s)에 자기 주소를 등록하고 10초마다 `SET key value EX ttl`로 갱신합니다. K8s에서는 이 주소가 `websocket-service` Service DNS나 ClusterIP가 아니라 각 Pod의 `POD_IP:8081`입니다. WS Gateway는 Redis membership에서 고른 owner 주소로 직접 reverse proxy하므로, room owner routing 경로에서는 Service VIP를 거치지 않습니다. Service DNS를 membership에 넣으면 모든 Pod가 같은 `websocket-service:8081` 주소로 보이고, Kubernetes Service가 다시 임의 endpoint로 분산할 수 있어 “room_id -> 특정 Pod owner”라는 Consistent Hashing 결정이 깨집니다. 단순 `EXPIRE`만 호출하면 키가 이미 만료된 경우 false만 반환하고 재등록이 되지 않으므로, heartbeat는 항상 membership refresh로 봅니다. WS Gateway는 keyspace notification + 30초 SCAN 안전망으로 멤버 변경을 watch하고 자기 hash ring을 자동 동기화합니다. K8s 환경에서 HPA 스케일아웃 시 신규 파드가 자연 ring에 포함되고, 사라진 파드는 TTL 만료로 자동 제거됩니다.
 
 애플리케이션은 membership 등록 전에 별도 bootstrap gate를 두지 않습니다. 의존성 준비와 트래픽 투입 여부는 Kubernetes startup/readiness/liveness probe와 Deployment rollout이 제어합니다. `websocket-service`의 최종 `/ready`는 Redis, user/chat gRPC health, persist queue 상태, 자기 `POD_IP:8081`의 hash ring 관측 여부를 확인하므로, K8s는 이 신호를 기준으로 Pod Ready 상태를 관리합니다.
 
-빠른 재시작 시 이전 프로세스의 정리가 새 프로세스의 lease를 지우는 사고를 막기 위해 lease token(프로세스별 UUID v4 — WebSocket ticket·refresh token과 동일한 생성 컨벤션)을 도입했습니다. Redis value에 token을 함께 저장하고, 종료 시 단순 `DEL`이 아닌 compare-and-delete Lua로 자기 token이 맞을 때만 삭제합니다.
+빠른 재시작 시 이전 프로세스의 정리가 새 프로세스의 membership key를 지우는 사고를 막기 위해 membership token(프로세스별 UUID v4 — WebSocket ticket·refresh token과 동일한 생성 컨벤션)을 도입했습니다. Redis value에 token을 함께 저장하고, 종료 시 단순 `DEL`이 아닌 compare-and-delete Lua로 자기 token이 맞을 때만 삭제합니다.
+
+membership은 “어떤 Pod가 라우팅 후보인가”만 말합니다. 실제 active room owner handoff 정합성은 별도 Redis room lease가 담당합니다.
+
+| Redis key | 값 | TTL/갱신 | 책임 |
+| :--- | :--- | :--- | :--- |
+| `wss:member:{POD_IP:8081}` | membership token | TTL 30s, heartbeat 10s | hash ring 후보 목록 |
+| `wss:room:lease:{roomID}` | Hash `owner_addr`, `token` | TTL 30s, batch renew 10s | active Hub 소유권 |
+
+room lease에는 `epoch`을 두지 않습니다. v1의 목표는 fencing protocol을 늘리는 것이 아니라, 기존 Hub가 신규 수신을 막고 pending persist를 끝낸 뒤에만 lease를 반납하게 해서 새 owner의 `GetLastSequenceNumber` 초기화가 이전 owner의 저장 완료 이후에 일어나도록 만드는 것입니다. `token`은 acquire/renew/release Lua에서 자기 lease 여부를 확인하는 용도이며 로그에는 남기지 않습니다.
 
 흐름과 정합성 패턴은 §3.3 분산 라우팅 정합성에서 다룹니다.
 
@@ -462,9 +476,13 @@ WS Gateway가 `room_id` 기반 Consistent Hashing으로 대상 WebSocket Service
 
 **per-connection self-check + 503 변환**: WebSocket Service는 Upgrade 직전에 `hashRing.Locate(roomID) != myAddr`이면 **HTTP 421 Misdirected Request**를 응답합니다. WS Gateway는 `proxy.ModifyResponse`로 421을 가로채 자기 Watcher의 `ForceReconcile()`을 호출하고 클라이언트에 **503 Service Unavailable**을 반환합니다. **서버 측 재시도는 없습니다**. 클라이언트의 jittered backoff(1~30초)가 ring이 갱신된 후 재접속을 수행합니다. Cascading retry storm을 피하고 retry 정책을 클라이언트 한 곳에 응축하기 위한 fast fail 설계입니다.
 
-**주기적 owner 재검사 + jitter rebalance**: 각 WebSocket Service의 Manager는 10초 ticker와 멤버십 변경 이벤트로 자기 보유 룸들을 재검사합니다. `ring.Locate(R) != myAddr`인 룸은 `time.AfterFunc(0~10초 jitter)`로 close하여, 스케일아웃 시 다수 룸이 동시에 끊겨 클라이언트 reconnect 트래픽이 폭증하는 thundering herd를 분산합니다.
+**upgrade 전 room lease 확인**: Router는 User Service 멤버십 검증과 owner self-check를 통과한 뒤, 아직 WebSocket upgrade를 하기 전에 `Manager.PrepareRegister`를 호출합니다. Manager는 기존 Hub가 없으면 `wss:room:lease:{roomID}` acquire를 시도합니다. 기존 owner가 drain 중이거나 lease가 남아 있으면 Router는 `503 Service Unavailable`과 `Retry-After: 1`을 반환하고, 클라이언트가 jittered backoff로 재시도합니다.
 
-**rebalance close 전 persist drain**: owner가 바뀐 방은 기존 owner의 Hub가 바로 소켓을 닫지 않습니다. 먼저 신규 ingress를 막고, 이미 fan-out한 메시지의 chat-service 저장 ack를 기다립니다. 이 대기가 없으면 새 owner가 `GetLastSequenceNumber`를 너무 이르게 호출해 같은 sequence number를 다시 발급할 수 있습니다. Drain은 무한 대기하지 않고 `shutdown_timeout` 안에서만 보장하며, timeout은 metric/log로 남깁니다.
+**주기적 owner 재검사 + jitter rebalance**: 각 WebSocket Service의 Manager는 10초 ticker와 멤버십 변경 이벤트로 자기 보유 룸들을 재검사합니다. `ring.Locate(R) != myAddr`인 룸은 `time.AfterFunc(0~2초 jitter)`로 close하여, 스케일아웃 시 다수 룸이 동시에 끊겨 클라이언트 reconnect 트래픽이 폭증하는 thundering herd를 분산합니다.
+
+**rebalance close 전 persist drain + lease release**: owner가 바뀐 방은 기존 owner의 Hub가 바로 소켓을 닫고 lease를 지우지 않습니다. 먼저 신규 register와 신규 chat message accept를 막고, 이미 Hub에 들어온 `broadcastCh` 메시지를 fan-out한 뒤 chat-service 저장 ack까지 기다립니다. `broadcastCh`가 비고 `pendingPersist == 0`이 된 뒤에만 Manager가 room lease를 release합니다. 그 전에는 새 owner가 Hub를 만들 수 없으므로 `GetLastSequenceNumber`가 이전 owner 저장 완료 전에 실행되지 않습니다. 기존 연결은 WebSocket close code `1012`, reason `room owner handoff`로 닫히고, 클라이언트는 reconnect 상태로 처리합니다.
+
+**lease renew fail-closed**: Hub별 ticker를 만들지 않고 Manager의 lease renewer가 active room leases를 10초마다 Redis pipeline으로 갱신합니다. token mismatch 또는 key missing은 lease lost로 보고 해당 Hub를 drain합니다. Redis renew error가 반복되어 마지막 성공 renew 이후 20초를 넘으면 fail-closed drain으로 전환합니다. graceful handoff는 TTL 만료를 기다리지 않고 drain 완료 직후 release하며, ungraceful kill은 renew 중단 후 TTL 만료로 새 owner가 takeover합니다.
 
 **Hash ring 동시성**: HashRing은 라이브러리의 thread-safe `Add/Remove`를 호출하지만, `Set`은 여러 add/remove를 묶은 composite operation이므로 그 자체로는 원자적이지 않습니다. 중간 상태에서 `Locate`가 wrong owner를 반환할 가능성을 막기 위해 wrapper에 `sync.RWMutex`를 두고 `Set`은 Lock, `Locate`는 RLock으로 보호합니다.
 
@@ -489,14 +507,14 @@ user-service와 chat-service의 gRPC health는 각각 PostgreSQL `Ping`, MongoDB
 
 #### Control Plane vs Data Plane 분리
 
-같은 Redis 인프라를 멤버십 동기화(control plane)에는 keyspace notification + SCAN으로, 메시지 broadcast(data plane)에는 어피니티 + 로컬 fanout으로 사용합니다. 트래픽 특성과 정합성 요구가 다릅니다.
+같은 Redis 인프라를 membership 동기화와 room lease(control plane)에는 keyspace notification, SCAN, TTL/Lua로 사용하고, 메시지 broadcast(data plane)에는 어피니티 + 로컬 fanout을 사용합니다. 트래픽 특성과 정합성 요구가 다릅니다.
 
 | 측면 | 메시지 broadcast (data plane) | 멤버십 동기화 (control plane) |
 |---|---|---|
 | 트래픽 | 초당 수천~수만, 지속적 | 분당 1회 미만, 스케일 이벤트 시 |
-| 정합성 요구 | at-most-once 손실 = UX 직접 영향 | lag 허용, SCAN reconcile로 자가 치유 |
-| 순서 보장 | 룸 내 sequence 단조 증가 필수 | 무관 (snapshot만 정확하면 됨) |
-| 선택한 도구 | 어피니티 + hub-local fanout | Redis pub/sub + SCAN 안전망 |
+| 정합성 요구 | at-most-once 손실 = UX 직접 영향 | lag 허용, SCAN/TTL/renew로 자가 치유 |
+| 순서 보장 | 룸 내 sequence 단조 증가 필수 | membership은 무관, room lease는 handoff 순서 보호 |
+| 선택한 도구 | 어피니티 + hub-local fanout | Redis keyspace notification + SCAN, room lease Lua |
 
 Kafka의 ZooKeeper/KRaft + 자체 메시지 protocol, K8s의 etcd + workload, Istio의 control plane + sidecar와 같은 보편적 분리입니다.
 
@@ -528,8 +546,8 @@ Manager와 Hub는 Actor 모델을 따릅니다. 대부분의 상태 변경은 �
 
 | 계층 | 책임 |
 | :--- | :--- |
-| Router | HTTP 요청 수신, `/health`/`/ready`, WebSocket 업그레이드, owner self-check |
-| Manager | Hub 생명주기, graceful shutdown, 영속화 워커·retry 워커, 처리율 제한기 |
+| Router | HTTP 요청 수신, `/health`/`/ready`, owner self-check, upgrade 전 registration 준비, WebSocket 업그레이드 |
+| Manager | Hub 생명주기, room lease acquire/renew/release, graceful shutdown, 영속화 워커·retry 워커, 처리율 제한기 |
 | Hub | Session 생명주기, sequence 부여, 브로드캐스트, persistence ack 대기 |
 | Session | 개별 연결의 송수신, 메시지 검증, rate-limit 검사 |
 
