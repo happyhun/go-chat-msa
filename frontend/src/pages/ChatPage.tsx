@@ -11,7 +11,7 @@ function formatTime(unix: number) {
 }
 
 function insertSorted(prev: MessageInfo[], msg: MessageInfo): MessageInfo[] {
-  if (prev.some((m) => m.id === msg.id)) return prev
+  if (prev.some((m) => isSameMessage(m, msg))) return prev
   if (prev.length === 0 || msg.sequence_number >= prev[prev.length - 1].sequence_number) {
     return [...prev, msg]
   }
@@ -27,10 +27,20 @@ function insertSorted(prev: MessageInfo[], msg: MessageInfo): MessageInfo[] {
   return result
 }
 
+function isSameMessage(a: MessageInfo, b: MessageInfo): boolean {
+  if (a.id && b.id && a.id === b.id) return true
+  return Boolean(a.client_msg_id && b.client_msg_id && a.client_msg_id === b.client_msg_id)
+}
+
 function mergeSorted(prev: MessageInfo[], batch: MessageInfo[]): MessageInfo[] {
   if (batch.length === 0) return prev
-  const ids = new Set(prev.map((m) => m.id))
-  const newOnes = batch.filter((m) => !ids.has(m.id))
+  const ids = new Set(prev.map((m) => m.id).filter(Boolean))
+  const clientMsgIds = new Set(prev.map((m) => m.client_msg_id).filter(Boolean))
+  const newOnes = batch.filter((m) => {
+    if (m.id && ids.has(m.id)) return false
+    if (m.client_msg_id && clientMsgIds.has(m.client_msg_id)) return false
+    return true
+  })
   if (newOnes.length === 0) return prev
   return [...prev, ...newOnes].sort((a, b) => a.sequence_number - b.sequence_number)
 }
@@ -41,9 +51,10 @@ function toMessageInfo(msg: WsOutgoing): MessageInfo {
     room_id: msg.room_id,
     sender_id: msg.sender_id,
     content: msg.content,
+    client_msg_id: msg.client_msg_id,
     type: msg.type,
-    timestamp: msg.timestamp,
     sequence_number: msg.sequence_number,
+    timestamp: msg.timestamp,
   }
 }
 
@@ -60,6 +71,7 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<MessageInfo[]>([])
   const [input, setInput] = useState('')
   const [disconnectReason, setDisconnectReason] = useState<DisconnectReason>(null)
+  const [reconnectNotice, setReconnectNotice] = useState<'short' | 'long' | null>(null)
   const [loading, setLoading] = useState(true)
   const [userMap, setUserMap] = useState<Map<string, string>>(new Map())
   const userMapRef = useRef(userMap)
@@ -145,11 +157,15 @@ export default function ChatPage() {
     }
   }, [roomId, stateRoomName])
 
-  const syncMissed = useCallback(async () => {
-    if (!roomId || maxSeqRef.current === 0) return
+  const syncMissed = useCallback(async (required = false): Promise<Set<string>> => {
+    const caughtUpClientMsgIds = new Set<string>()
+    if (!roomId) return caughtUpClientMsgIds
     try {
       const data = await listMessages(roomId, maxSeqRef.current)
       const syncMsgs = (data.messages ?? []) as MessageInfo[]
+      for (const msg of syncMsgs) {
+        if (msg.client_msg_id) caughtUpClientMsgIds.add(msg.client_msg_id)
+      }
       if (syncMsgs.length > 0) {
         ensureSendersLoaded(syncMsgs)
         setMessages((prev) => {
@@ -158,9 +174,10 @@ export default function ChatPage() {
           return merged
         })
       }
-    } catch {
-      // non-critical
+    } catch (err) {
+      if (required) throw err
     }
+    return caughtUpClientMsgIds
   }, [roomId, ensureSendersLoaded])
 
   const syncMissedThrottled = useCallback(() => {
@@ -195,16 +212,17 @@ export default function ChatPage() {
     setDisconnectReason('conflict')
   }, [])
 
-  const onReconnected = useCallback(() => {
-    syncMissed()
+  const onReconnected = useCallback(async () => {
+    const caughtUpClientMsgIds = await syncMissed(true)
     fetchMembers()
+    return caughtUpClientMsgIds
   }, [syncMissed, fetchMembers])
 
   const onGaveUp = useCallback(() => {
     setDisconnectReason('room_deleted')
   }, [])
 
-  const { connected, connect, disconnect, send } = useWebSocket({
+  const { connected, reconnecting, connect, disconnect, send } = useWebSocket({
     roomId: roomId!,
     onMessage,
     onConflict,
@@ -275,6 +293,19 @@ export default function ChatPage() {
     scrollToBottom()
   }, [messages, scrollToBottom])
 
+  useEffect(() => {
+    if (connected || disconnectReason || loading) {
+      setReconnectNotice(null)
+      return
+    }
+    const shortTimer = window.setTimeout(() => setReconnectNotice('short'), 300)
+    const longTimer = window.setTimeout(() => setReconnectNotice('long'), 10000)
+    return () => {
+      window.clearTimeout(shortTimer)
+      window.clearTimeout(longTimer)
+    }
+  }, [connected, reconnecting, disconnectReason, loading])
+
   // Auto-resize textarea
   useLayoutEffect(() => {
     const el = textareaRef.current
@@ -286,7 +317,7 @@ export default function ChatPage() {
   const handleSend = (e?: React.SyntheticEvent) => {
     e?.preventDefault()
     const text = input.trim()
-    if (!text || !connected) return
+    if (!text) return
     send(text)
     setInput('')
   }
@@ -351,6 +382,16 @@ export default function ChatPage() {
           </div>
         </div>
       </header>
+
+      {reconnectNotice && (
+        <div className="bg-amber-50 border-b border-amber-100 text-amber-800 text-xs">
+          <div className="max-w-2xl mx-auto px-4 py-2">
+            {reconnectNotice === 'long'
+              ? '연결 복구가 지연되고 있습니다. 보낸 메시지는 재연결 후 전송됩니다.'
+              : '채팅방 재접속 중입니다'}
+          </div>
+        </div>
+      )}
 
       {/* Member drawer */}
       {showMembers && (
@@ -468,16 +509,15 @@ export default function ChatPage() {
             }}
             maxLength={10000}
             rows={1}
-            placeholder={connected ? '메시지를 입력하세요...' : '재연결 중...'}
-            disabled={!connected}
-            className="flex-1 px-4 py-2.5 bg-gray-100 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50 resize-none overflow-y-auto leading-5"
+            placeholder={connected ? '메시지를 입력하세요...' : '재연결 후 전송됩니다...'}
+            className="flex-1 px-4 py-2.5 bg-gray-100 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none overflow-y-auto leading-5"
             style={{ maxHeight: '120px' }}
             autoFocus
           />
           <button
             type="button"
             onClick={handleSend}
-            disabled={!connected || !input.trim()}
+            disabled={!input.trim()}
             className="w-10 h-10 bg-indigo-600 text-white rounded-full flex items-center justify-center hover:bg-indigo-700 disabled:opacity-30 transition-colors shrink-0"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">

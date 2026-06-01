@@ -29,9 +29,10 @@ type Message struct {
 	RoomId         string                 `protobuf:"bytes,2,opt,name=room_id,json=roomId,proto3" json:"room_id,omitempty"`
 	SenderId       string                 `protobuf:"bytes,3,opt,name=sender_id,json=senderId,proto3" json:"sender_id,omitempty"`
 	Content        string                 `protobuf:"bytes,4,opt,name=content,proto3" json:"content,omitempty"`
-	Type           string                 `protobuf:"bytes,5,opt,name=type,proto3" json:"type,omitempty"`
-	Timestamp      *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	ClientMsgId    string                 `protobuf:"bytes,5,opt,name=client_msg_id,json=clientMsgId,proto3" json:"client_msg_id,omitempty"`
+	Type           string                 `protobuf:"bytes,6,opt,name=type,proto3" json:"type,omitempty"`
 	SequenceNumber int64                  `protobuf:"varint,7,opt,name=sequence_number,json=sequenceNumber,proto3" json:"sequence_number,omitempty"`
+	Timestamp      *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -94,6 +95,13 @@ func (x *Message) GetContent() string {
 	return ""
 }
 
+func (x *Message) GetClientMsgId() string {
+	if x != nil {
+		return x.ClientMsgId
+	}
+	return ""
+}
+
 func (x *Message) GetType() string {
 	if x != nil {
 		return x.Type
@@ -101,18 +109,18 @@ func (x *Message) GetType() string {
 	return ""
 }
 
-func (x *Message) GetTimestamp() *timestamppb.Timestamp {
-	if x != nil {
-		return x.Timestamp
-	}
-	return nil
-}
-
 func (x *Message) GetSequenceNumber() int64 {
 	if x != nil {
 		return x.SequenceNumber
 	}
 	return 0
+}
+
+func (x *Message) GetTimestamp() *timestamppb.Timestamp {
+	if x != nil {
+		return x.Timestamp
+	}
+	return nil
 }
 
 type CreateMessageRequest struct {
@@ -559,15 +567,16 @@ var File_api_proto_chat_v1_chat_proto protoreflect.FileDescriptor
 
 const file_api_proto_chat_v1_chat_proto_rawDesc = "" +
 	"\n" +
-	"\x1capi/proto/chat/v1/chat.proto\x12\achat.v1\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xe0\x01\n" +
+	"\x1capi/proto/chat/v1/chat.proto\x12\achat.v1\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x84\x02\n" +
 	"\aMessage\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x17\n" +
 	"\aroom_id\x18\x02 \x01(\tR\x06roomId\x12\x1b\n" +
 	"\tsender_id\x18\x03 \x01(\tR\bsenderId\x12\x18\n" +
-	"\acontent\x18\x04 \x01(\tR\acontent\x12\x12\n" +
-	"\x04type\x18\x05 \x01(\tR\x04type\x128\n" +
-	"\ttimestamp\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\x12'\n" +
-	"\x0fsequence_number\x18\a \x01(\x03R\x0esequenceNumber\"\xe6\x01\n" +
+	"\acontent\x18\x04 \x01(\tR\acontent\x12\"\n" +
+	"\rclient_msg_id\x18\x05 \x01(\tR\vclientMsgId\x12\x12\n" +
+	"\x04type\x18\x06 \x01(\tR\x04type\x12'\n" +
+	"\x0fsequence_number\x18\a \x01(\x03R\x0esequenceNumber\x128\n" +
+	"\ttimestamp\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\"\xe6\x01\n" +
 	"\x14CreateMessageRequest\x12\x17\n" +
 	"\aroom_id\x18\x01 \x01(\tR\x06roomId\x12\x1b\n" +
 	"\tsender_id\x18\x02 \x01(\tR\bsenderId\x12\x18\n" +

@@ -21,6 +21,8 @@ import (
 	"github.com/stretchr/testify/suite"
 	"github.com/testcontainers/testcontainers-go/modules/mongodb"
 	"go.mongodb.org/mongo-driver/mongo"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -224,14 +226,15 @@ func (s *ChatSuite) TestListMessages_JoinedAtFiltering() {
 	s.Equal("New Msg", resFiltered.Messages[0].Content)
 }
 
-func (s *ChatSuite) TestSequence_UniqueConstraint_Idempotent() {
+func (s *ChatSuite) TestSequence_UniqueConstraint_Conflict() {
 	roomID := "room_unique_seq"
 
 	err := sendHelperWithSeq(s, roomID, "u1", "Msg 1", "m1", 1)
 	s.Require().NoError(err)
 
 	err = sendHelperWithSeq(s, roomID, "u1", "Msg 2", "m2", 1)
-	s.Require().NoError(err)
+	s.Require().Error(err)
+	s.Equal(codes.Aborted, status.Code(err))
 
 	res, err := s.client.ListMessages(s.T().Context(), &pb.ListMessagesRequest{RoomId: roomID, Limit: 10})
 	s.Require().NoError(err)

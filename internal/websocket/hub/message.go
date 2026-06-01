@@ -19,8 +19,8 @@ type Message struct {
 	RoomID         string `json:"room_id"`
 	SenderID       string `json:"sender_id"`
 	Content        string `json:"content"`
-	Type           string `json:"type"`
 	ClientMsgID    string `json:"client_msg_id,omitempty"`
+	Type           string `json:"type"`
 	SequenceNumber int64  `json:"sequence_number"`
 	Timestamp      int64  `json:"timestamp,omitempty"`
 
@@ -43,9 +43,9 @@ func NewSystemMessage(roomID, content string) (*Message, error) {
 		RoomID:      roomID,
 		SenderID:    systemSenderID,
 		Content:     content,
+		ClientMsgID: clientMsgID.String(),
 		Type:        msgTypeSystem,
 		Timestamp:   time.Now().Unix(),
-		ClientMsgID: clientMsgID.String(),
 	}, nil
 }
 

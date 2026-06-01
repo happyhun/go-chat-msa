@@ -14,25 +14,32 @@ flowchart TB
             Reg1["Registry (self heartbeat)"]
             Watcher1["Membership Watcher"]
             Ring1["Hash Ring (self-check)"]
+            Router1["Router<br/>PrepareRegister before upgrade"]
+            Manager1["Manager<br/>room lease lifecycle"]
+            Hub1["Hub<br/>sequence · fan-out · drain"]
         end
         subgraph WSS2 ["Pod B"]
             Reg2["Registry (self heartbeat)"]
             Watcher2["Membership Watcher"]
             Ring2["Hash Ring (self-check)"]
+            Router2["Router<br/>PrepareRegister before upgrade"]
+            Manager2["Manager<br/>room lease lifecycle"]
+            Hub2["Hub<br/>sequence · fan-out · drain"]
         end
         More["... more pods<br/>when scaled"]
     end
 
-    Redis[("Redis<br/>wss:member:*")]
+    RedisMembers[("Redis<br/>wss:member:*")]
+    RedisLeases[("Redis<br/>wss:room:lease:{roomID}<br/>owner_addr · token")]
 
     Client == "WS Upgrade" ==> Router
 
-    Reg1 -- "SET lease_token EX ttl" --> Redis
-    Reg2 -- "SET lease_token EX ttl" --> Redis
+    Reg1 -- "SET membership_token EX 30s" --> RedisMembers
+    Reg2 -- "SET membership_token EX 30s" --> RedisMembers
 
-    Redis -- "keyspace notify + SCAN" --> Watcher_G
-    Redis -- "keyspace notify + SCAN" --> Watcher1
-    Redis -- "keyspace notify + SCAN" --> Watcher2
+    RedisMembers -- "keyspace notify + SCAN" --> Watcher_G
+    RedisMembers -- "keyspace notify + SCAN" --> Watcher1
+    RedisMembers -- "keyspace notify + SCAN" --> Watcher2
 
     Watcher_G -- "ring.Set(addrs)" --> Hashring
     Watcher1 -- "ring.Set(addrs)" --> Ring1
@@ -44,3 +51,13 @@ flowchart TB
     Router -. "same logic" .-> More
     WSS1 -- "self-check Locate(roomID)" --> Ring1
     WSS2 -- "self-check Locate(roomID)" --> Ring2
+    Ring1 --> Router1
+    Ring2 --> Router2
+    Router1 -- "PrepareRegister" --> Manager1
+    Router2 -- "PrepareRegister" --> Manager2
+    Manager1 -- "acquire/renew/release" --> RedisLeases
+    Manager2 -- "acquire/renew/release" --> RedisLeases
+    Manager1 --> Hub1
+    Manager2 --> Hub2
+    Hub1 -. "persist drain 완료 후 lease release" .-> Manager1
+    Hub2 -. "persist drain 완료 후 lease release" .-> Manager2

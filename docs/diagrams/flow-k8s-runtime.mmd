@@ -21,7 +21,7 @@ flowchart TB
 
         subgraph Core ["Core Deployments"]
             direction LR
-            WSS["WebSocket Service Deployment<br/>replicas: dev=1, test=2<br/>qa: HPA planned"]
+            WSS["WebSocket Service Deployment<br/>replicas: dev=1, test=2<br/>room lease · HPA handoff"]
             US["User Service Deployment<br/>Headless Service<br/>replicas: dev=1, test=2"]
             CS["Chat Service Deployment<br/>Headless Service<br/>replicas: dev=1, test=2"]
         end
@@ -30,7 +30,7 @@ flowchart TB
             direction LR
             PG[("PostgreSQL<br/>Deployment")]
             MG[("MongoDB<br/>Deployment")]
-            RD[("Redis<br/>Deployment")]
+            RD[("Redis<br/>Deployment<br/>membership · room lease")]
         end
 
         subgraph Observability ["Observability Layer"]
@@ -56,7 +56,7 @@ flowchart TB
     Ingress == "/docs" ==> Docs
     Ingress == "/grafana" ==> Grafana
 
-    WSGW -- "L7 Proxy<br/>room_id hashing" --> WSS
+    WSGW -- "L7 Proxy<br/>room_id hashing<br/>Pod IP direct" --> WSS
 
     AGW -- "gRPC" --> US
     AGW -- "gRPC" --> CS

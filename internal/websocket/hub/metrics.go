@@ -31,6 +31,9 @@ var (
 	persistenceRetryOldestAge      metric.Float64Gauge
 	persistenceRetrySaveTotal      metric.Int64Counter
 	persistenceRetryQueueFullTotal metric.Int64Counter
+	roomHandoffTotal               metric.Int64Counter
+	roomHandoffDuration            metric.Float64Histogram
+	sequenceConflictTotal          metric.Int64Counter
 	fanoutDuration                 metric.Float64Histogram
 	egressDuration                 metric.Float64Histogram
 	rebalanceEvictionsTotal        metric.Int64Counter
@@ -153,6 +156,25 @@ func init() {
 	)
 	if err != nil {
 		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_persistence_retry_queue_full", "error", err)
+	}
+	roomHandoffTotal, err = hubMeter.Int64Counter("gochat_ws_room_handoff_total",
+		metric.WithDescription("room owner handoff lifecycle results"),
+	)
+	if err != nil {
+		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_ws_room_handoff_total", "error", err)
+	}
+	roomHandoffDuration, err = hubMeter.Float64Histogram("gochat_ws_room_handoff_duration_seconds",
+		metric.WithDescription("room owner handoff drain duration"),
+		metric.WithExplicitBucketBoundaries(.05, .1, .25, .5, 1, 2.5, 5, 10, 15, 30),
+	)
+	if err != nil {
+		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_ws_room_handoff_duration_seconds", "error", err)
+	}
+	sequenceConflictTotal, err = hubMeter.Int64Counter("gochat_ws_sequence_conflict_total",
+		metric.WithDescription("persistent sequence number duplicate conflicts"),
+	)
+	if err != nil {
+		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_ws_sequence_conflict_total", "error", err)
 	}
 	fanoutDuration, err = hubMeter.Float64Histogram("gochat_ws_fanout_duration_seconds",
 		metric.WithDescription("팬아웃 지연 시간 (수신 → 세션 큐 적재)"),

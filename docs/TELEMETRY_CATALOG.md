@@ -33,7 +33,7 @@ OTel resource에는 공통으로 `service.name`과 `service.instance.id`가 들�
 |--------|------|---------|--------|
 | api-gateway | HTTP | HTTP, gRPC Client, Redis | HTTP, gRPC Client, Redis |
 | ws-gateway | HTTP | HTTP, Routing, Redis | HTTP, Redis |
-| websocket-service | HTTP | HTTP, WebSocket, Persistence, gRPC Client | HTTP, gRPC Client |
+| websocket-service | HTTP | HTTP, WebSocket, Persistence, Room Lease, gRPC Client, Redis | HTTP, gRPC Client, Redis |
 | user-service | gRPC | gRPC Server, PostgreSQL, Domain | gRPC Server, PostgreSQL |
 | chat-service | gRPC | gRPC Server, MongoDB, Domain | gRPC Server, MongoDB |
 
@@ -154,6 +154,11 @@ OTel resource에는 공통으로 `service.name`과 `service.instance.id`가 들�
 | gochat_ws_egress_duration_seconds | histogram | - |
 | gochat_ws_rebalance_evictions_total | counter | - |
 | gochat_websocket_owner_rejected_total | counter | - |
+| gochat_ws_room_lease_acquire_total | counter | status |
+| gochat_ws_room_lease_renew_total | counter | status |
+| gochat_ws_room_handoff_total | counter | status |
+| gochat_ws_room_handoff_duration_seconds | histogram | status |
+| gochat_ws_sequence_conflict_total | counter | - |
 
 - 서비스: websocket-service
 
@@ -243,6 +248,11 @@ OTel resource에는 공통으로 `service.name`과 `service.instance.id`가 들�
 | gochat_wsgateway_routed_total | counter | endpoint | ws-gateway |
 | gochat_wsgateway_misdirected_total | counter | - | ws-gateway |
 | gochat_membership_reconcile_total | counter | status | ws-gateway, websocket-service |
+| gochat_ws_room_lease_acquire_total | counter | status | websocket-service |
+| gochat_ws_room_lease_renew_total | counter | status | websocket-service |
+| gochat_ws_room_handoff_total | counter | status | websocket-service |
+| gochat_ws_room_handoff_duration_seconds | histogram | status | websocket-service |
+| gochat_ws_sequence_conflict_total | counter | - | websocket-service |
 
 ### System
 

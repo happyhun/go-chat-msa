@@ -15,6 +15,7 @@ import (
 	"go-chat-msa/internal/shared/logger"
 	"go-chat-msa/internal/shared/membership"
 	"go-chat-msa/internal/shared/middleware"
+	"go-chat-msa/internal/shared/roomlease"
 	"go-chat-msa/internal/shared/telemetry"
 	"go-chat-msa/internal/websocket"
 	"go-chat-msa/internal/wsgateway/loadbalance"
@@ -35,6 +36,8 @@ const (
 	membershipKeyPrefix = "wss:member:"
 	membershipTTL       = 30 * time.Second
 	membershipHeartbeat = 10 * time.Second
+	roomLeaseKeyPrefix  = "wss:room:lease:"
+	roomLeaseTTL        = 30 * time.Second
 )
 
 func main() {
@@ -94,10 +97,12 @@ func run(ctx context.Context) error {
 	hashRing := loadbalance.New(nil)
 	registry := membership.NewRegistry(redisClient, membershipKeyPrefix, cfg.WS.AdvertisedAddr, membershipTTL, membershipHeartbeat)
 	watcher := membership.NewWatcher(redisClient, membershipKeyPrefix, hashRing)
+	leaseStore := roomlease.NewStore(redisClient, roomLeaseKeyPrefix, cfg.WS.AdvertisedAddr, roomLeaseTTL)
 
 	router := websocket.NewRouter(chatClient, userClient, cfg.WS, hashRing,
 		websocket.WithShutdownTimeout(cfg.ShutdownTimeout),
 		websocket.WithRedisClient(redisClient),
+		websocket.WithRoomLeaseStore(leaseStore),
 		websocket.WithHealthClients(chatHealth, userHealth))
 
 	return runServer(ctx, cfg, router, registry, watcher)

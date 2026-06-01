@@ -28,6 +28,12 @@ func TestDedupeMemberKeys(t *testing.T) {
 			want:   []string{"a:8081", "b:8081"},
 		},
 		{
+			name:   "Success: 입력 순서와 무관하게 정렬",
+			keys:   []string{"wss:member:b:8081", "wss:member:a:8081", "wss:member:b:8081"},
+			prefix: "wss:member:",
+			want:   []string{"a:8081", "b:8081"},
+		},
+		{
 			name:   "Success: SCAN이 같은 키를 두 번 반환한 경우 dedupe",
 			keys:   []string{"wss:member:a:8081", "wss:member:b:8081", "wss:member:a:8081"},
 			prefix: "wss:member:",
@@ -45,7 +51,7 @@ func TestDedupeMemberKeys(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			got := dedupeMemberKeys(tt.keys, tt.prefix)
-			assert.ElementsMatch(t, tt.want, got)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }

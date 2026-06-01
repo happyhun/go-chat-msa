@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -171,6 +172,7 @@ func dedupeMemberKeys(keys []string, prefix string) []string {
 	for a := range seen {
 		out = append(out, a)
 	}
+	slices.Sort(out)
 	return out
 }
 

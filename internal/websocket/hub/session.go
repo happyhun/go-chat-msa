@@ -42,8 +42,10 @@ type session struct {
 	sendCh       chan egressPacket
 	allowFunc    func(userID, roomID string) bool
 
-	mu     sync.RWMutex
-	closed bool
+	mu          sync.RWMutex
+	closed      bool
+	closeCode   int
+	closeReason string
 }
 
 func newSession(
@@ -172,7 +174,7 @@ func (s *session) writePump(ctx context.Context) {
 		case packet, ok := <-s.sendCh:
 			s.conn.SetWriteDeadline(time.Now().Add(s.config.writeWait))
 			if !ok {
-				s.conn.WriteMessage(websocket.CloseMessage, []byte{})
+				s.conn.WriteMessage(websocket.CloseMessage, s.closeMessage())
 				return
 			}
 
@@ -192,6 +194,10 @@ func (s *session) writePump(ctx context.Context) {
 			}
 
 		case <-ctx.Done():
+			if s.isClosed() {
+				s.conn.SetWriteDeadline(time.Now().Add(s.config.writeWait))
+				_ = s.conn.WriteMessage(websocket.CloseMessage, s.closeMessage())
+			}
 			return
 		}
 	}
@@ -235,6 +241,10 @@ func (s *session) sendWithMeta(ctx context.Context, data []byte, senderID string
 }
 
 func (s *session) close() {
+	s.closeWithCode(0, "")
+}
+
+func (s *session) closeWithCode(code int, reason string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -242,6 +252,23 @@ func (s *session) close() {
 		return
 	}
 	s.closed = true
+	s.closeCode = code
+	s.closeReason = reason
 
 	close(s.sendCh)
+}
+
+func (s *session) closeMessage() []byte {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closeCode == 0 {
+		return []byte{}
+	}
+	return websocket.FormatCloseMessage(s.closeCode, s.closeReason)
+}
+
+func (s *session) isClosed() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.closed
 }

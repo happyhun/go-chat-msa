@@ -159,6 +159,26 @@ func TestHub_Lifecycle(t *testing.T) {
 		h.shutdown()
 		assert.Empty(t, h.sessions)
 	})
+
+	t.Run("Success: Handoff 종료 시 1012 close frame 전송", func(t *testing.T) {
+		t.Parallel()
+		h := newHub("handoff-room", testSessionConfig(), time.Minute, nil, nil, time.Second, nil)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		go h.run(ctx)
+
+		clientConn := registerTestSession(t, h, "user1")
+		defer clientConn.Close()
+
+		h.forceClose(handoffCloseReason)
+
+		clientConn.SetReadDeadline(time.Now().Add(time.Second))
+		_, _, err := clientConn.ReadMessage()
+		var closeErr *websocket.CloseError
+		require.ErrorAs(t, err, &closeErr)
+		assert.Equal(t, handoffCloseCode, closeErr.Code)
+		assert.Equal(t, handoffCloseReason, closeErr.Text)
+	})
 }
 
 func TestHub_DrainWaitsForPersistenceAck(t *testing.T) {
@@ -199,6 +219,71 @@ func TestHub_DrainWaitsForPersistenceAck(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("hub did not stop after persistence ack")
 	}
+}
+
+func TestHub_DrainTimeoutLeavesPendingPersist(t *testing.T) {
+	t.Parallel()
+
+	persistCh := make(chan *persistTask, 1)
+	h := newHub("drain-timeout-room", testSessionConfig(), time.Minute, &mockStore{}, persistCh, 20*time.Millisecond, nil)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go h.run(ctx)
+
+	h.broadcast(t.Context(), &Message{
+		RoomID:   "drain-timeout-room",
+		SenderID: "user-1",
+		Content:  "hello",
+		Type:     "chat",
+	})
+
+	var task *persistTask
+	select {
+	case task = <-persistCh:
+	case <-time.After(time.Second):
+		t.Fatal("persist task was not enqueued")
+	}
+
+	h.forceClose()
+
+	select {
+	case <-h.done():
+	case <-time.After(time.Second):
+		t.Fatal("hub did not stop after drain timeout")
+	}
+
+	assert.Equal(t, int64(1), h.pendingPersist.Load())
+	task.ack(nil)
+}
+
+func TestHub_PersistAckErrorMarksPersistFailed(t *testing.T) {
+	t.Parallel()
+
+	persistCh := make(chan *persistTask, 1)
+	h := newHub("persist-error-room", testSessionConfig(), time.Minute, &mockStore{}, persistCh, time.Second, nil)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go h.run(ctx)
+
+	h.broadcast(t.Context(), &Message{
+		RoomID:   "persist-error-room",
+		SenderID: "user-1",
+		Content:  "hello",
+		Type:     "chat",
+	})
+
+	var task *persistTask
+	select {
+	case task = <-persistCh:
+	case <-time.After(time.Second):
+		t.Fatal("persist task was not enqueued")
+	}
+
+	task.ack(assert.AnError)
+
+	require.Eventually(t, func() bool {
+		return h.persistFailed.Load() && h.pendingPersist.Load() == 0
+	}, time.Second, 10*time.Millisecond)
 }
 
 func TestHub_BroadcastUnblocksWhenDrainBeginsWithFullQueue(t *testing.T) {

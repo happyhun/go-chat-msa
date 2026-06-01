@@ -3,13 +3,17 @@ package hub
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"go-chat-msa/internal/shared/config"
+	"go-chat-msa/internal/shared/roomlease"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/gorilla/websocket"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -261,6 +265,173 @@ func TestManager_ShutdownStopsTimedOutHubsBeforeClosingPersistenceQueue(t *testi
 	case <-time.After(2 * time.Second):
 		t.Fatal("manager should stop even when hub persistence drain times out")
 	}
+}
+
+func TestManager_PrepareRegisterCancelReleasesNewLease(t *testing.T) {
+	t.Parallel()
+
+	srv := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: srv.Addr()})
+	t.Cleanup(func() { require.NoError(t, client.Close()) })
+
+	manager := NewManager(testManagerConfig(), config.RateLimitConfig{}, nil, 100*time.Millisecond)
+	manager.SetRoomLeaseStore(roomlease.NewStore(client, "wss:room:lease:", "10.0.0.1:8081", 30*time.Second))
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go manager.Run(ctx)
+
+	registration, err := manager.PrepareRegister(t.Context(), "room-1")
+	require.NoError(t, err)
+	require.NotNil(t, registration)
+
+	registration.Cancel()
+
+	require.Eventually(t, func() bool {
+		return !srv.Exists("wss:room:lease:room-1")
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestManager_ShutdownHubsClosesSessionsWithHandoffCode(t *testing.T) {
+	t.Parallel()
+
+	manager := NewManager(testManagerConfig(), config.RateLimitConfig{}, nil, 100*time.Millisecond)
+	h := newHub("room-1", testSessionConfig(), time.Minute, nil, nil, time.Second, nil)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go h.run(ctx)
+
+	clientConn := registerTestSession(t, h, "user-1")
+	defer clientConn.Close()
+
+	manager.shutdownHubs(t.Context(), map[string]*Hub{h.roomID: h})
+
+	clientConn.SetReadDeadline(time.Now().Add(time.Second))
+	_, _, err := clientConn.ReadMessage()
+	var closeErr *websocket.CloseError
+	require.True(t, errors.As(err, &closeErr), "expected websocket close error, got %v", err)
+	require.Equal(t, handoffCloseCode, closeErr.Code)
+	require.Equal(t, handoffCloseReason, closeErr.Text)
+}
+
+func TestManager_ReleaseLeaseDefersUntilDrainComplete(t *testing.T) {
+	t.Parallel()
+
+	srv := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: srv.Addr()})
+	t.Cleanup(func() { require.NoError(t, client.Close()) })
+
+	leaseStore := roomlease.NewStore(client, "wss:room:lease:", "10.0.0.1:8081", 30*time.Second)
+	manager := NewManager(testManagerConfig(), config.RateLimitConfig{}, nil, 100*time.Millisecond)
+	manager.SetRoomLeaseStore(leaseStore)
+
+	lease, err := leaseStore.Acquire(t.Context(), "room-1")
+	require.NoError(t, err)
+	manager.trackLease(lease)
+
+	h := newHub("room-1", testSessionConfig(), time.Minute, nil, nil, time.Second, nil)
+	h.pendingPersist.Store(1)
+
+	manager.releaseLease(t.Context(), "room-1", h)
+
+	require.True(t, srv.Exists("wss:room:lease:room-1"))
+	require.Len(t, manager.snapshotLeases(), 1)
+
+	manager.releaseAllLeases(t.Context(), map[string]*Hub{})
+
+	require.True(t, srv.Exists("wss:room:lease:room-1"))
+	require.Len(t, manager.snapshotLeases(), 1)
+
+	h.pendingPersist.Store(0)
+	h.notifyPersistDone()
+
+	require.Eventually(t, func() bool {
+		return !srv.Exists("wss:room:lease:room-1") && len(manager.snapshotLeases()) == 0
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestManager_ReleaseLeaseDefersWhenPersistFailed(t *testing.T) {
+	t.Parallel()
+
+	srv := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: srv.Addr()})
+	t.Cleanup(func() { require.NoError(t, client.Close()) })
+
+	leaseStore := roomlease.NewStore(client, "wss:room:lease:", "10.0.0.1:8081", 30*time.Second)
+	manager := NewManager(testManagerConfig(), config.RateLimitConfig{}, nil, 100*time.Millisecond)
+	manager.SetRoomLeaseStore(leaseStore)
+
+	lease, err := leaseStore.Acquire(t.Context(), "room-1")
+	require.NoError(t, err)
+	manager.trackLease(lease)
+
+	h := newHub("room-1", testSessionConfig(), time.Minute, nil, nil, time.Second, nil)
+	h.persistFailed.Store(true)
+
+	manager.releaseLease(t.Context(), "room-1", h)
+
+	require.True(t, srv.Exists("wss:room:lease:room-1"))
+	require.Len(t, manager.snapshotLeases(), 1)
+
+	manager.releaseAllLeases(t.Context(), map[string]*Hub{})
+
+	require.True(t, srv.Exists("wss:room:lease:room-1"))
+	require.Len(t, manager.snapshotLeases(), 1)
+}
+
+func TestManager_ReleaseLeaseDeletesWhenDrainComplete(t *testing.T) {
+	t.Parallel()
+
+	srv := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: srv.Addr()})
+	t.Cleanup(func() { require.NoError(t, client.Close()) })
+
+	leaseStore := roomlease.NewStore(client, "wss:room:lease:", "10.0.0.1:8081", 30*time.Second)
+	manager := NewManager(testManagerConfig(), config.RateLimitConfig{}, nil, 100*time.Millisecond)
+	manager.SetRoomLeaseStore(leaseStore)
+
+	lease, err := leaseStore.Acquire(t.Context(), "room-1")
+	require.NoError(t, err)
+	manager.trackLease(lease)
+
+	h := newHub("room-1", testSessionConfig(), time.Minute, nil, nil, time.Second, nil)
+
+	manager.releaseLease(t.Context(), "room-1", h)
+
+	require.False(t, srv.Exists("wss:room:lease:room-1"))
+	require.Empty(t, manager.snapshotLeases())
+}
+
+func TestManager_ReleaseManagedLeaseKeepsLeaseOnRedisError(t *testing.T) {
+	t.Parallel()
+
+	client := redis.NewClient(&redis.Options{
+		Addr:         "127.0.0.1:1",
+		DialTimeout:  10 * time.Millisecond,
+		ReadTimeout:  10 * time.Millisecond,
+		WriteTimeout: 10 * time.Millisecond,
+		MaxRetries:   0,
+	})
+	t.Cleanup(func() { require.NoError(t, client.Close()) })
+
+	manager := NewManager(testManagerConfig(), config.RateLimitConfig{}, nil, 100*time.Millisecond)
+	manager.SetRoomLeaseStore(roomlease.NewStore(client, "wss:room:lease:", "10.0.0.1:8081", 30*time.Second))
+	lease := &roomlease.Lease{
+		RoomID:    "room-1",
+		OwnerAddr: "10.0.0.1:8081",
+		Token:     "token-1",
+	}
+	manager.trackLease(lease)
+
+	manager.leasesMu.RLock()
+	managed := manager.leases["room-1"]
+	manager.leasesMu.RUnlock()
+
+	released := manager.releaseManagedLease(t.Context(), "room-1", managed, hubLeaseState{})
+
+	require.False(t, released)
+	require.Len(t, manager.snapshotLeases(), 1)
 }
 
 func TestNewSystemMessage(t *testing.T) {
