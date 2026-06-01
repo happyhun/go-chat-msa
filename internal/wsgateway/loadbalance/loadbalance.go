@@ -1,6 +1,7 @@
 package loadbalance
 
 import (
+	"slices"
 	"sync"
 
 	"github.com/buraksezer/consistent"
@@ -31,7 +32,7 @@ func New(endpoints []string) *HashRing {
 	}
 
 	inst := consistent.New(nil, cfg)
-	for _, endpoint := range endpoints {
+	for _, endpoint := range normalizeMembers(endpoints) {
 		inst.Add(member(endpoint))
 	}
 
@@ -52,8 +53,9 @@ func (r *HashRing) Set(addrs []string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	desired := make(map[string]struct{}, len(addrs))
-	for _, a := range addrs {
+	sortedAddrs := normalizeMembers(addrs)
+	desired := make(map[string]struct{}, len(sortedAddrs))
+	for _, a := range sortedAddrs {
 		desired[a] = struct{}{}
 	}
 
@@ -62,15 +64,20 @@ func (r *HashRing) Set(addrs []string) {
 		current[m.String()] = struct{}{}
 	}
 
-	for a := range desired {
+	for _, a := range sortedAddrs {
 		if _, ok := current[a]; !ok {
 			r.hash.Add(member(a))
 		}
 	}
+	toRemove := make([]string, 0, len(current))
 	for a := range current {
 		if _, ok := desired[a]; !ok {
-			r.hash.Remove(a)
+			toRemove = append(toRemove, a)
 		}
+	}
+	slices.Sort(toRemove)
+	for _, a := range toRemove {
+		r.hash.Remove(a)
 	}
 }
 
@@ -97,4 +104,21 @@ func (h hasher) Sum64(data []byte) uint64 {
 
 func (m member) String() string {
 	return string(m)
+}
+
+func normalizeMembers(addrs []string) []string {
+	if len(addrs) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(addrs))
+	out := make([]string, 0, len(addrs))
+	for _, addr := range addrs {
+		if _, ok := seen[addr]; ok {
+			continue
+		}
+		seen[addr] = struct{}{}
+		out = append(out, addr)
+	}
+	slices.Sort(out)
+	return out
 }

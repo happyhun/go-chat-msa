@@ -67,6 +67,18 @@ func TestHashRing_Locate(t *testing.T) {
 			},
 		},
 		{
+			name: "Success: 멤버 입력 순서와 무관하게 같은 owner 반환",
+			run: func(t *testing.T) {
+				ring1 := New([]string{"node1", "node2", "node3"})
+				ring2 := New([]string{"node3", "node1", "node2"})
+
+				for i := range 200 {
+					roomID := "room-" + strconv.Itoa(i)
+					assert.Equal(t, ring1.Locate(roomID), ring2.Locate(roomID))
+				}
+			},
+		},
+		{
 			name: "Success: 균등한 분포 (Distribution)",
 			run: func(t *testing.T) {
 				endpoints := []string{"srvA", "srvB", "srvC"}
@@ -159,6 +171,21 @@ func TestHashRing_Set(t *testing.T) {
 				ring.Set([]string{"ws-1", "ws-2", "ws-3"})
 				after := ring.Locate("room-x")
 				assert.Equal(t, before, after)
+			},
+		},
+		{
+			name: "Success: Set 입력 순서와 무관하게 같은 owner 반환",
+			run: func(t *testing.T) {
+				ring1 := New([]string{"ws-1", "ws-2"})
+				ring2 := New([]string{"ws-2", "ws-1"})
+
+				ring1.Set([]string{"ws-3", "ws-1", "ws-2"})
+				ring2.Set([]string{"ws-2", "ws-3", "ws-1"})
+
+				for i := range 200 {
+					roomID := "room-" + strconv.Itoa(i)
+					assert.Equal(t, ring1.Locate(roomID), ring2.Locate(roomID))
+				}
 			},
 		},
 	}

@@ -1,6 +1,7 @@
 package websocket
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -9,8 +10,11 @@ import (
 	userpb "go-chat-msa/api/proto/user/v1"
 	"go-chat-msa/internal/apigateway/mocks"
 	"go-chat-msa/internal/shared/config"
+	"go-chat-msa/internal/shared/roomlease"
 	"go-chat-msa/internal/wsgateway/loadbalance"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -114,6 +118,45 @@ func TestRouter_ServeHTTP(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRouter_ServeWebSocketLeaseBusy(t *testing.T) {
+	t.Parallel()
+
+	srv := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: srv.Addr()})
+	t.Cleanup(func() { require.NoError(t, client.Close()) })
+
+	ownerA := roomlease.NewStore(client, "wss:room:lease:", "10.0.0.1:8081", 30*time.Second)
+	_, err := ownerA.Acquire(t.Context(), "room-1")
+	require.NoError(t, err)
+
+	mockChatClient := mocks.NewMockChatServiceClient(t)
+	mockUserClient := mocks.NewMockUserServiceClient(t)
+	mockUserClient.EXPECT().VerifyRoomMember(mock.Anything, &userpb.VerifyRoomMemberRequest{
+		RoomId: "room-1",
+		UserId: "user-1",
+	}).Return(nil, nil)
+
+	cfg := createTestConfig()
+	cfg.AdvertisedAddr = "10.0.0.2:8081"
+	router := NewRouter(mockChatClient, mockUserClient, cfg, loadbalance.New([]string{cfg.AdvertisedAddr}),
+		WithRoomLeaseStore(roomlease.NewStore(client, "wss:room:lease:", cfg.AdvertisedAddr, 30*time.Second)))
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go router.RunManager(ctx)
+
+	req, err := http.NewRequest("GET", "/ws?room_id=room-1", nil)
+	require.NoError(t, err)
+	req.Header.Set("X-User-ID", "user-1")
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	assert.Equal(t, "1", w.Header().Get("Retry-After"))
+	assert.Contains(t, w.Body.String(), "room handoff in progress, please retry")
 }
 
 func createTestConfig() WebSocketConfig {

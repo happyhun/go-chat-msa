@@ -23,6 +23,9 @@ const (
 	hubUnregisterBufferSize = 50
 	hubBroadcastBufferSize  = 250
 	persistDoneBufferSize   = 1
+	handoffCloseCode        = 1012
+	handoffCloseReason      = "room owner handoff"
+	persistBackpressureMsg  = "message temporarily unavailable, please retry"
 )
 
 type registerHubReq struct {
@@ -56,6 +59,7 @@ type Hub struct {
 	unregisterCh chan *session
 	broadcastCh  chan *Message
 	persistCh    chan<- *persistTask
+	persistSlots chan struct{}
 	persistDone  chan struct{}
 
 	doneCh   chan struct{}
@@ -68,6 +72,9 @@ type Hub struct {
 	drainTimeout   time.Duration
 	draining       atomic.Bool
 	pendingPersist atomic.Int64
+	persistFailed  atomic.Bool
+	activeSessions atomic.Int64
+	closeReason    atomic.Value
 }
 
 func newHub(
@@ -78,10 +85,15 @@ func newHub(
 	persistCh chan<- *persistTask,
 	drainTimeout time.Duration,
 	allowFunc func(userID, roomID string) bool,
+	persistSlots ...chan struct{},
 ) *Hub {
 	cache, err := lru.New[string, *Message](idempotencyCacheSize)
 	if err != nil {
 		panic(fmt.Sprintf("hub: failed to create LRU cache: %v", err))
+	}
+	var slots chan struct{}
+	if len(persistSlots) > 0 {
+		slots = persistSlots[0]
 	}
 	return &Hub{
 		roomID:           roomID,
@@ -95,6 +107,7 @@ func newHub(
 		unregisterCh:     make(chan *session, hubUnregisterBufferSize),
 		broadcastCh:      make(chan *Message, hubBroadcastBufferSize),
 		persistCh:        persistCh,
+		persistSlots:     slots,
 		persistDone:      make(chan struct{}, persistDoneBufferSize),
 		doneCh:           make(chan struct{}),
 		stopCh:           make(chan struct{}),
@@ -109,9 +122,9 @@ func (h *Hub) run(ctx context.Context) {
 	slog.InfoContext(ctx, "Hub actor started", "room_id", h.roomID)
 	defer func() {
 		slog.InfoContext(ctx, "Hub actor stopped", "room_id", h.roomID)
-		cancelSessions()
-		close(h.doneCh)
 		h.shutdown()
+		close(h.doneCh)
+		cancelSessions()
 	}()
 
 	h.initializeSequence(ctx)
@@ -139,6 +152,7 @@ func (h *Hub) run(ctx context.Context) {
 				delete(h.sessions, s.senderID)
 				s.close()
 				connectionsActive.Add(ctx, -1)
+				h.activeSessions.Add(-1)
 			}
 
 			if len(h.sessions) == 0 {
@@ -211,13 +225,30 @@ func (h *Hub) registerSession(ctx context.Context, s *session, idleTimer *time.T
 
 		oldSession.close()
 		delete(h.sessions, s.senderID)
+		h.activeSessions.Add(-1)
 	}
 
 	h.sessions[s.senderID] = s
 	connectionsActive.Add(ctx, 1)
+	h.activeSessions.Add(1)
 }
 
 func (h *Hub) fanOut(ctx context.Context, message *Message) {
+	needsPersist := h.store != nil && h.persistCh != nil
+	reservedPersistSlot := false
+	if needsPersist {
+		if !h.reservePersistSlot() {
+			persistDroppedTotal.Add(ctx, 1)
+			slog.WarnContext(ctx, "Persist channel full, message rejected",
+				"room_id", h.roomID,
+				"sender_id", message.SenderID,
+				"reason", "persist_backpressure")
+			h.sendSystemTo(ctx, message.SenderID, persistBackpressureMsg)
+			return
+		}
+		reservedPersistSlot = true
+	}
+
 	seq := h.lastSequence.Add(1)
 	message.SequenceNumber = seq
 
@@ -225,6 +256,7 @@ func (h *Hub) fanOut(ctx context.Context, message *Message) {
 		newID, err := uuid.NewV7()
 		if err != nil {
 			slog.ErrorContext(ctx, "failed to generate message ID", "error", err)
+			h.rollbackSequenceAndSlot(reservedPersistSlot)
 			return
 		}
 		message.ID = newID.String()
@@ -237,19 +269,20 @@ func (h *Hub) fanOut(ctx context.Context, message *Message) {
 	rawData, err := message.toRawJSON()
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to marshal fanout message", "error", err)
+		h.rollbackSequenceAndSlot(reservedPersistSlot)
 		return
 	}
-	for _, s := range h.sessions {
-		s.sendWithMeta(ctx, rawData, message.SenderID, message.ReceivedAt)
-	}
 
-	if h.store != nil {
+	if needsPersist {
 		msgCopy := *message
 		persistChannelDepth.Record(ctx, float64(len(h.persistCh)))
 		h.pendingPersist.Add(1)
 		task := &persistTask{
 			msg: &msgCopy,
-			ack: func(error) {
+			ack: func(err error) {
+				if err != nil {
+					h.persistFailed.Store(true)
+				}
 				if h.pendingPersist.Add(-1) == 0 {
 					h.notifyPersistDone()
 				}
@@ -261,10 +294,17 @@ func (h *Hub) fanOut(ctx context.Context, message *Message) {
 			if h.pendingPersist.Add(-1) == 0 {
 				h.notifyPersistDone()
 			}
+			h.rollbackSequenceAndSlot(reservedPersistSlot)
 			persistDroppedTotal.Add(ctx, 1)
-			slog.WarnContext(ctx, "Persist channel full, message dropped",
+			slog.WarnContext(ctx, "Persist channel full, message rejected",
 				"room_id", h.roomID, "msg_id", message.ID, "seq", message.SequenceNumber)
+			h.sendSystemTo(ctx, message.SenderID, persistBackpressureMsg)
+			return
 		}
+	}
+
+	for _, s := range h.sessions {
+		s.sendWithMeta(ctx, rawData, message.SenderID, message.ReceivedAt)
 	}
 }
 
@@ -362,13 +402,82 @@ func (h *Hub) notifyPersistDone() {
 	}
 }
 
+func (h *Hub) reservePersistSlot() bool {
+	if h.persistSlots == nil {
+		return true
+	}
+	select {
+	case h.persistSlots <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (h *Hub) releasePersistSlot() {
+	if h.persistSlots == nil {
+		return
+	}
+	select {
+	case <-h.persistSlots:
+	default:
+	}
+}
+
+func (h *Hub) rollbackSequenceAndSlot(reservedPersistSlot bool) {
+	h.lastSequence.Add(-1)
+	if reservedPersistSlot {
+		h.releasePersistSlot()
+	}
+}
+
+func (h *Hub) sendSystemTo(ctx context.Context, senderID, content string) {
+	s, ok := h.sessions[senderID]
+	if !ok {
+		return
+	}
+	msg := &Message{
+		Type:      msgTypeSystem,
+		SenderID:  systemSenderID,
+		RoomID:    h.roomID,
+		Content:   content,
+		Timestamp: time.Now().Unix(),
+	}
+	rawData, err := msg.toRawJSON()
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to marshal system message", "error", err)
+		return
+	}
+	s.send(ctx, rawData)
+}
+
+func (h *Hub) sessionCloseFrame() (string, int) {
+	value := h.closeReason.Load()
+	if value == nil {
+		return "", 0
+	}
+	reason, _ := value.(string)
+	switch reason {
+	case handoffCloseReason, "lease_lost", "lease_renew_stale":
+		return handoffCloseReason, handoffCloseCode
+	default:
+		return "", 0
+	}
+}
+
 func (h *Hub) shutdown() {
 	h.beginDrain()
 
+	closeReason, closeCode := h.sessionCloseFrame()
 	for _, s := range h.sessions {
-		s.close()
+		if closeCode != 0 {
+			s.closeWithCode(closeCode, closeReason)
+		} else {
+			s.close()
+		}
 		connectionsActive.Add(context.Background(), -1)
 	}
+	h.activeSessions.Store(0)
 	h.sessions = make(map[string]*session)
 
 	for {
@@ -468,7 +577,18 @@ func (h *Hub) done() <-chan struct{} {
 	return h.doneCh
 }
 
-func (h *Hub) forceClose() {
+func (h *Hub) activeSessionCount() int64 {
+	return h.activeSessions.Load()
+}
+
+func (h *Hub) isDraining() bool {
+	return h.draining.Load()
+}
+
+func (h *Hub) forceClose(reasons ...string) {
+	if len(reasons) > 0 && reasons[0] != "" {
+		h.closeReason.Store(reasons[0])
+	}
 	h.beginDrain()
 	h.stopOnce.Do(func() { close(h.stopCh) })
 }

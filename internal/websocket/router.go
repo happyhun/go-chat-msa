@@ -10,6 +10,7 @@ import (
 	chatpb "go-chat-msa/api/proto/chat/v1"
 	userpb "go-chat-msa/api/proto/user/v1"
 	"go-chat-msa/internal/shared/httpio"
+	"go-chat-msa/internal/shared/roomlease"
 	"go-chat-msa/internal/websocket/hub"
 	"go-chat-msa/internal/wsgateway/loadbalance"
 
@@ -30,6 +31,7 @@ type RouterOption func(*routerOptions)
 type routerOptions struct {
 	shutdownTimeout time.Duration
 	redisClient     *redis.Client
+	roomLeaseStore  *roomlease.Store
 	chatHealth      grpc_health_v1.HealthClient
 	userHealth      grpc_health_v1.HealthClient
 }
@@ -43,6 +45,12 @@ func WithShutdownTimeout(timeout time.Duration) RouterOption {
 func WithRedisClient(client *redis.Client) RouterOption {
 	return func(o *routerOptions) {
 		o.redisClient = client
+	}
+}
+
+func WithRoomLeaseStore(store *roomlease.Store) RouterOption {
+	return func(o *routerOptions) {
+		o.roomLeaseStore = store
 	}
 }
 
@@ -91,6 +99,9 @@ func NewRouter(
 		},
 	}
 
+	manager := hub.NewManager(cfg.Manager, cfg.RateLimit.WSMessage, store, options.shutdownTimeout)
+	manager.SetRoomLeaseStore(options.roomLeaseStore)
+
 	r := &Router{
 		mux:            http.NewServeMux(),
 		upgrader:       upgrader,
@@ -100,7 +111,7 @@ func NewRouter(
 		chatHealth:     options.chatHealth,
 		userHealth:     options.userHealth,
 		redisClient:    options.redisClient,
-		manager:        hub.NewManager(cfg.Manager, cfg.RateLimit.WSMessage, store, options.shutdownTimeout),
+		manager:        manager,
 		store:          store,
 	}
 
