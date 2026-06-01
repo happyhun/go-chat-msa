@@ -9,8 +9,8 @@ type Message struct {
 	RoomID         string    `bson:"roomId"`
 	SenderID       string    `bson:"senderId"`
 	Content        string    `bson:"content"`
-	Type           string    `bson:"type"`
 	ClientMsgID    string    `bson:"clientMsgId"`
+	Type           string    `bson:"type"`
 	SequenceNumber int64     `bson:"sequenceNumber"`
 	CreatedAt      time.Time `bson:"createdAt"`
 }

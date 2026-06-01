@@ -3,12 +3,15 @@ package chat
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
+
+var ErrSequenceConflict = errors.New("sequence number conflict")
 
 type Repository interface {
 	SaveMany(ctx context.Context, msgs []*Message) error
@@ -49,12 +52,34 @@ func (r *mongoRepository) SaveMany(ctx context.Context, msgs []*Message) error {
 		return err
 	}
 
+	hasSequenceConflict := false
 	for _, we := range bwErr.WriteErrors {
 		if we.Code != 11000 {
 			return err
 		}
+		switch {
+		case isSequenceDuplicate(we):
+			hasSequenceConflict = true
+		case isClientMessageDuplicate(we):
+			continue
+		default:
+			return err
+		}
+	}
+	if hasSequenceConflict {
+		return ErrSequenceConflict
 	}
 	return nil
+}
+
+func isClientMessageDuplicate(err mongo.BulkWriteError) bool {
+	return strings.Contains(err.Message, "unique_room_client_msg") ||
+		strings.Contains(err.Message, "clientMsgId")
+}
+
+func isSequenceDuplicate(err mongo.BulkWriteError) bool {
+	return strings.Contains(err.Message, "unique_room_sequence") ||
+		strings.Contains(err.Message, "sequenceNumber")
 }
 
 func (r *mongoRepository) GetHistory(ctx context.Context, roomID string, limit int64, joinedAt time.Time) ([]*Message, error) {

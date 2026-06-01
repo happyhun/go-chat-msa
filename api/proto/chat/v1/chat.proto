@@ -19,9 +19,10 @@ message Message {
   string room_id = 2;
   string sender_id = 3;
   string content = 4;
-  string type = 5;
-  google.protobuf.Timestamp timestamp = 6;
+  string client_msg_id = 5;
+  string type = 6;
   int64 sequence_number = 7;
+  google.protobuf.Timestamp timestamp = 8;
 }
 
 message CreateMessageRequest {
