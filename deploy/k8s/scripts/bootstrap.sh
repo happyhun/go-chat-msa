@@ -114,11 +114,15 @@ wait_job_complete() {
 }
 
 restart_backend_apps() {
-  log "restarting backend deployments after image/config apply"
+  log "restarting core backend deployments after image/config apply"
   kubectl -n "${NAMESPACE}" rollout restart \
     deployment/user-service \
-    deployment/chat-service \
-    deployment/websocket-service
+    deployment/chat-service
+  wait_rollout user-service chat-service
+
+  log "restarting websocket deployment after core backend rollout"
+  kubectl -n "${NAMESPACE}" rollout restart deployment/websocket-service
+  wait_rollout websocket-service
 }
 
 restart_edge_apps() {
@@ -155,7 +159,6 @@ main() {
   create_app_configmaps
   apply_kustomize "${OVERLAY_DIR}/apps"
   restart_backend_apps
-  wait_rollout user-service chat-service websocket-service
   restart_edge_apps
   wait_rollout api-gateway ws-gateway frontend swagger-ui
 

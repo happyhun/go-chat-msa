@@ -100,6 +100,7 @@ func (s *E2ESuite) cleanupKubernetesRedis(ctx context.Context) {
 		"auth:rt:*",
 		"ws:ticket:*",
 		"rate:*",
+		"wss:room:lease:*",
 	} {
 		keys, err := s.redisKeysE(ctx, pattern)
 		if err != nil {
