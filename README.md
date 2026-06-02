@@ -1,154 +1,76 @@
 # Go Chat MSA
 
-Go로 구현한 채팅 웹 애플리케이션입니다.
-MSA 구조로 REST, gRPC, WebSocket 서비스를 분리했고, Kubernetes dev/test 환경에서 실행과 검증을 수행합니다.
+Go와 Kubernetes로 구현한 실시간 채팅 MSA 프로젝트입니다.
 
-- 6개 서비스가 REST, gRPC, WebSocket으로 통신
-- 채팅방 기반 라우팅으로 WebSocket 노드 분배
-- Grafana 스택으로 로그, 메트릭, 트레이스, 프로파일 통합 관측
-- K8s `test` overlay에서 fixed replicas 멀티 인스턴스 e2e 검증
-- k6 부하테스트로 **10,000 동시접속, 메시지 P99 레이턴시 25ms 이하** 검증한 legacy baseline 보유
+REST, gRPC, WebSocket 서비스를 분리하고, WebSocket Room Owner Routing, gRPC client-side load balancing, Redis 기반 분산 상태, Kubernetes fixed replicas/HPA 환경에서의 메시지 정합성을 검증했습니다.
+
+## Highlights
+
+- 5개 Go 백엔드 서비스와 1개 frontend로 구성한 채팅 MSA
+- Redis Membership + Consistent Hashing으로 채팅방별 WebSocket Owner Pod 선택
+- Room Lease + graceful drain으로 HPA/rollout handoff 중 Sequence 중복과 저장 race 방지
+- Headless Service + gRPC `round_robin`으로 user/chat backend 멀티 Pod 분산
+- K8s `dev`/`test`/`qa` overlays로 개발, E2E, HPA 정합성 검증 분리
+- Grafana, Prometheus, Loki, Tempo, Pyroscope 기반 로그/메트릭/트레이스/프로파일 통합 관측
+- Docker C10K baseline과 WebSocket HPA handoff 정합성 검증 결과 보유
 
 | 분류 | 기술 |
-|:---|:---|
-| 언어 | Go 1.26 |
-| 통신 | `net/http`, `gorilla/websocket`, `google.golang.org/grpc` |
-| 데이터베이스 | PostgreSQL 17, MongoDB 7.0, Redis 7 |
-| 인증 | `golang-jwt/jwt/v5` (HS256), `golang.org/x/crypto` (Bcrypt), Redis TTL Refresh Token Rotation |
-| 부하분산 | `buraksezer/consistent` (Consistent Hashing) |
-| 관측성 | OpenTelemetry, Grafana, Prometheus, Loki, Tempo, Pyroscope |
-| 코드 생성 | Buf (Protobuf), sqlc (SQL), mockery (Mock) |
-| 테스트 | `stretchr/testify`, K8s e2e, `testcontainers-go` (통합 테스트) |
-| 인프라 | Kubernetes, Kustomize, kind, Docker image build/load |
+|------|------|
+| Language | Go 1.26 |
+| Protocol | HTTP, WebSocket, gRPC |
+| Storage | PostgreSQL 17, MongoDB 7.0, Redis 7 |
+| Auth | JWT access token, HttpOnly refresh token, Redis TTL refresh rotation |
+| Routing | Consistent Hashing, Redis Membership, Room Lease |
+| Observability | OpenTelemetry, Grafana, Prometheus, Loki, Tempo, Pyroscope |
+| Infra | Kubernetes, Kustomize, kind, ingress-nginx, Prometheus Adapter |
+| Test | Go test, Testcontainers, K8s E2E, k6 |
 
-### 스크린샷
+## Screenshots
 
-> [!NOTE]
-> 프론트엔드는 데모 목적으로 작성되었으며, 백엔드 설계와 구현에 초점을 맞춘 프로젝트입니다.
+> 프론트엔드는 데모 목적이며, 핵심은 백엔드 분산 설계와 Kubernetes 검증입니다.
 
 | 로비 | 채팅 |
 |:---:|:---:|
 | ![로비](docs/images/스크린샷_로비.png) | ![채팅](docs/images/스크린샷_채팅방.png) |
 
----
+| 대시보드 |
+|:---:|
+| ![대시보드](docs/images/스크린샷_대시보드.png) |
 
-## 실행 방법
-
-로컬 Kubernetes는 `kind` 기준으로 실행합니다. Docker는 Compose 실행용이 아니라 이미지 빌드와 kind image load 용도로 사용합니다.
-
-앱 설정은 apps phase의 Kustomize가 `gochat-app-config` ConfigMap으로 생성해 `/app/configs`에 마운트합니다. 공통 기본값은 `deploy/k8s/base/apps/config/app/base.yaml`, 환경별 override는 `deploy/k8s/overlays/{dev,test}/apps/config/app/override.yaml`에서 관리합니다.
-
-`deploy/k8s`는 로컬 dev/test baseline입니다. `apps`는 실제 앱 manifest, `foundation`과 `observability`는 로컬 재현을 위한 번들 인프라입니다. 운영 환경에서는 DB/Redis/observability를 managed service나 platform chart/repo로 분리하는 것을 전제로 합니다.
-
-### Prerequisites
-
-아래 소프트웨어가 필요합니다.
-
-| Software | Purpose |
-|:---|:---|
-| Docker | 이미지 빌드와 kind image load |
-| kind | 로컬 Kubernetes 클러스터 실행 |
-| kubectl | Kubernetes 리소스 적용 및 조회 |
-| Go | 테스트 실행 |
-| Make | 로컬 실행 명령 단순화 |
-
-권장 로컬 사양은 CPU 4코어, 메모리 8GB 이상입니다. `dev`와 `test`를 동시에 띄우거나 e2e를 반복 실행할 경우 메모리 16GB 이상이 안정적입니다.
-
-> [!NOTE]
-> `kind`는 운영용 클러스터가 아니라 로컬에서 Kubernetes manifest, Ingress, migration Job, e2e 흐름을 재현하기 위한 개발 및 검증 환경입니다.
-
-### 앱 실행
-
-프론트 화면을 확인하려면 `dev` 환경을 실행합니다. 앱 서비스는 단일 인스턴스로 실행됩니다.
-
-```bash
-make dev-up
-```
-
-`make dev-up`은 다음 작업을 순서대로 수행합니다.
-
-1. kind 클러스터 생성
-2. ingress-nginx 설치
-3. 서비스 이미지 빌드
-4. kind 클러스터로 이미지 load
-5. `dev` overlay bootstrap
-6. 주요 Deployment rollout 대기
-
-Kustomize 렌더링만 빠르게 확인하려면 아래 target을 사용합니다.
-
-```bash
-make k8s-validate
-```
-
-Ingress는 kind host port `30080`으로 노출됩니다. 실행이 끝나면 브라우저에서 아래 URL에 접속할 수 있습니다.
-
-| 서비스 | URL |
-|:---|:---|
-| 프론트엔드 | http://dev.gochat.localhost:30080/ |
-| API Gateway health | http://dev.gochat.localhost:30080/api/health |
-| WS Gateway health | http://dev.gochat.localhost:30080/ws-api/health |
-| Grafana | http://dev.gochat.localhost:30080/grafana/ |
-| OpenAPI 문서 | http://dev.gochat.localhost:30080/docs/ |
-
-### E2E 테스트
-
-E2E는 `test` 환경을 먼저 띄운 뒤 `go test`로 실행합니다. 주요 앱 서비스는 2개씩 실행되어 멀티 인스턴스 상태를 검증합니다.
-
-```bash
-make test-up
-go test -count=1 -tags=e2e ./test/e2e
-```
-
-### 정리
-
-```bash
-make dev-down
-make test-down
-make kind-delete
-```
-
----
-
-## 아키텍처
+## Architecture
 
 ```mermaid
 flowchart TB
-    subgraph ClientLayer ["Client Layer"]
-        direction LR
-        Browser["Web Browser"]
-    end
+    Browser["Web Browser"]
 
-    subgraph Edge ["Edge Services"]
-        direction LR
-        AGW["API Gateway<br/>REST API · auth middleware"]
+    subgraph Edge["Edge"]
+        AGW["API Gateway<br/>REST · auth middleware"]
         WSGW["WS Gateway<br/>ticket API · WebSocket proxy"]
     end
 
-    subgraph Core ["Core Services"]
-        direction LR
-        UserSvc["User Service<br/>users · rooms · memberships<br/>refresh token state"]
-        ChatSvc["Chat Service<br/>message persistence<br/>history lookup"]
-        WSSvc["WebSocket Service<br/>sessions · hubs<br/>room lease · persistence queue"]
+    subgraph Core["Core Services"]
+        UserSvc["User Service<br/>users · rooms · refresh token"]
+        ChatSvc["Chat Service<br/>messages · history"]
+        WSSvc["WebSocket Service<br/>sessions · hubs · Room Lease"]
     end
 
-    subgraph Data ["Data Stores"]
-        direction LR
+    subgraph Data["Data Stores"]
         PG[("PostgreSQL")]
         MG[("MongoDB")]
-        RD[("Redis<br/>membership · room lease")]
+        RD[("Redis<br/>ticket · rate limit<br/>Membership · Room Lease")]
     end
 
-    Browser == "REST /api" ==> AGW
-    Browser == "ticket /ws-api" ==> WSGW
-    Browser == "WebSocket /ws" ==> WSGW
+    Browser == "/api" ==> AGW
+    Browser == "/ws-api" ==> WSGW
+    Browser == "/ws" ==> WSGW
 
     AGW -- "internal HTTP" --> WSGW
-    WSGW == "L7 proxy<br/>room_id hashing" ==> WSSvc
+    WSGW == "room_id hash<br/>Pod IP direct proxy" ==> WSSvc
 
-    AGW -- "gRPC" --> UserSvc
-    AGW -- "gRPC" --> ChatSvc
-    WSSvc -- "gRPC" --> UserSvc
-    WSSvc -- "gRPC" --> ChatSvc
+    AGW -- "gRPC round_robin" --> UserSvc
+    AGW -- "gRPC round_robin" --> ChatSvc
+    WSSvc -- "gRPC round_robin" --> UserSvc
+    WSSvc -- "gRPC round_robin" --> ChatSvc
 
     UserSvc --> PG
     UserSvc --> RD
@@ -159,82 +81,180 @@ flowchart TB
 ```
 
 | 서비스 | 역할 | 프로토콜 | 저장소 |
-|:---|:---|:---|:---|
-| api-gateway | REST API 진입점, 인증 위임, 버전 라우팅 | REST | Redis |
-| ws-gateway | WebSocket L7 리버스 프록시, Consistent Hashing | HTTP | Redis |
-| websocket-service | 실시간 메시지 브로드캐스트, 세션/룸 관리, room handoff | WebSocket | Redis(control plane) |
-| user-service | 사용자 및 채팅방 CRUD, Bcrypt 워커 풀, refresh token 상태 관리 | gRPC | PostgreSQL, Redis |
-| chat-service | 메시지 저장 및 조회 | gRPC | MongoDB |
+|------|------|----------|--------|
+| `api-gateway` | REST API 진입점, 인증 미들웨어, API version routing | HTTP | Redis |
+| `ws-gateway` | WebSocket ticket API, L7 reverse proxy, owner routing | HTTP/WebSocket proxy | Redis |
+| `websocket-service` | 세션/Hub 관리, fan-out, Sequence, Room Lease Handoff | WebSocket, gRPC client | Redis |
+| `user-service` | 사용자, 채팅방, 멤버십, refresh token 상태 | gRPC | PostgreSQL, Redis |
+| `chat-service` | 메시지 저장, 히스토리/catch-up 조회 | gRPC | MongoDB |
+| `frontend` | 데모 UI | HTTP | - |
 
-상세 흐름은 개별 다이어그램을 참고해 주세요.
+상세 다이어그램은 [docs/diagrams](docs/diagrams)에서 확인할 수 있습니다.
 
-- [MSA 앱 아키텍처](docs/diagrams/flow-msa.mmd)
-- [K8s 런타임 배포 구조](docs/diagrams/flow-k8s-runtime.mmd)
-- [K8s overlay 구조](docs/diagrams/flow-k8s-overlays.mmd)
-- [K8s bootstrap 흐름](docs/diagrams/flow-k8s-bootstrap.mmd)
-- [메시지 브로드캐스트 흐름](docs/diagrams/flow-message.mmd)
-- [WebSocket 라우팅 흐름](docs/diagrams/flow-ws-routing.mmd)
-- [인증 및 티켓 발급 시퀀스](docs/diagrams/seq-auth-ticket.mmd)
-- [Refresh Token rotation 시퀀스](docs/diagrams/seq-refresh-token-rotation.mmd)
-- [WebSocket 세션 생명주기](docs/diagrams/seq-websocket.mmd)
-- [WebSocket room handoff 시퀀스](docs/diagrams/seq-rebalance.mmd)
+## Kubernetes Environments
 
----
+로컬 Kubernetes는 kind 기준입니다. Docker Compose는 active 실행 경로에서 제거했고, Docker는 이미지 빌드와 kind image load에만 사용합니다.
 
-## 주요 설계 결정
+| 환경 | 명령 | 목적 | 주요 설정 |
+|------|------|------|----------|
+| `dev` | `make dev-up` | 브라우저/API 확인, C10K 부하 경로 | `websocket-service` 2 replicas, `dev-load` |
+| `test` | `make test-up` | K8s E2E correctness | gateway/service 2 replicas 고정 |
+| `qa` | `make qa-up` | WebSocket HPA handoff 정합성 | `websocket-service` HPA 1→2, Prometheus Adapter |
 
-상세 설계는 [DESIGN.md](docs/DESIGN.md)를 참고해 주세요.
+로컬 kind 클러스터는 control-plane 1개와 worker 1개로 구성합니다.
+Ingress controller는 control-plane의 host port `30080`으로 노출되고, 애플리케이션 Pod는 worker에 스케줄됩니다.
 
-1. **Bcrypt 워커 풀 - CPU 경합 방지**: 무제한 고루틴 대신 CPU 코어수의 워커로 동시성을 제한하여 CPU 바운드 작업 효율성을 높였습니다. 대기열이 꽉 차면 즉시 거부해서 연쇄 장애를 막습니다.
+### Prerequisites
 
-2. **채팅방 기반 라우팅 - WebSocket 분배**: Redis Pub/Sub으로 노드 간 중계하는 대신, 동일 채팅방의 모든 세션을 한 노드에 모아 인메모리 브로드캐스트합니다. Redis는 membership과 room lease 같은 control plane에만 사용하고, 메시지 hot path에서는 외부 왕복을 제거했습니다.
+| Tool | Purpose |
+|------|---------|
+| Docker | 이미지 빌드, kind node runtime |
+| kind | 로컬 Kubernetes 클러스터 |
+| kubectl | K8s 리소스 적용/조회 |
+| Go | 테스트 실행 |
+| Make | 표준 명령 실행 |
 
-3. **Actor 모델 - WebSocket 계층 분리**: Router, Manager, Hub, Session 4계층으로 나누고, Manager와 Hub는 각각 단일 고루틴의 `select` 루프에서 상태를 순차 처리합니다. Router는 upgrade 전 owner/lease 상태를 확인하고, Manager는 room lease와 Hub 생명주기를 관리하며, Hub는 sequence/fan-out/persist drain에 집중합니다.
+권장 로컬 사양은 CPU 4코어, 메모리 16GB 이상입니다.
+`dev`, `test`, `qa`를 동시에 띄우거나 k6 부하를 반복 실행하면 더 많은 메모리가 필요합니다.
 
-4. **Kubernetes 실행 경로 단일화**: Docker Compose 실행 경로를 제거하고 dev/test 모두 K8s overlay로 실행합니다. `dev`는 단일 인스턴스 수동 확인, `test`는 2 replicas 기반 E2E 정합성 검증에 집중합니다.
+### Run
 
----
+```bash
+make dev-up
+```
 
-## 관측성
+`make dev-up`은 kind 클러스터 생성, ingress-nginx 설치, 커널 튜닝, 이미지 빌드/load, K8s bootstrap을 순서대로 수행합니다.
 
-OpenTelemetry SDK로 계측하고 Grafana 스택으로 4가지 신호를 통합 조회합니다.
-상세 계측 항목은 [텔레메트리 카탈로그](docs/TELEMETRY_CATALOG.md)를 참고해 주세요.
+| 서비스 | URL |
+|------|-----|
+| Frontend | http://dev.gochat.localhost:30080/ |
+| API health | http://dev.gochat.localhost:30080/api/health |
+| WS health | http://dev.gochat.localhost:30080/ws-api/health |
+| OpenAPI | http://dev.gochat.localhost:30080/docs/ |
+| Grafana | http://dev.gochat.localhost:30080/grafana/ |
 
-| 신호 | 백엔드 | 용도 |
-|:---|:---|:---|
-| 로그 | Loki | 이슈 발생 확인, 트레이스 연결 |
-| 메트릭 | Prometheus | HTTP, gRPC, DB, WebSocket 지표 수집 |
-| 트레이스 | Tempo | 서비스 간 요청 흐름 추적 |
-| 프로파일 | Pyroscope | CPU, 메모리, 고루틴 병목 분석 |
+다른 환경은 host만 바뀝니다.
 
-### Grafana
+| 환경 | Host |
+|------|------|
+| `dev` | `dev.gochat.localhost:30080` |
+| `test` | `test.gochat.localhost:30080` |
+| `qa` | `qa.gochat.localhost:30080` |
 
-![대시보드](docs/images/스크린샷_대시보드.png)
+### Validate Manifests
 
----
+```bash
+make k8s-validate
+```
 
-## 테스트
+모든 base/phase/overlay를 `kubectl kustomize`로 렌더링합니다.
 
-통합 테스트는 K8s를 사용하지 않고 Docker 기반 Testcontainers로 필요한 DB만 띄웁니다. E2E는 K8s `test` overlay가 떠 있어야 합니다.
+### E2E
 
-| 구분 | 실행 명령어 | 설명 |
-|:---|:---|:---|
-| 단위 | `go test ./...` | 테이블 기반, `t.Parallel()` 병렬 실행 |
-| 통합 | `go test -count=1 -tags=integration ./...` | K8s 없이 Testcontainers로 실제 DB 사용 |
-| E2E | `go test -count=1 -tags=e2e ./test/e2e` | K8s `test` overlay 대상 blackbox 및 멀티 인스턴스 정합성 검증 |
-| 전체 | `go test -count=1 -tags=integration,e2e ./...` | 통합 테스트와 K8s e2e를 함께 실행 |
+```bash
+make test-up
+go test -count=1 -tags=e2e ./test/e2e
+```
 
-### k6 부하테스트 결과
+`test` overlay는 주요 gateway/service를 2 replicas로 고정합니다.
+E2E는 인증, 방 생성/입장, 메시지 송수신, reconnect/catch-up, Redis membership, multi-instance correctness를 블랙박스로 검증합니다.
 
-10,000 동시접속 / 100개 방 / 2K Ingress, 200K Egress RPS 환경에서 모든 임계값을 통과했습니다(네트워크 RTT 제외).
-이 수치는 Kubernetes 이관 전 legacy baseline이며, 부하테스트 재현용 Compose 기준점은 `legacy-c10k-compose-baseline` tag로 보존합니다.
-Phase 3에서는 멀티 노드 K8s 환경에서 HPA, rollout/drain, P99, 메시지 정합성을 다시 측정합니다.
+### Load Tests
 
-상세 분석은 [C10K 보고서](docs/C10K_REPORT.md)와 [트러블슈팅 기록](docs/C10K_TROUBLESHOOTING.md)을 참고해 주세요.
+```bash
+make dev-load
+```
 
-| 메트릭 | 임계값 | 결과 (P99) |
-|:---|:---|:---|
-| 메시지 지연 | < 50ms | 19 ~ 25ms |
-| 히스토리 조회 | < 100ms | 10 ~ 12ms |
-| 동기화 조회 | < 100ms | 15 ~ 19ms |
-| 메시지 타임아웃 | < 1건 | 0건 |
+`dev-load`는 K8s 내부에서 k6 Pod 4개를 띄워 `test/load/c10k-test.js`를 실행합니다.
+목적은 Docker Compose 시절 C10K baseline과 같은 부하 경로를 K8s에서 재검증하는 것입니다.
+
+```bash
+make qa-load
+```
+
+`qa-load`는 `websocket-service`를 1 replica로 reset하고 HPA를 다시 적용한 뒤 `test/load/hpa-test.js`를 실행합니다.
+목적은 HPA scale-out 중 Room Owner Handoff가 메시지 Sequence 정합성을 깨지 않는지 검증하는 것입니다.
+
+### Cleanup
+
+```bash
+make dev-down
+make test-down
+make qa-down
+make kind-delete
+```
+
+## Verified Results
+
+### C10K Legacy Baseline
+
+Docker Compose 기준으로 아래 부하를 통과한 기록을 보존합니다.
+
+| 항목 | 값 |
+|------|-----|
+| 동시 접속 | 10,000 |
+| 채팅방 | 100개 |
+| 방당 인원 | 100명 |
+| Ingress | 2K messages/sec |
+| Egress | 200K messages/sec |
+| 메시지 P99 | 19~25ms |
+| history/sync 조회 P99 | 10~19ms |
+| 메시지 타임아웃 | 0 |
+
+상세 기록은 [DOCKER_C10K_REPORT.md](docs/DOCKER_C10K_REPORT.md)와 [DOCKER_C10K_TROUBLESHOOTING.md](docs/DOCKER_C10K_TROUBLESHOOTING.md)에 정리했습니다.
+
+### WebSocket HPA Consistency
+
+로컬 kind `qa`에서 `websocket-service` HPA `1→2` scale-out 중 정합성 시나리오를 통과했습니다.
+
+| 항목 | 결과 |
+|------|------|
+| k6 Job | `k6-hpa Complete 1/1` |
+| HTTP failure | 0 |
+| WebSocket error | 0 |
+| sequence duplicate | 0 |
+| sequence regression | 0 |
+| sync gap observed/recovered | 2 / 2 |
+| sync gap discarded | 0 |
+| Mongo sequence hole | 0 |
+| message latency P99 | 4ms |
+| sync fetch P99 | 15.33ms |
+
+이 수치는 운영 성능 지표가 아니라 HPA handoff 정합성 검증 결과입니다.
+K8s `dev-load`와 `qa-load`의 실행 구조는 [K8S_C10K_HPA_REPORT.md](docs/K8S_C10K_HPA_REPORT.md)에 분리했습니다.
+
+## Design Notes
+
+1. **WebSocket Room Owner Routing**
+   같은 채팅방의 세션을 같은 WebSocket Service Pod에 모아 fan-out을 인메모리로 처리합니다. Redis Pub/Sub을 hot path에 넣지 않고, Redis는 membership과 lease 같은 control plane에만 사용합니다.
+
+2. **Room Lease Handoff**
+   HPA나 rollout으로 Room Owner가 바뀔 때 이전 Owner가 이미 fan-out한 메시지의 Persist ACK를 기다린 뒤 Lease를 release합니다. Persist 실패가 확정되면 Redis Sequence Floor에 마지막 발급 Sequence를 남기고, 새 Owner는 `max(MongoDB last sequence, Redis Sequence Floor)` 기준으로 이어서 발급합니다.
+
+3. **gRPC Headless Service**
+   user/chat backend는 Headless Service와 gRPC `round_robin`으로 Pod별 HTTP/2 subchannel을 만듭니다. 단, gRPC resolver는 EndpointSlice watch가 아니므로 gRPC backend HPA는 별도 측정 대상입니다.
+
+4. **Refresh token Redis state**
+   TTL성 인증 상태를 PostgreSQL에서 Redis로 옮기고, rotation/reuse detection/revoke-all을 Lua script로 원자 처리합니다. 이로써 token purge loop/CronJob이 필요 없어졌습니다.
+
+5. **K8s 실행 경로 단일화**
+   Docker Compose는 legacy baseline으로만 남기고, 개발 확인, E2E, HPA 검증은 K8s overlay로 통일했습니다.
+
+## Documentation
+
+| 문서 | 내용 |
+|------|------|
+| [DESIGN.md](docs/DESIGN.md) | 전체 설계와 트레이드오프 |
+| [k8s-study-guide.md](docs/k8s-study-guide.md) | Kubernetes 학습용 실행/개념 가이드 |
+| [k8s-migration-plan.md](docs/k8s-migration-plan.md) | K8s 이관 목표, 완료 현황, 남은 과제 |
+| [TELEMETRY_CATALOG.md](docs/TELEMETRY_CATALOG.md) | 로그/메트릭/트레이스/프로파일 카탈로그 |
+| [DOCKER_C10K_REPORT.md](docs/DOCKER_C10K_REPORT.md) | Docker Compose C10K 성능 baseline |
+| [DOCKER_C10K_TROUBLESHOOTING.md](docs/DOCKER_C10K_TROUBLESHOOTING.md) | Docker Compose C10K 병목과 해결 기록 |
+| [K8S_C10K_HPA_REPORT.md](docs/K8S_C10K_HPA_REPORT.md) | K8s `dev-load` C10K 경로와 `qa-load` HPA 정합성 검증 |
+| [velog-grpc-k8s-headless-hpa.md](docs/velog-grpc-k8s-headless-hpa.md) | gRPC Headless Service와 HPA 한계 |
+| [velog-websocket-hpa-handoff.md](docs/velog-websocket-hpa-handoff.md) | WebSocket HPA handoff와 메시지 정합성 |
+
+## Production Boundary
+
+이 프로젝트의 K8s 매니페스트는 로컬 검증용입니다.
+PostgreSQL, MongoDB, Redis, observability stack은 kind 안에 함께 띄우지만, 운영으로 승격하려면 managed DB, backup/restore, Redis HA, Secret 관리, RBAC, NetworkPolicy, image tag 정책, multi-node rollout/drain runbook을 별도로 설계해야 합니다.

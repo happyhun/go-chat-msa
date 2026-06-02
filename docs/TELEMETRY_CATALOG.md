@@ -9,6 +9,7 @@
 5. [Metrics](#5-metrics)
 6. [Traces](#6-traces)
 7. [Profiles](#7-profiles)
+8. [Kubernetes HPA Metric](#8-kubernetes-hpa-metric)
 
 ---
 
@@ -34,7 +35,7 @@ OTel resource에는 공통으로 `service.name`과 `service.instance.id`가 들�
 | api-gateway | HTTP | HTTP, gRPC Client, Redis | HTTP, gRPC Client, Redis |
 | ws-gateway | HTTP | HTTP, Routing, Redis | HTTP, Redis |
 | websocket-service | HTTP | HTTP, WebSocket, Persistence, Room Lease, gRPC Client, Redis | HTTP, gRPC Client, Redis |
-| user-service | gRPC | gRPC Server, PostgreSQL, Domain | gRPC Server, PostgreSQL |
+| user-service | gRPC | gRPC Server, PostgreSQL, Redis, Domain | gRPC Server, PostgreSQL, Redis |
 | chat-service | gRPC | gRPC Server, MongoDB, Domain | gRPC Server, MongoDB |
 
 ---
@@ -108,6 +109,10 @@ OTel resource에는 공통으로 `service.name`과 `service.instance.id`가 들�
 ---
 
 ## 5. Metrics
+
+아래 이름은 Prometheus/Grafana에서 조회하는 이름 기준입니다.
+OTel Counter instrument는 코드에서 `_total` 없이 등록되어도 Prometheus 변환 과정에서 `_total` suffix가 붙을 수 있습니다.
+HPA에 사용하는 `gochat_ws_connections_active`는 connection 수 metric이라 Prometheus Adapter에서 이름 그대로 조회합니다.
 
 ### HTTP
 
@@ -228,7 +233,7 @@ OTel resource에는 공통으로 `service.name`과 `service.instance.id`가 들�
 
 명령별(GET, SET 등) latency는 메트릭이 아닌 트레이스(`redisotel.InstrumentTracing`의 span attribute)로 확인합니다. Prometheus 컨벤션은 base unit(`_seconds`)을 권장하지만 redisotel은 `_milliseconds`/`_nanoseconds`로 노출하는 라이브러리 한계가 있습니다.
 
-- 서비스: api-gateway, ws-gateway
+- 서비스: api-gateway, ws-gateway, websocket-service, user-service
 
 ### Domain
 
@@ -266,6 +271,9 @@ OTel resource에는 공통으로 `service.name`과 `service.instance.id`가 들�
 | kube_pod_container_status_restarts_total | counter | namespace, pod, container | kube-state-metrics |
 | kube_deployment_status_replicas_ready | gauge | namespace, deployment | kube-state-metrics |
 | kube_horizontalpodautoscaler_status_current_replicas | gauge | namespace, horizontalpodautoscaler | kube-state-metrics |
+| kube_horizontalpodautoscaler_status_desired_replicas | gauge | namespace, horizontalpodautoscaler | kube-state-metrics |
+| kube_horizontalpodautoscaler_spec_min_replicas | gauge | namespace, horizontalpodautoscaler | kube-state-metrics |
+| kube_horizontalpodautoscaler_spec_max_replicas | gauge | namespace, horizontalpodautoscaler | kube-state-metrics |
 
 ### Go Runtime
 
@@ -299,7 +307,7 @@ OTel resource에는 공통으로 `service.name`과 `service.instance.id`가 들�
 | HTTP 서버 | otelhttp.NewMiddleware | api-gateway, ws-gateway, websocket-service |
 | gRPC 서버 | otelgrpc.NewServerHandler | user-service, chat-service |
 | gRPC 클라이언트 | otelgrpc.NewClientHandler | api-gateway, websocket-service |
-| Redis 클라이언트 | redisotel.InstrumentTracing | api-gateway, ws-gateway |
+| Redis 클라이언트 | redisotel.InstrumentTracing | api-gateway, ws-gateway, websocket-service, user-service |
 
 ### Manual
 
@@ -329,3 +337,36 @@ Tempo가 트레이스 데이터로부터 서비스 그래프 메트릭을 생성
 | Goroutines | 고루틴 생성 스택트레이스 |
 
 - 서비스: 전체
+
+---
+
+## 8. Kubernetes HPA Metric
+
+`qa` overlay는 `websocket-service` HPA를 CPU가 아니라 WebSocket active connection 수로 검증합니다.
+
+흐름은 다음과 같습니다.
+
+```text
+websocket-service
+  → OTel metric gochat_ws_connections_active
+  → Alloy
+  → Prometheus
+  → Prometheus Adapter
+  → custom.metrics.k8s.io
+  → HPA websocket-service
+```
+
+HPA가 읽는 metric:
+
+| 항목 | 값 |
+|------|-----|
+| Kubernetes API | `custom.metrics.k8s.io/v1beta1` |
+| Metric name | `gochat_ws_connections_active` |
+| Metric type | Pods metric |
+| Target | `AverageValue: 100` |
+| HPA 대상 | `deployment/websocket-service` |
+| QA 정책 | `minReplicas=1`, `maxReplicas=2`, scale-up `+1 pod / 30s`, scale-down stabilization `300s` |
+
+Prometheus Adapter rule은 `gochat_ws_connections_active{namespace!="",pod!=""}` 시계열만 노출합니다. 따라서 Alloy/Prometheus 경로에서 `namespace`와 `pod` 라벨이 유지되어야 HPA가 Pod metric으로 해석할 수 있습니다.
+
+이 값은 운영 autoscaling 정책이라기보다 로컬 kind QA에서 HPA handoff를 재현하기 위한 낮은 기준입니다. 성능 판단은 `dev-load` C10K 시나리오, HPA handoff 정합성 판단은 `qa-load` 시나리오로 분리합니다.
