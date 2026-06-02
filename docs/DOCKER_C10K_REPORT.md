@@ -1,4 +1,6 @@
-# C10K 부하 테스트 보고서
+# Docker Compose C10K 부하 테스트 보고서
+
+> 이 문서는 Kubernetes 이관 전 Docker Compose 환경에서 확보한 legacy 성능 baseline입니다.
 
 ## 테스트 환경
 

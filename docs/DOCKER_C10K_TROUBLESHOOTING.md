@@ -1,6 +1,7 @@
-# C10K 트러블슈팅 저널
+# Docker Compose C10K 트러블슈팅 저널
 
 k6로 C10K 부하테스트를 진행하며 겪은 문제들과 해결 과정을 기록했습니다.
+이 기록은 Docker Compose 기반 legacy baseline을 만들 때의 트러블슈팅입니다.
 
 ---
 
