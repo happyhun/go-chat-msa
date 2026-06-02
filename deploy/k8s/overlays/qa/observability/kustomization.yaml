@@ -1,0 +1,53 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: go-chat-qa
+
+resources:
+  - ../../../base/observability
+  - prometheus-adapter.yaml
+
+patches:
+  - target:
+      kind: ClusterRole
+      name: gochat-alloy-cadvisor
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: gochat-alloy-cadvisor-qa
+  - target:
+      kind: ClusterRoleBinding
+      name: gochat-alloy-cadvisor
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: gochat-alloy-cadvisor-qa
+      - op: replace
+        path: /roleRef/name
+        value: gochat-alloy-cadvisor-qa
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: grafana
+      spec:
+        template:
+          spec:
+            containers:
+              - name: grafana
+                env:
+                  - name: GF_SERVER_ROOT_URL
+                    value: "http://qa.gochat.localhost:30080/grafana/"
+  - target:
+      kind: Ingress
+    patch: |-
+      - op: add
+        path: /spec/rules/0/host
+        value: qa.gochat.localhost
+
+labels:
+  - includeSelectors: true
+    includeTemplates: true
+    pairs:
+      app.kubernetes.io/part-of: go-chat-msa
+      app.kubernetes.io/instance: go-chat-qa
