@@ -34,6 +34,14 @@ apply_kustomize() {
   kubectl apply -k "${path}"
 }
 
+apply_file_if_exists() {
+  local path="$1"
+  if [[ -f "${path}" ]]; then
+    log "kubectl apply -f ${path}"
+    kubectl apply -f "${path}"
+  fi
+}
+
 ensure_namespace() {
   log "ensuring namespace/${NAMESPACE}"
   kubectl create namespace "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
@@ -45,6 +53,19 @@ wait_rollout() {
     log "waiting for deployment/${deployment}"
     kubectl -n "${NAMESPACE}" rollout status "deployment/${deployment}" --timeout="${TIMEOUT}"
   done
+}
+
+wait_rollout_if_exists() {
+  local deployments=()
+  local deployment
+  for deployment in "$@"; do
+    if kubectl -n "${NAMESPACE}" get "deployment/${deployment}" >/dev/null 2>&1; then
+      deployments+=("${deployment}")
+    fi
+  done
+  if ((${#deployments[@]})); then
+    wait_rollout "${deployments[@]}"
+  fi
 }
 
 create_configmap_from_file() {
@@ -93,6 +114,12 @@ create_migration_configmaps() {
 
 create_app_configmaps() {
   create_configmap_from_file openapi-spec openapi.yaml "${REPO_ROOT}/api/openapi/openapi.yaml"
+}
+
+create_load_test_configmaps() {
+  if [[ -d "${OVERLAY_DIR}/load" ]]; then
+    create_configmap_from_dir k6-load-scripts "${REPO_ROOT}/test/load"
+  fi
 }
 
 delete_previous_migration_jobs() {
@@ -147,8 +174,9 @@ main() {
   wait_rollout postgres mongo redis
 
   create_observability_configmaps
+  apply_file_if_exists "${OVERLAY_DIR}/observability/prometheus-adapter-auth-reader.yaml"
   apply_kustomize "${OVERLAY_DIR}/observability"
-  wait_rollout kube-state-metrics prometheus loki tempo pyroscope alloy grafana
+  wait_rollout_if_exists kube-state-metrics prometheus loki tempo pyroscope alloy grafana prometheus-adapter
 
   create_migration_configmaps
   delete_previous_migration_jobs
@@ -157,6 +185,7 @@ main() {
   wait_job_complete mongo-migrate
 
   create_app_configmaps
+  create_load_test_configmaps
   apply_kustomize "${OVERLAY_DIR}/apps"
   restart_backend_apps
   restart_edge_apps

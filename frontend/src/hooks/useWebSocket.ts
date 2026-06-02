@@ -39,15 +39,19 @@ export function useWebSocket({ roomId, onMessage, onConflict, onReconnected, onG
   const acceptingDirectSendRef = useRef(false)
   const sendQueueRef = useRef<OutboundMessage[]>([])
   const pendingRef = useRef<Map<string, OutboundMessage>>(new Map())
+  const connectOnceRef = useRef<() => Promise<boolean>>(async () => false)
 
   const onMessageRef = useRef(onMessage)
   const onConflictRef = useRef(onConflict)
   const onReconnectedRef = useRef(onReconnected)
   const onGaveUpRef = useRef(onGaveUp)
-  onMessageRef.current = onMessage
-  onConflictRef.current = onConflict
-  onReconnectedRef.current = onReconnected
-  onGaveUpRef.current = onGaveUp
+
+  useEffect(() => {
+    onMessageRef.current = onMessage
+    onConflictRef.current = onConflict
+    onReconnectedRef.current = onReconnected
+    onGaveUpRef.current = onGaveUp
+  }, [onMessage, onConflict, onReconnected, onGaveUp])
 
   const queueMessages = useCallback((messages: OutboundMessage[]) => {
     const existing = new Set(sendQueueRef.current.map((msg) => msg.client_msg_id))
@@ -67,6 +71,26 @@ export function useWebSocket({ roomId, onMessage, onConflict, onReconnected, onG
     sendQueueRef.current = []
     queueMessages([...pending, ...queued])
   }, [queueMessages])
+
+  const scheduleReconnect = useCallback(() => {
+    if (!mountedRef.current || !shouldReconnectRef.current) return
+    if (attemptRef.current >= MAX_RECONNECT_ATTEMPTS) {
+      setReconnecting(false)
+      onGaveUpRef.current?.()
+      return
+    }
+
+    setReconnecting(true)
+    attemptRef.current += 1
+    const cap = Math.min(INITIAL_RECONNECT_MAX_MS * 2 ** (attemptRef.current - 1), MAX_DELAY_MS)
+    const delay = Math.max(INITIAL_RECONNECT_MIN_MS, Math.random() * cap)
+
+    timerRef.current = setTimeout(() => {
+      if (mountedRef.current && shouldReconnectRef.current) {
+        connectOnceRef.current()
+      }
+    }, delay)
+  }, [])
 
   const connectOnce = useCallback(async (): Promise<boolean> => {
     if (!mountedRef.current) return false
@@ -166,26 +190,10 @@ export function useWebSocket({ roomId, onMessage, onConflict, onReconnected, onG
         }
       }
     })
-  }, [movePendingToQueue, queueMessages, roomId])
+  }, [movePendingToQueue, roomId, scheduleReconnect])
 
-  const scheduleReconnect = useCallback(() => {
-    if (!mountedRef.current || !shouldReconnectRef.current) return
-    if (attemptRef.current >= MAX_RECONNECT_ATTEMPTS) {
-      setReconnecting(false)
-      onGaveUpRef.current?.()
-      return
-    }
-
-    setReconnecting(true)
-    attemptRef.current += 1
-    const cap = Math.min(INITIAL_RECONNECT_MAX_MS * 2 ** (attemptRef.current - 1), MAX_DELAY_MS)
-    const delay = Math.max(INITIAL_RECONNECT_MIN_MS, Math.random() * cap)
-
-    timerRef.current = setTimeout(() => {
-      if (mountedRef.current && shouldReconnectRef.current) {
-        connectOnce()
-      }
-    }, delay)
+  useEffect(() => {
+    connectOnceRef.current = connectOnce
   }, [connectOnce])
 
   const connect = useCallback(async () => {
@@ -225,17 +233,18 @@ export function useWebSocket({ roomId, onMessage, onConflict, onReconnected, onG
   }, [])
 
   useEffect(() => {
+    const pending = pendingRef.current
     mountedRef.current = true
     return () => {
       mountedRef.current = false
       shouldReconnectRef.current = false
       acceptingDirectSendRef.current = false
       clearTimeout(timerRef.current)
-      pendingRef.current.clear()
+      pending.clear()
       sendQueueRef.current = []
       wsRef.current?.close()
     }
   }, [])
 
-  return { connected, reconnecting, queuedCount: sendQueueRef.current.length, connect, disconnect, send }
+  return { connected, reconnecting, connect, disconnect, send }
 }

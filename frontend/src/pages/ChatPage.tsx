@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { batchGetUsers, listMessages, listRoomMembers, listJoinedRooms, ApiError } from '../api/client'
-import { useAuth } from '../context/AuthContext'
+import { useAuth } from '../context/auth'
 import { useWebSocket } from '../hooks/useWebSocket'
 import type { MessageInfo, WsOutgoing } from '../types'
 
@@ -58,7 +58,19 @@ function toMessageInfo(msg: WsOutgoing): MessageInfo {
   }
 }
 
+const SYNC_GAP_RETRY_ATTEMPTS = 3
+const SYNC_GAP_RETRY_MIN_MS = 500
+const SYNC_GAP_RETRY_MAX_MS = 3500
+
 type DisconnectReason = 'conflict' | 'room_deleted' | null
+
+function syncRetryDelayMs() {
+  return SYNC_GAP_RETRY_MIN_MS + Math.random() * (SYNC_GAP_RETRY_MAX_MS - SYNC_GAP_RETRY_MIN_MS)
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms))
+}
 
 export default function ChatPage() {
   const { roomId } = useParams<{ roomId: string }>()
@@ -157,34 +169,50 @@ export default function ChatPage() {
     }
   }, [roomId, stateRoomName])
 
-  const syncMissed = useCallback(async (required = false): Promise<Set<string>> => {
+  const syncMissed = useCallback(async (
+    required = false,
+    fromSeq = maxSeqRef.current,
+    retryGap = false,
+  ): Promise<Set<string>> => {
     const caughtUpClientMsgIds = new Set<string>()
     if (!roomId) return caughtUpClientMsgIds
-    try {
-      const data = await listMessages(roomId, maxSeqRef.current)
-      const syncMsgs = (data.messages ?? []) as MessageInfo[]
-      for (const msg of syncMsgs) {
-        if (msg.client_msg_id) caughtUpClientMsgIds.add(msg.client_msg_id)
+    const expectedSeq = fromSeq + 1
+    const attempts = retryGap ? SYNC_GAP_RETRY_ATTEMPTS + 1 : 1
+
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      try {
+        const data = await listMessages(roomId, fromSeq)
+        const syncMsgs = (data.messages ?? []) as MessageInfo[]
+        for (const msg of syncMsgs) {
+          if (msg.client_msg_id) caughtUpClientMsgIds.add(msg.client_msg_id)
+        }
+        if (syncMsgs.length > 0) {
+          ensureSendersLoaded(syncMsgs)
+          setMessages((prev) => {
+            const merged = mergeSorted(prev, syncMsgs)
+            updateMaxSeq(merged)
+            return merged
+          })
+        }
+        if (!retryGap || syncMsgs.some((msg) => msg.sequence_number === expectedSeq)) {
+          break
+        }
+      } catch (err) {
+        if (required && attempt + 1 >= attempts) throw err
       }
-      if (syncMsgs.length > 0) {
-        ensureSendersLoaded(syncMsgs)
-        setMessages((prev) => {
-          const merged = mergeSorted(prev, syncMsgs)
-          updateMaxSeq(merged)
-          return merged
-        })
+
+      if (attempt + 1 < attempts) {
+        await delay(syncRetryDelayMs())
       }
-    } catch (err) {
-      if (required) throw err
     }
     return caughtUpClientMsgIds
   }, [roomId, ensureSendersLoaded])
 
-  const syncMissedThrottled = useCallback(() => {
+  const syncMissedThrottled = useCallback((fromSeq = maxSeqRef.current) => {
     const now = Date.now()
     if (now - lastSyncRef.current < 1000) return
     lastSyncRef.current = now
-    syncMissed()
+    syncMissed(false, fromSeq, true)
   }, [syncMissed])
 
   const onMessage = useCallback((msg: WsOutgoing) => {
@@ -192,8 +220,9 @@ export default function ChatPage() {
     if (m.type === 'system') {
       fetchMembers()
     } else {
-      if (maxSeqRef.current > 0 && m.sequence_number > maxSeqRef.current + 1) {
-        syncMissedThrottled()
+      const lastSeenSeq = maxSeqRef.current
+      if (lastSeenSeq > 0 && m.sequence_number > lastSeenSeq + 1) {
+        syncMissedThrottled(lastSeenSeq)
       }
       if (!userMapRef.current.has(m.sender_id)) {
         ensureSendersLoaded([m])

@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import {
   setAuth,
   restoreAuth,
@@ -6,16 +6,7 @@ import {
   getCurrentUsername,
   getAccessToken,
 } from '../api/client'
-
-interface AuthState {
-  userId: string | null
-  username: string | null
-  isLoggedIn: boolean
-  doLogin: (token: string, userId: string, username: string) => void
-  doLogout: () => void
-}
-
-const AuthContext = createContext<AuthState>(null!)
+import { AuthContext } from './auth'
 
 function initAuth() {
   restoreAuth()
@@ -51,8 +42,4 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       {children}
     </AuthContext.Provider>
   )
-}
-
-export function useAuth() {
-  return useContext(AuthContext)
 }

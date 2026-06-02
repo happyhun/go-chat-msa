@@ -1,4 +1,4 @@
-ENV: "dev"
+ENV: "qa"
 
 TELEMETRY:
   OTEL_ENDPOINT: "alloy:4318"
@@ -11,3 +11,4 @@ API_GATEWAY:
 WS_GATEWAY:
   CORS:
     ALLOWED_ORIGINS: ["*"]
+

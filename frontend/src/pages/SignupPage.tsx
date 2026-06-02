@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { signup, login, ApiError } from '../api/client'
-import { useAuth } from '../context/AuthContext'
+import { useAuth } from '../context/auth'
 
 export default function SignupPage() {
   const [username, setUsername] = useState('')

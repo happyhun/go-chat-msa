@@ -1,0 +1,16 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: gochat-prometheus-adapter-auth-reader
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: prometheus-adapter
+    app.kubernetes.io/component: observability
+subjects:
+  - kind: ServiceAccount
+    name: prometheus-adapter
+    namespace: go-chat-qa
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: extension-apiserver-authentication-reader

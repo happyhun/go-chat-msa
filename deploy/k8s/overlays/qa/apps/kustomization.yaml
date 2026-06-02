@@ -1,10 +1,11 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-namespace: go-chat-dev
+namespace: go-chat-qa
 
 resources:
   - ../../../base/apps
+  - websocket-service-hpa.yaml
 
 configMapGenerator:
   - name: gochat-app-config
@@ -30,6 +31,13 @@ patches:
       kind: Deployment
       name: user-service
     patch: |-
+      - op: add
+        path: /spec/strategy
+        value:
+          type: RollingUpdate
+          rollingUpdate:
+            maxSurge: 0
+            maxUnavailable: 1
       - op: add
         path: /spec/template/spec/securityContext
         value:
@@ -57,7 +65,7 @@ patches:
     patch: |-
       - op: replace
         path: /spec/replicas
-        value: 2
+        value: 1
       - op: add
         path: /spec/template/spec/securityContext
         value:
@@ -79,25 +87,25 @@ patches:
     patch: |-
       - op: add
         path: /spec/rules/0/host
-        value: dev.gochat.localhost
+        value: qa.gochat.localhost
 
 images:
   - name: go-chat-msa/api-gateway
-    newTag: dev
+    newTag: qa
   - name: go-chat-msa/ws-gateway
-    newTag: dev
+    newTag: qa
   - name: go-chat-msa/websocket-service
-    newTag: dev
+    newTag: qa
   - name: go-chat-msa/user-service
-    newTag: dev
+    newTag: qa
   - name: go-chat-msa/chat-service
-    newTag: dev
+    newTag: qa
   - name: go-chat-msa/frontend
-    newTag: dev
+    newTag: qa
 
 labels:
   - includeSelectors: true
     includeTemplates: true
     pairs:
       app.kubernetes.io/part-of: go-chat-msa
-      app.kubernetes.io/instance: go-chat-dev
+      app.kubernetes.io/instance: go-chat-qa

@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { deleteUser, logout } from '../api/client'
-import { useAuth } from '../context/AuthContext'
-import { useToast } from '../context/ToastContext'
+import { useAuth } from '../context/auth'
+import { useToast } from '../context/toast'
 import DeleteUserModal from './DeleteUserModal'
 import UserMenu from './UserMenu'
 
