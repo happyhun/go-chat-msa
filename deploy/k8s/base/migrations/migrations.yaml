@@ -31,11 +31,6 @@ spec:
             - name: migrations
               mountPath: /migrations
               readOnly: true
-          resources:
-            requests:
-              memory: 64Mi
-            limits:
-              memory: 128Mi
       volumes:
         - name: migrations
           configMap:
@@ -74,11 +69,6 @@ spec:
             - name: migrations
               mountPath: /migrations
               readOnly: true
-          resources:
-            requests:
-              memory: 64Mi
-            limits:
-              memory: 128Mi
       volumes:
         - name: migrations
           configMap:

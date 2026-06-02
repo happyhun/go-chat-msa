@@ -15,6 +15,39 @@ patches:
       stringData:
         APP_JWT_SECRET: e2e_secret
         APP_INTERNAL_SECRET: e2e_internal_secret
+  - target:
+      kind: Deployment
+      name: postgres
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            memory: 128Mi
+          limits:
+            memory: 512Mi
+  - target:
+      kind: Deployment
+      name: mongo
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            memory: 256Mi
+          limits:
+            memory: 768Mi
+  - target:
+      kind: Deployment
+      name: redis
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            memory: 64Mi
+          limits:
+            memory: 256Mi
 
 labels:
   - includeSelectors: true

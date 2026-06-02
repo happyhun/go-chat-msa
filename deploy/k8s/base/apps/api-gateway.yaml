@@ -59,24 +59,22 @@ spec:
               path: /health
               port: http
             periodSeconds: 2
+            timeoutSeconds: 5
             failureThreshold: 30
           livenessProbe:
             httpGet:
               path: /health
               port: http
             periodSeconds: 10
+            timeoutSeconds: 5
             failureThreshold: 3
           readinessProbe:
             httpGet:
               path: /ready
               port: http
             periodSeconds: 5
+            timeoutSeconds: 5
             failureThreshold: 3
-          resources:
-            requests:
-              memory: 128Mi
-            limits:
-              memory: 512Mi
       volumes:
         - name: app-config
           configMap:

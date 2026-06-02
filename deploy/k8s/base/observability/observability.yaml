@@ -131,15 +131,12 @@ spec:
             tcpSocket:
               port: http
             periodSeconds: 5
+            timeoutSeconds: 5
           livenessProbe:
             tcpSocket:
               port: http
             periodSeconds: 10
-          resources:
-            requests:
-              memory: 128Mi
-            limits:
-              memory: 512Mi
+            timeoutSeconds: 5
       volumes:
         - name: config
           configMap:
@@ -248,16 +245,13 @@ spec:
               path: /healthz
               port: http
             periodSeconds: 5
+            timeoutSeconds: 5
           livenessProbe:
             httpGet:
               path: /livez
               port: http
             periodSeconds: 10
-          resources:
-            requests:
-              memory: 64Mi
-            limits:
-              memory: 256Mi
+            timeoutSeconds: 5
 ---
 apiVersion: v1
 kind: Service
@@ -320,16 +314,13 @@ spec:
               path: /-/ready
               port: http
             periodSeconds: 5
+            timeoutSeconds: 5
           livenessProbe:
             httpGet:
               path: /-/healthy
               port: http
             periodSeconds: 10
-          resources:
-            requests:
-              memory: 256Mi
-            limits:
-              memory: 768Mi
+            timeoutSeconds: 5
       volumes:
         - name: config
           configMap:
@@ -394,15 +385,12 @@ spec:
             tcpSocket:
               port: http
             periodSeconds: 5
+            timeoutSeconds: 5
           livenessProbe:
             tcpSocket:
               port: http
             periodSeconds: 10
-          resources:
-            requests:
-              memory: 128Mi
-            limits:
-              memory: 512Mi
+            timeoutSeconds: 5
       volumes:
         - name: config
           configMap:
@@ -472,15 +460,12 @@ spec:
             tcpSocket:
               port: http
             periodSeconds: 5
+            timeoutSeconds: 5
           livenessProbe:
             tcpSocket:
               port: http
             periodSeconds: 10
-          resources:
-            requests:
-              memory: 128Mi
-            limits:
-              memory: 512Mi
+            timeoutSeconds: 5
       volumes:
         - name: config
           configMap:
@@ -545,15 +530,12 @@ spec:
             tcpSocket:
               port: http
             periodSeconds: 5
+            timeoutSeconds: 5
           livenessProbe:
             tcpSocket:
               port: http
             periodSeconds: 10
-          resources:
-            requests:
-              memory: 128Mi
-            limits:
-              memory: 512Mi
+            timeoutSeconds: 5
       volumes:
         - name: config
           configMap:
@@ -630,16 +612,13 @@ spec:
               path: /api/health
               port: http
             periodSeconds: 5
+            timeoutSeconds: 5
           livenessProbe:
             httpGet:
               path: /api/health
               port: http
             periodSeconds: 10
-          resources:
-            requests:
-              memory: 128Mi
-            limits:
-              memory: 512Mi
+            timeoutSeconds: 5
       volumes:
         - name: datasources
           configMap:

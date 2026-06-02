@@ -51,6 +51,8 @@ spec:
                 - ping
             initialDelaySeconds: 5
             periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 5
           livenessProbe:
             exec:
               command:
@@ -58,8 +60,5 @@ spec:
                 - ping
             initialDelaySeconds: 20
             periodSeconds: 10
-          resources:
-            requests:
-              memory: 64Mi
-            limits:
-              memory: 256Mi
+            timeoutSeconds: 5
+            failureThreshold: 5

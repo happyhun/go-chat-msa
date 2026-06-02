@@ -6,6 +6,19 @@ namespace: go-chat-test
 resources:
   - ../../../base/migrations
 
+patches:
+  - target:
+      kind: Job
+      labelSelector: "app.kubernetes.io/component=migration"
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            memory: 64Mi
+          limits:
+            memory: 128Mi
+
 labels:
   - includeSelectors: true
     includeTemplates: true

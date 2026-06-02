@@ -24,6 +24,39 @@ patches:
         path: /spec/replicas
         value: 2
   - target:
+      kind: Deployment
+      labelSelector: "app.kubernetes.io/component in (gateway,service)"
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            memory: 128Mi
+          limits:
+            memory: 512Mi
+  - target:
+      kind: Deployment
+      name: frontend
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            memory: 64Mi
+          limits:
+            memory: 128Mi
+  - target:
+      kind: Deployment
+      name: swagger-ui
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            memory: 64Mi
+          limits:
+            memory: 256Mi
+  - target:
       kind: Ingress
     patch: |-
       - op: add

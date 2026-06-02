@@ -17,6 +17,64 @@ generatorOptions:
 
 patches:
   - target:
+      kind: Deployment
+      name: api-gateway
+    patch: |-
+      - op: add
+        path: /spec/template/spec/securityContext
+        value:
+          sysctls:
+            - name: net.core.somaxconn
+              value: "65535"
+  - target:
+      kind: Deployment
+      name: user-service
+    patch: |-
+      - op: add
+        path: /spec/template/spec/securityContext
+        value:
+          sysctls:
+            - name: net.core.somaxconn
+              value: "65535"
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value:
+          limits:
+            cpu: "4"
+  - target:
+      kind: Deployment
+      name: chat-service
+    patch: |-
+      - op: add
+        path: /spec/template/spec/securityContext
+        value:
+          sysctls:
+            - name: net.core.somaxconn
+              value: "65535"
+  - target:
+      kind: Deployment
+      name: websocket-service
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+      - op: add
+        path: /spec/template/spec/securityContext
+        value:
+          sysctls:
+            - name: net.core.somaxconn
+              value: "65535"
+  - target:
+      kind: Deployment
+      name: ws-gateway
+    patch: |-
+      - op: add
+        path: /spec/template/spec/securityContext
+        value:
+          sysctls:
+            - name: net.core.somaxconn
+              value: "65535"
+  - target:
       kind: Ingress
     patch: |-
       - op: add

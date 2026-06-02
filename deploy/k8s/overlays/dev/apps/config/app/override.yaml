@@ -1,4 +1,4 @@
-ENV: "k8s-dev"
+ENV: "dev"
 
 TELEMETRY:
   OTEL_ENDPOINT: "alloy:4318"

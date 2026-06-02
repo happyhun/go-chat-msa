@@ -58,23 +58,21 @@ spec:
             tcpSocket:
               port: grpc
             periodSeconds: 2
+            timeoutSeconds: 5
             failureThreshold: 30
           livenessProbe:
             tcpSocket:
               port: grpc
             periodSeconds: 10
+            timeoutSeconds: 5
             failureThreshold: 3
           readinessProbe:
             grpc:
               port: 50051
               service: user.v1.UserService
             periodSeconds: 5
+            timeoutSeconds: 5
             failureThreshold: 3
-          resources:
-            requests:
-              memory: 128Mi
-            limits:
-              memory: 512Mi
       volumes:
         - name: app-config
           configMap:
