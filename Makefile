@@ -42,7 +42,7 @@ help:
 	@printf '  make dev-up          Create kind cluster, build/load dev images, bootstrap dev overlay\n'
 	@printf '  make test-up         Create kind cluster, build/load test images, bootstrap test overlay\n'
 	@printf '  make qa-up           Create kind cluster, build/load qa images, bootstrap qa overlay\n'
-	@printf '  make dev-load        Run k6 C10K load test with 4 dev Kubernetes workers\n'
+	@printf '  make dev-load        Run k6 C10K load test with 4 k6 worker pods\n'
 	@printf '  make qa-load         Run k6 HPA consistency test in qa Kubernetes namespace\n'
 	@printf '  make k8s-validate    Render all Kustomize bases/overlays\n'
 	@printf '  make dev-down        Delete dev namespace\n'
