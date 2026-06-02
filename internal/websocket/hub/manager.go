@@ -13,7 +13,7 @@ import (
 
 	"go-chat-msa/internal/shared/config"
 	"go-chat-msa/internal/shared/ratelimit"
-	"go-chat-msa/internal/shared/roomlease"
+	"go-chat-msa/internal/websocket/roomlease"
 
 	"github.com/gorilla/websocket"
 	"go.opentelemetry.io/otel/attribute"
@@ -42,7 +42,10 @@ const (
 	defaultDrainTimeout      = 10 * time.Second
 )
 
-var ErrRoomHandoffInProgress = errors.New("room handoff in progress")
+var (
+	ErrRoomHandoffInProgress   = errors.New("room handoff in progress")
+	ErrRoomSequenceUnavailable = errors.New("room sequence unavailable")
+)
 
 type OwnerRing interface {
 	Locate(roomID string) string
@@ -110,6 +113,7 @@ type Manager struct {
 	idleTimeout  time.Duration
 	drainTimeout time.Duration
 	store        MessageStore
+	floorStore   SequenceFloorStore
 	limiter      *ratelimit.MemoryLimiter
 	leaseStore   *roomlease.Store
 
@@ -183,6 +187,10 @@ func NewManager(
 
 func (m *Manager) SetRoomLeaseStore(store *roomlease.Store) {
 	m.leaseStore = store
+}
+
+func (m *Manager) SetSequenceFloorStore(store SequenceFloorStore) {
+	m.floorStore = store
 }
 
 func (m *Manager) PrepareRegister(ctx context.Context, roomID string) (*Registration, error) {
@@ -269,12 +277,27 @@ func (m *Manager) Run(ctx context.Context) {
 		m.stoppedOnce.Do(func() { close(m.stoppedCh) })
 	}()
 
-	createHub := func(roomID string) *Hub {
+	createHub := func(reqCtx context.Context, roomID string) (*Hub, error) {
 		allowFunc := func(userID, roomID string) bool {
 			return m.limiter.Allow(userID + ":" + roomID)
 		}
 
-		h := newHub(roomID, m.sessionCfg, m.idleTimeout, m.store, m.persistCh, m.drainTimeout, allowFunc, m.persistSlots)
+		store := m.store
+		if store != nil && m.floorStore != nil {
+			store = &sequenceFloorMessageStore{
+				base:  store,
+				floor: m.floorStore,
+			}
+		}
+
+		h := newHub(roomID, m.sessionCfg, m.idleTimeout, store, m.persistCh, m.drainTimeout, allowFunc, m.persistSlots)
+		if err := h.initializeSequence(reqCtx); err != nil {
+			slog.ErrorContext(reqCtx, "failed to initialize room sequence",
+				"room_id", roomID,
+				"error", err)
+			return nil, err
+		}
+
 		hubs[roomID] = h
 		hubsActive.Add(ctx, 1)
 		go h.run(hubCtx)
@@ -285,7 +308,7 @@ func (m *Manager) Run(ctx context.Context) {
 			case <-ctx.Done():
 			}
 		}()
-		return h
+		return h, nil
 	}
 
 	getOrCreate := func(reqCtx context.Context, roomID string) (*Hub, bool, error) {
@@ -296,18 +319,29 @@ func (m *Manager) Run(ctx context.Context) {
 			return h, false, nil
 		}
 
+		var lease *roomlease.Lease
 		if m.leaseStore != nil {
-			lease, err := m.leaseStore.Acquire(reqCtx, roomID)
+			acquired, err := m.leaseStore.Acquire(reqCtx, roomID)
 			if err != nil {
 				return nil, false, err
 			}
+			lease = acquired
+		}
+
+		h, err := createHub(reqCtx, roomID)
+		if err != nil {
+			m.releaseAcquiredLease(reqCtx, lease)
+			return nil, false, err
+		}
+
+		if lease != nil {
 			m.trackLease(lease)
 			slog.InfoContext(ctx, "room lease acquired",
 				"room_id", roomID,
 				"owner", lease.OwnerAddr)
 		}
 
-		return createHub(roomID), true, nil
+		return h, true, nil
 	}
 
 	slog.InfoContext(ctx, "Hub Manager started", "workers", workerPoolSize, "persist_buffer", persistBufferSize)
@@ -628,6 +662,20 @@ func (m *Manager) trackLease(lease *roomlease.Lease) {
 	m.leasesMu.Unlock()
 }
 
+func (m *Manager) releaseAcquiredLease(ctx context.Context, lease *roomlease.Lease) {
+	if lease == nil || m.leaseStore == nil {
+		return
+	}
+	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	if err := m.leaseStore.Release(releaseCtx, lease); err != nil {
+		slog.WarnContext(ctx, "failed to release room lease after hub creation failure",
+			"room_id", lease.RoomID,
+			"owner", lease.OwnerAddr,
+			"error", err)
+	}
+}
+
 func (m *Manager) markHandoff(roomID, reason string) {
 	if reason == "" {
 		reason = "unknown"
@@ -676,7 +724,11 @@ func (m *Manager) releaseLease(ctx context.Context, roomID string, h *Hub) {
 			"active_sessions", state.activeSessions,
 			"persist_failed", state.persistFailed)
 		if state.persistFailed {
-			m.recordHandoffResult(ctx, roomID, managed, statusAttr, state)
+			if !m.releaseLeaseAfterPersistFailure(ctx, roomID, managed, state) {
+				if m.markLeaseReleaseWaiting(roomID, managed, h) {
+					go m.releaseLeaseWhenReady(roomID, managed, h)
+				}
+			}
 			return
 		}
 		if m.markLeaseReleaseWaiting(roomID, managed, h) {
@@ -736,8 +788,11 @@ func (m *Manager) releaseLeaseWhenReady(roomID string, managed *managedLease, h 
 				"broadcast_depth", state.broadcastDepth,
 				"active_sessions", state.activeSessions,
 				"persist_failed", state.persistFailed)
-			m.recordHandoffResult(context.Background(), roomID, managed, state.blockReason(), state)
-			return
+			if m.releaseLeaseAfterPersistFailure(context.Background(), roomID, managed, state) {
+				return
+			}
+			<-time.After(leaseReleaseRetryDelay)
+			continue
 		}
 
 		if h == nil {
@@ -765,10 +820,15 @@ func (m *Manager) releaseManagedLease(ctx context.Context, roomID string, manage
 
 	err := m.leaseStore.Release(releaseCtx, managed.lease)
 	statusAttr := "success"
+	if state.persistFailed {
+		statusAttr = state.blockReason()
+	}
+	released := false
 	if err != nil {
 		statusAttr = "error"
 		if errors.Is(err, roomlease.ErrLost) {
 			statusAttr = "lost"
+			released = true
 			slog.WarnContext(ctx, "room lease release skipped",
 				"room_id", roomID,
 				"owner", managed.lease.OwnerAddr,
@@ -788,9 +848,10 @@ func (m *Manager) releaseManagedLease(ctx context.Context, roomID string, manage
 			"broadcast_depth", state.broadcastDepth,
 			"active_sessions", state.activeSessions,
 			"persist_failed", state.persistFailed)
+		released = true
 	}
 
-	if statusAttr == "success" || statusAttr == "lost" {
+	if released {
 		m.leasesMu.Lock()
 		if current := m.leases[roomID]; current == managed {
 			delete(m.leases, roomID)
@@ -806,6 +867,38 @@ func (m *Manager) releaseManagedLease(ctx context.Context, roomID string, manage
 	}
 	m.leasesMu.Unlock()
 	return false
+}
+
+func (m *Manager) releaseLeaseAfterPersistFailure(ctx context.Context, roomID string, managed *managedLease, state hubLeaseState) bool {
+	if m.floorStore == nil {
+		slog.ErrorContext(ctx, "room sequence floor store is unavailable",
+			"room_id", roomID,
+			"owner", managed.lease.OwnerAddr,
+			"last_sequence", state.lastSequence,
+			"persist_failed", state.persistFailed)
+		return false
+	}
+
+	floorCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	if err := m.floorStore.SetMax(floorCtx, roomID, state.lastSequence); err != nil {
+		slog.ErrorContext(ctx, "failed to record room sequence floor",
+			"room_id", roomID,
+			"owner", managed.lease.OwnerAddr,
+			"last_sequence", state.lastSequence,
+			"error", err)
+		return false
+	}
+
+	slog.WarnContext(ctx, "room sequence floor recorded after persist failure",
+		"room_id", roomID,
+		"owner", managed.lease.OwnerAddr,
+		"last_sequence", state.lastSequence,
+		"pending_persist", state.pendingPersist,
+		"broadcast_depth", state.broadcastDepth,
+		"active_sessions", state.activeSessions,
+		"persist_failed", state.persistFailed)
+	return m.releaseManagedLease(ctx, roomID, managed, state)
 }
 
 func captureHubLeaseState(h *Hub) hubLeaseState {

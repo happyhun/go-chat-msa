@@ -9,7 +9,8 @@ import (
 	"time"
 
 	"go-chat-msa/internal/shared/config"
-	"go-chat-msa/internal/shared/roomlease"
+	"go-chat-msa/internal/websocket/roomlease"
+	"go-chat-msa/internal/websocket/roomseq"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gorilla/websocket"
@@ -30,6 +31,42 @@ func testManagerConfig() config.ManagerConfig {
 	}
 }
 
+type staticSequenceFloorStore struct {
+	seq int64
+}
+
+func (s staticSequenceFloorStore) Get(_ context.Context, _ string) (int64, error) {
+	return s.seq, nil
+}
+
+func (s staticSequenceFloorStore) SetMax(_ context.Context, _ string, _ int64) error {
+	return nil
+}
+
+type recordingSequenceFloorStore struct {
+	seq    int64
+	setSeq atomic.Int64
+}
+
+func (s *recordingSequenceFloorStore) Get(_ context.Context, _ string) (int64, error) {
+	return s.seq, nil
+}
+
+func (s *recordingSequenceFloorStore) SetMax(_ context.Context, _ string, seq int64) error {
+	s.setSeq.Store(seq)
+	return nil
+}
+
+type errorSequenceFloorStore struct{}
+
+func (s errorSequenceFloorStore) Get(_ context.Context, _ string) (int64, error) {
+	return 0, assert.AnError
+}
+
+func (s errorSequenceFloorStore) SetMax(_ context.Context, _ string, _ int64) error {
+	return nil
+}
+
 func TestManager_NewManager(t *testing.T) {
 	t.Parallel()
 
@@ -38,6 +75,63 @@ func TestManager_NewManager(t *testing.T) {
 		manager := NewManager(testManagerConfig(), config.RateLimitConfig{}, nil)
 		assert.NotNil(t, manager)
 	})
+}
+
+func TestManager_PrepareRegisterReleasesLeaseWhenSequenceInitializationFails(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		store MessageStore
+		floor SequenceFloorStore
+	}{
+		{
+			name:  "DB sequence lookup fails",
+			store: &errStore{},
+		},
+		{
+			name:  "Redis sequence floor lookup fails",
+			store: &mockStore{lastSeq: 10},
+			floor: errorSequenceFloorStore{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			srv := miniredis.RunT(t)
+			client := redis.NewClient(&redis.Options{Addr: srv.Addr()})
+			t.Cleanup(func() { require.NoError(t, client.Close()) })
+
+			leaseStore := roomlease.NewStore(client, "wss:room:lease:", "10.0.0.1:8081", 30*time.Second)
+			manager := NewManager(testManagerConfig(), config.RateLimitConfig{}, tt.store, 100*time.Millisecond)
+			manager.SetRoomLeaseStore(leaseStore)
+			if tt.floor != nil {
+				manager.SetSequenceFloorStore(tt.floor)
+			}
+
+			runCtx, stop := context.WithCancel(context.Background())
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				manager.Run(runCtx)
+			}()
+			t.Cleanup(func() {
+				stop()
+				<-done
+			})
+
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			registration, err := manager.PrepareRegister(ctx, "room-1")
+
+			require.Nil(t, registration)
+			require.ErrorIs(t, err, ErrRoomSequenceUnavailable)
+			require.False(t, srv.Exists("wss:room:lease:room-1"))
+			require.Empty(t, manager.snapshotLeases())
+		})
+	}
 }
 
 func TestHub_Functional(t *testing.T) {
@@ -351,7 +445,7 @@ func TestManager_ReleaseLeaseDefersUntilDrainComplete(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 }
 
-func TestManager_ReleaseLeaseDefersWhenPersistFailed(t *testing.T) {
+func TestManager_ReleaseLeaseRecordsSequenceFloorWhenPersistFailed(t *testing.T) {
 	t.Parallel()
 
 	srv := miniredis.RunT(t)
@@ -359,25 +453,32 @@ func TestManager_ReleaseLeaseDefersWhenPersistFailed(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, client.Close()) })
 
 	leaseStore := roomlease.NewStore(client, "wss:room:lease:", "10.0.0.1:8081", 30*time.Second)
+	floorStore := roomseq.NewStore(client, "wss:room:seqfloor:")
 	manager := NewManager(testManagerConfig(), config.RateLimitConfig{}, nil, 100*time.Millisecond)
 	manager.SetRoomLeaseStore(leaseStore)
+	manager.SetSequenceFloorStore(floorStore)
 
 	lease, err := leaseStore.Acquire(t.Context(), "room-1")
 	require.NoError(t, err)
 	manager.trackLease(lease)
 
 	h := newHub("room-1", testSessionConfig(), time.Minute, nil, nil, time.Second, nil)
+	h.lastSequence.Store(43)
 	h.persistFailed.Store(true)
 
 	manager.releaseLease(t.Context(), "room-1", h)
 
-	require.True(t, srv.Exists("wss:room:lease:room-1"))
-	require.Len(t, manager.snapshotLeases(), 1)
+	require.False(t, srv.Exists("wss:room:lease:room-1"))
+	require.Empty(t, manager.snapshotLeases())
 
 	manager.releaseAllLeases(t.Context(), map[string]*Hub{})
 
-	require.True(t, srv.Exists("wss:room:lease:room-1"))
-	require.Len(t, manager.snapshotLeases(), 1)
+	require.False(t, srv.Exists("wss:room:lease:room-1"))
+	require.Empty(t, manager.snapshotLeases())
+
+	floor, err := floorStore.Get(t.Context(), "room-1")
+	require.NoError(t, err)
+	require.Equal(t, int64(43), floor)
 }
 
 func TestManager_ReleaseLeaseDeletesWhenDrainComplete(t *testing.T) {
@@ -401,6 +502,45 @@ func TestManager_ReleaseLeaseDeletesWhenDrainComplete(t *testing.T) {
 
 	require.False(t, srv.Exists("wss:room:lease:room-1"))
 	require.Empty(t, manager.snapshotLeases())
+}
+
+func TestSequenceFloorMessageStoreGetLastSequenceNumberUsesFloor(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		dbSeq   int64
+		floor   int64
+		wantSeq int64
+	}{
+		{
+			name:    "floor is higher than DB",
+			dbSeq:   10,
+			floor:   13,
+			wantSeq: 13,
+		},
+		{
+			name:    "DB is higher than floor",
+			dbSeq:   20,
+			floor:   13,
+			wantSeq: 20,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			store := &sequenceFloorMessageStore{
+				base:  &mockStore{lastSeq: tt.dbSeq},
+				floor: staticSequenceFloorStore{seq: tt.floor},
+			}
+
+			seq, err := store.GetLastSequenceNumber(t.Context(), "room-1")
+			require.NoError(t, err)
+			require.Equal(t, tt.wantSeq, seq)
+		})
+	}
 }
 
 func TestManager_ReleaseManagedLeaseKeepsLeaseOnRedisError(t *testing.T) {
@@ -431,6 +571,43 @@ func TestManager_ReleaseManagedLeaseKeepsLeaseOnRedisError(t *testing.T) {
 	released := manager.releaseManagedLease(t.Context(), "room-1", managed, hubLeaseState{})
 
 	require.False(t, released)
+	require.Len(t, manager.snapshotLeases(), 1)
+}
+
+func TestManager_ReleaseLeaseAfterPersistFailureKeepsLeaseWhenReleaseFails(t *testing.T) {
+	t.Parallel()
+
+	client := redis.NewClient(&redis.Options{
+		Addr:         "127.0.0.1:1",
+		DialTimeout:  10 * time.Millisecond,
+		ReadTimeout:  10 * time.Millisecond,
+		WriteTimeout: 10 * time.Millisecond,
+		MaxRetries:   0,
+	})
+	t.Cleanup(func() { require.NoError(t, client.Close()) })
+
+	floorStore := &recordingSequenceFloorStore{}
+	manager := NewManager(testManagerConfig(), config.RateLimitConfig{}, nil, 100*time.Millisecond)
+	manager.SetRoomLeaseStore(roomlease.NewStore(client, "wss:room:lease:", "10.0.0.1:8081", 30*time.Second))
+	manager.SetSequenceFloorStore(floorStore)
+	lease := &roomlease.Lease{
+		RoomID:    "room-1",
+		OwnerAddr: "10.0.0.1:8081",
+		Token:     "token-1",
+	}
+	manager.trackLease(lease)
+
+	manager.leasesMu.RLock()
+	managed := manager.leases["room-1"]
+	manager.leasesMu.RUnlock()
+
+	released := manager.releaseLeaseAfterPersistFailure(t.Context(), "room-1", managed, hubLeaseState{
+		lastSequence:  43,
+		persistFailed: true,
+	})
+
+	require.False(t, released)
+	require.Equal(t, int64(43), floorStore.setSeq.Load())
 	require.Len(t, manager.snapshotLeases(), 1)
 }
 

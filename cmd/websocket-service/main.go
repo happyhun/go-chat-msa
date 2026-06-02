@@ -15,9 +15,10 @@ import (
 	"go-chat-msa/internal/shared/logger"
 	"go-chat-msa/internal/shared/membership"
 	"go-chat-msa/internal/shared/middleware"
-	"go-chat-msa/internal/shared/roomlease"
 	"go-chat-msa/internal/shared/telemetry"
 	"go-chat-msa/internal/websocket"
+	"go-chat-msa/internal/websocket/roomlease"
+	"go-chat-msa/internal/websocket/roomseq"
 	"go-chat-msa/internal/wsgateway/loadbalance"
 
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
@@ -37,6 +38,7 @@ const (
 	membershipTTL       = 30 * time.Second
 	membershipHeartbeat = 10 * time.Second
 	roomLeaseKeyPrefix  = "wss:room:lease:"
+	sequenceFloorPrefix = "wss:room:seqfloor:"
 	roomLeaseTTL        = 30 * time.Second
 )
 
@@ -98,11 +100,13 @@ func run(ctx context.Context) error {
 	registry := membership.NewRegistry(redisClient, membershipKeyPrefix, cfg.WS.AdvertisedAddr, membershipTTL, membershipHeartbeat)
 	watcher := membership.NewWatcher(redisClient, membershipKeyPrefix, hashRing)
 	leaseStore := roomlease.NewStore(redisClient, roomLeaseKeyPrefix, cfg.WS.AdvertisedAddr, roomLeaseTTL)
+	sequenceFloorStore := roomseq.NewStore(redisClient, sequenceFloorPrefix)
 
 	router := websocket.NewRouter(chatClient, userClient, cfg.WS, hashRing,
 		websocket.WithShutdownTimeout(cfg.ShutdownTimeout),
 		websocket.WithRedisClient(redisClient),
 		websocket.WithRoomLeaseStore(leaseStore),
+		websocket.WithSequenceFloorStore(sequenceFloorStore),
 		websocket.WithHealthClients(chatHealth, userHealth))
 
 	return runServer(ctx, cfg, router, registry, watcher)

@@ -10,7 +10,7 @@ import (
 	userpb "go-chat-msa/api/proto/user/v1"
 	"go-chat-msa/internal/apigateway/mocks"
 	"go-chat-msa/internal/shared/config"
-	"go-chat-msa/internal/shared/roomlease"
+	"go-chat-msa/internal/websocket/roomlease"
 	"go-chat-msa/internal/wsgateway/loadbalance"
 
 	"github.com/alicebob/miniredis/v2"
@@ -156,7 +156,7 @@ func TestRouter_ServeWebSocketLeaseBusy(t *testing.T) {
 
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 	assert.Equal(t, "1", w.Header().Get("Retry-After"))
-	assert.Contains(t, w.Body.String(), "room handoff in progress, please retry")
+	assert.Contains(t, w.Body.String(), "room temporarily unavailable, please retry")
 }
 
 func createTestConfig() WebSocketConfig {

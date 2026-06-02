@@ -10,8 +10,9 @@ import (
 	chatpb "go-chat-msa/api/proto/chat/v1"
 	userpb "go-chat-msa/api/proto/user/v1"
 	"go-chat-msa/internal/shared/httpio"
-	"go-chat-msa/internal/shared/roomlease"
 	"go-chat-msa/internal/websocket/hub"
+	"go-chat-msa/internal/websocket/roomlease"
+	"go-chat-msa/internal/websocket/roomseq"
 	"go-chat-msa/internal/wsgateway/loadbalance"
 
 	"github.com/gorilla/websocket"
@@ -32,6 +33,7 @@ type routerOptions struct {
 	shutdownTimeout time.Duration
 	redisClient     *redis.Client
 	roomLeaseStore  *roomlease.Store
+	sequenceFloor   *roomseq.Store
 	chatHealth      grpc_health_v1.HealthClient
 	userHealth      grpc_health_v1.HealthClient
 }
@@ -51,6 +53,12 @@ func WithRedisClient(client *redis.Client) RouterOption {
 func WithRoomLeaseStore(store *roomlease.Store) RouterOption {
 	return func(o *routerOptions) {
 		o.roomLeaseStore = store
+	}
+}
+
+func WithSequenceFloorStore(store *roomseq.Store) RouterOption {
+	return func(o *routerOptions) {
+		o.sequenceFloor = store
 	}
 }
 
@@ -101,6 +109,9 @@ func NewRouter(
 
 	manager := hub.NewManager(cfg.Manager, cfg.RateLimit.WSMessage, store, options.shutdownTimeout)
 	manager.SetRoomLeaseStore(options.roomLeaseStore)
+	if options.sequenceFloor != nil {
+		manager.SetSequenceFloorStore(options.sequenceFloor)
+	}
 
 	r := &Router{
 		mux:            http.NewServeMux(),

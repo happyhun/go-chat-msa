@@ -72,6 +72,7 @@ func TestHub_SequenceManagement(t *testing.T) {
 		h := newHub(roomID, testSessionConfig(), 5*time.Minute, store, nil, time.Second, nil)
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
+		require.NoError(t, h.initializeSequence(ctx))
 		go h.run(ctx)
 
 		clientConn := registerTestSession(t, h, "user1")
@@ -102,9 +103,10 @@ func TestHub_InitializeSequence(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		store    MessageStore
-		expected int64
+		name      string
+		store     MessageStore
+		expected  int64
+		wantError bool
 	}{
 		{
 			name:     "Success: DB에서 마지막 시퀀스 번호 정상 로드",
@@ -112,9 +114,9 @@ func TestHub_InitializeSequence(t *testing.T) {
 			expected: 50,
 		},
 		{
-			name:     "Failure: DB 에러 발생 시 시퀀스 번호 0으로 초기화",
-			store:    &errStore{},
-			expected: 0,
+			name:      "Failure: DB 에러 발생 시 초기화 실패",
+			store:     &errStore{},
+			wantError: true,
 		},
 	}
 
@@ -122,7 +124,13 @@ func TestHub_InitializeSequence(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			h := newHub("room1", testSessionConfig(), time.Minute, tt.store, nil, time.Second, nil)
-			h.initializeSequence(t.Context())
+			err := h.initializeSequence(t.Context())
+			if tt.wantError {
+				require.ErrorIs(t, err, ErrRoomSequenceUnavailable)
+				assert.Equal(t, int64(0), h.lastSequence.Load())
+				return
+			}
+			require.NoError(t, err)
 			assert.Equal(t, tt.expected, h.lastSequence.Load())
 		})
 	}

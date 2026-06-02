@@ -127,8 +127,6 @@ func (h *Hub) run(ctx context.Context) {
 		cancelSessions()
 	}()
 
-	h.initializeSequence(ctx)
-
 	idleTimer := time.NewTimer(h.idleTimeout)
 	idleTimer.Stop()
 
@@ -185,17 +183,17 @@ func (h *Hub) run(ctx context.Context) {
 	}
 }
 
-func (h *Hub) initializeSequence(ctx context.Context) {
+func (h *Hub) initializeSequence(ctx context.Context) error {
 	if h.store == nil {
-		return
+		return nil
 	}
 	seq, err := h.store.GetLastSequenceNumber(ctx, h.roomID)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to initialize sequence number", "room_id", h.roomID, "error", err)
-		return
+		return fmt.Errorf("%w: %w", ErrRoomSequenceUnavailable, err)
 	}
 	h.lastSequence.Store(seq)
 	slog.InfoContext(ctx, "Hub sequence initialized", "room_id", h.roomID, "seq", seq)
+	return nil
 }
 
 func (h *Hub) registerSession(ctx context.Context, s *session, idleTimer *time.Timer) {

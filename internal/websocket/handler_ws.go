@@ -7,8 +7,8 @@ import (
 
 	userpb "go-chat-msa/api/proto/user/v1"
 	"go-chat-msa/internal/shared/httpio"
-	"go-chat-msa/internal/shared/roomlease"
 	"go-chat-msa/internal/websocket/hub"
+	"go-chat-msa/internal/websocket/roomlease"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -52,9 +52,11 @@ func (r *Router) serveWebSocket(w http.ResponseWriter, req *http.Request) {
 
 	registration, err := r.manager.PrepareRegister(req.Context(), roomID)
 	if err != nil {
-		if errors.Is(err, roomlease.ErrBusy) || errors.Is(err, hub.ErrRoomHandoffInProgress) {
+		if errors.Is(err, roomlease.ErrBusy) ||
+			errors.Is(err, hub.ErrRoomHandoffInProgress) ||
+			errors.Is(err, hub.ErrRoomSequenceUnavailable) {
 			w.Header().Set("Retry-After", "1")
-			httpio.WriteProblem(req.Context(), w, http.StatusServiceUnavailable, "room handoff in progress, please retry")
+			httpio.WriteProblem(req.Context(), w, http.StatusServiceUnavailable, "room temporarily unavailable, please retry")
 			return
 		}
 		slog.ErrorContext(req.Context(), "Manager.PrepareRegister failed", "error", err, "room_id", roomID, "user_id", userID)
