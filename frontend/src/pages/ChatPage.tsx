@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { batchGetUsers, listMessages, listRoomMembers, listJoinedRooms, ApiError } from '../api/client'
-import { useAuth } from '../context/AuthContext'
+import { useAuth } from '../context/auth'
 import { useWebSocket } from '../hooks/useWebSocket'
 import type { MessageInfo, WsOutgoing } from '../types'
 

@@ -1,17 +1,11 @@
-import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react'
+import { useState, useCallback, useEffect, useRef, type ReactNode } from 'react'
+import { ToastContext } from './toast'
 
 interface Toast {
   id: number
   message: string
   type: 'success' | 'error'
 }
-
-interface ToastContextValue {
-  success: (message: string) => void
-  error: (message: string) => void
-}
-
-const ToastContext = createContext<ToastContextValue>(null!)
 
 let nextId = 0
 
@@ -70,8 +64,4 @@ function ToastItem({ toast, onClose }: { toast: Toast; onClose: () => void }) {
       {toast.message}
     </div>
   )
-}
-
-export function useToast() {
-  return useContext(ToastContext)
 }

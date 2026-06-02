@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { searchRooms, joinRoom, listJoinedRooms, ApiError } from '../api/client'
-import { useToast } from '../context/ToastContext'
+import { useToast } from '../context/toast'
 import type { RoomInfo } from '../types'
 import ErrorBanner from '../components/ErrorBanner'
 import EmptyState from '../components/EmptyState'
