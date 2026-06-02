@@ -15,7 +15,7 @@ flowchart TB
             Watcher1["Membership Watcher"]
             Ring1["Hash Ring (self-check)"]
             Router1["Router<br/>PrepareRegister before upgrade"]
-            Manager1["Manager<br/>room lease lifecycle"]
+            Manager1["Manager<br/>Room Lease · Sequence Floor"]
             Hub1["Hub<br/>sequence · fan-out · drain"]
         end
         subgraph WSS2 ["Pod B"]
@@ -23,7 +23,7 @@ flowchart TB
             Watcher2["Membership Watcher"]
             Ring2["Hash Ring (self-check)"]
             Router2["Router<br/>PrepareRegister before upgrade"]
-            Manager2["Manager<br/>room lease lifecycle"]
+            Manager2["Manager<br/>Room Lease · Sequence Floor"]
             Hub2["Hub<br/>sequence · fan-out · drain"]
         end
         More["... more pods<br/>when scaled"]
@@ -31,6 +31,7 @@ flowchart TB
 
     RedisMembers[("Redis<br/>wss:member:*")]
     RedisLeases[("Redis<br/>wss:room:lease:{roomID}<br/>owner_addr · token")]
+    RedisSeqFloor[("Redis<br/>wss:room:seqfloor:{roomID}<br/>last issued sequence")]
 
     Client == "WS Upgrade" ==> Router
 
@@ -57,6 +58,8 @@ flowchart TB
     Router2 -- "PrepareRegister" --> Manager2
     Manager1 -- "acquire/renew/release" --> RedisLeases
     Manager2 -- "acquire/renew/release" --> RedisLeases
+    Manager1 -- "read before Hub start<br/>SETMAX on Persist failure" --> RedisSeqFloor
+    Manager2 -- "read before Hub start<br/>SETMAX on Persist failure" --> RedisSeqFloor
     Manager1 --> Hub1
     Manager2 --> Hub2
     Hub1 -. "persist drain 완료 후 lease release" .-> Manager1

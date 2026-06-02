@@ -6,24 +6,24 @@ sequenceDiagram
     participant Redis as Redis
     participant Watcher as WSS A Watcher
     participant ManagerA as WSS A Manager
-    participant HubA as WSS A Hub (old owner)
+    participant HubA as WSS A Hub (Old Owner)
     participant Worker as Persist Worker
     participant ChatSvc as Chat Service
     participant RegistryC as WSS C Registry
     participant RouterC as WSS C Router
     participant ManagerC as WSS C Manager
-    participant HubC as WSS C Hub (new owner)
+    participant HubC as WSS C Hub (New Owner)
 
-    Note over Client, HubA: 초기 상태: room R owner = A, HubA가 sequence/fan-out 담당
+    Note over Client, HubA: 초기 상태: Room R Owner = A, HubA가 Sequence/Fan-out 담당
 
-    Note over Redis, ManagerC: 1. scale-out으로 C가 membership 등록
+    Note over Redis, ManagerC: 1. Scale-out으로 C가 Membership 등록
     RegistryC->>Redis: SET wss:member:C membership_token EX 30s
     Redis-->>Watcher: keyspace notification
     Watcher->>Redis: SCAN wss:member:*
     Watcher->>Watcher: ring.Set([A, B, C])
     Watcher-->>ManagerA: membership event
 
-    Note over ManagerA, HubA: 2. 기존 owner가 owner mismatch 감지
+    Note over ManagerA, HubA: 2. 기존 Owner가 Owner mismatch 감지
     ManagerA->>ManagerA: active rooms snapshot
     ManagerA->>ManagerA: ring.Locate(R) != A
     ManagerA->>ManagerA: schedule close with jitter 0~2s
@@ -40,23 +40,41 @@ sequenceDiagram
     end
 
     HubA->>HubA: wait broadcastCh empty && pendingPersist == 0
+    alt Persist 실패 확정
+        ManagerA->>Redis: SETMAX wss:room:seqfloor:R<br/>last issued sequence
+        Redis-->>ManagerA: ok
+        Note over ManagerA, Redis: Floor 기록 성공 후 release<br/>실패하면 release를 미루고 재시도
+    else Persist 모두 성공
+        Note over ManagerA, Redis: Sequence Floor 변경 없음
+    end
     HubA->>Client: WebSocket close 1012<br/>room owner handoff
     HubA-->>ManagerA: done
     ManagerA->>Redis: EVAL release if token matches<br/>DEL wss:room:lease:R
 
-    Note over Client, HubC: 4. 클라이언트 재접속과 새 owner 초기화
+    Note over Client, HubC: 4. 클라이언트 재접속과 새 Owner 초기화
     Client->>Client: reconnect state + jittered backoff
     Client->>Gateway: GET /ws?room_id=R&ticket=new
     Gateway->>RouterC: proxy to C by updated ring
     RouterC->>ManagerC: PrepareRegister(R)
     ManagerC->>Redis: acquire wss:room:lease:R
     Redis-->>ManagerC: success
-    ManagerC->>HubC: create Hub
+    ManagerC->>HubC: Prepare Hub
     HubC->>ChatSvc: GetLastSequenceNumber(R)
-    ChatSvc-->>HubC: last persisted sequence
-    ManagerC-->>RouterC: ready
-    RouterC-->>Gateway: 101 Switching Protocols
-    Gateway-->>Client: hijack 후 양방향 터널
+    ChatSvc-->>HubC: Last persisted Sequence
+    HubC->>Redis: GET wss:room:seqfloor:R
+    Redis-->>HubC: Sequence Floor
+    alt Sequence 초기화 실패
+        ManagerC->>Redis: release wss:room:lease:R<br/>best effort
+        ManagerC-->>RouterC: ErrRoomSequenceUnavailable
+        RouterC-->>Gateway: 503 Retry-After: 1
+        Gateway-->>Client: 503 Service Unavailable
+    else Sequence 초기화 성공
+        HubC->>HubC: Start Sequence = max(DB last, Floor)
+        ManagerC->>HubC: Hub actor start
+        ManagerC-->>RouterC: ready
+        RouterC-->>Gateway: 101 Switching Protocols
+        Gateway-->>Client: hijack 후 양방향 터널
+    end
 
     Note over Client, HubC: 5. reconnect 후 정합성 보정
     Client->>ChatSvc: GET /rooms/R/messages?last_seq=maxSeq

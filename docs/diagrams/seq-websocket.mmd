@@ -3,7 +3,7 @@ sequenceDiagram
 
     participant Client as Client
     participant Router as Router
-    participant Redis as Redis Room Lease
+    participant Redis as Redis
 
     box WebSocket Service
         participant Manager as Manager
@@ -23,21 +23,43 @@ sequenceDiagram
     Router->>Router: owner self-check
     Router->>Manager: PrepareRegister(R)
 
-    alt Hub가 없는 경우
+    alt 기존 Hub 사용
+        Manager-->>Router: ready
+        Router->>Client: 101 Switching Protocols
+        Router->>Manager: Commit(conn, user)
+        Manager->>Hub: register session
+        Hub->>Session: read/write pump 시작
+    else 새 Hub 생성 성공
         Manager->>Redis: acquire wss:room:lease:R
         Redis-->>Manager: success
-        Manager->>Hub: 새 Hub 가동
+        Manager->>Hub: 새 Hub 준비
         Hub->>ChatSvc: GetLastSequenceNumber(R)
-        ChatSvc-->>Hub: last sequence
-    else lease busy 또는 handoff 중
-        Manager-->>Router: ErrBusy / handoff
+        ChatSvc-->>Hub: Last Sequence
+        Hub->>Redis: GET wss:room:seqfloor:R
+        Redis-->>Hub: Sequence Floor
+        Hub->>Hub: Start Sequence = max(DB last, Floor)
+        Manager->>Hub: Hub actor start
+        Manager-->>Router: ready
+        Router->>Client: 101 Switching Protocols
+        Router->>Manager: Commit(conn, user)
+        Manager->>Hub: register session
+        Hub->>Session: read/write pump 시작
+    else Sequence 초기화 실패
+        Manager->>Redis: acquire wss:room:lease:R
+        Redis-->>Manager: success
+        Manager->>Hub: 새 Hub 준비
+        Hub->>ChatSvc: GetLastSequenceNumber(R)
+        ChatSvc-->>Hub: error 또는 Last Sequence
+        Hub->>Redis: GET wss:room:seqfloor:R
+        Redis-->>Hub: error 또는 Sequence Floor
+        Hub-->>Manager: ErrRoomSequenceUnavailable
+        Manager->>Redis: release wss:room:lease:R<br/>best effort
+        Manager-->>Router: ErrRoomSequenceUnavailable
+        Router-->>Client: 503 Retry-After: 1
+    else Lease busy 또는 Handoff 중
+        Manager-->>Router: ErrBusy / Handoff
         Router-->>Client: 503 Retry-After: 1
     end
-
-    Router->>Client: 101 Switching Protocols
-    Router->>Manager: Commit(conn, user)
-    Manager->>Hub: register session
-    Hub->>Session: read/write pump 시작
 
     alt 동일 사용자 세션이 존재하는 경우
         Hub->>Session: conflict 메시지
@@ -56,11 +78,11 @@ sequenceDiagram
         Note over Hub: sequence 증가 없음<br/>fan-out 없음
     else slot reserved
         Hub->>Hub: sequence_number++
+        Hub->>Worker: persist task enqueue
         loop room sessions
             Hub->>Session: fan-out
             Session->>Others: send
         end
-        Hub->>Worker: persist task enqueue
         Worker--)ChatSvc: BatchCreateMessages
         ChatSvc--)Worker: ack / duplicate result
         Worker--)Hub: task ack<br/>pendingPersist--

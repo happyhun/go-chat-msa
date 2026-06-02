@@ -29,10 +29,25 @@ sequenceDiagram
     Client->>WSGW: 웹소켓 연결 요청
     WSGW->>Redis: 티켓 원자적 검증 및 파기
     WSGW->>WSGW: X-User-ID 헤더 주입
-    WSGW->>WSGW: Room ID 기반 컨시스턴트 해싱 (타겟 노드 선정)
-    WSGW->>WSSvc: 웹소켓 연결 프록시
+    WSGW->>WSGW: Redis Membership 기반 Room Owner Pod 선정
+    WSGW->>WSSvc: Owner Pod IP로 웹소켓 연결 프록시
     WSSvc->>UserSvc: 멤버십 검증
     UserSvc-->>WSSvc: 멤버십 확인
-    WSSvc->>WSSvc: WebSocket 업그레이드
-    WSSvc-->>WSGW: 101 Switching Protocols
-    WSGW-->>Client: 연결 완료
+    WSSvc->>Redis: Room Lease acquire 또는 Handoff 확인
+    alt Lease busy / Handoff
+        Redis-->>WSSvc: busy
+        WSSvc-->>WSGW: 503 Retry-After: 1
+        WSGW-->>Client: 재시도 요청
+    else Sequence 초기화 실패
+        Redis-->>WSSvc: Lease ok
+        WSSvc->>WSSvc: DB/Floor 기준 Sequence 초기화 실패
+        WSSvc->>Redis: Room Lease release<br/>best effort
+        WSSvc-->>WSGW: 503 Retry-After: 1
+        WSGW-->>Client: 재시도 요청
+    else 준비 완료
+        Redis-->>WSSvc: Lease ok
+        WSSvc->>WSSvc: DB/Floor 기준 Sequence 초기화 성공
+        WSSvc->>WSSvc: WebSocket 업그레이드
+        WSSvc-->>WSGW: 101 Switching Protocols
+        WSGW-->>Client: 연결 완료
+    end

@@ -14,14 +14,14 @@ flowchart TB
         direction LR
         UserSvc["User Service<br/>users · rooms · memberships<br/>refresh token state"]
         ChatSvc["Chat Service<br/>message persistence<br/>history lookup"]
-        WSSvc["WebSocket Service<br/>sessions · hubs<br/>room lease · persistence queue"]
+        WSSvc["WebSocket Service<br/>sessions · hubs<br/>Room Lease · Sequence Floor<br/>persistence queue"]
     end
 
     subgraph Data ["Data Stores"]
         direction LR
         PG[("PostgreSQL<br/>users · rooms · memberships")]
         MG[("MongoDB<br/>messages")]
-        RD[("Redis<br/>refresh token TTL<br/>ws tickets · rate limit<br/>membership · room lease")]
+        RD[("Redis<br/>refresh token TTL<br/>ws tickets · rate limit<br/>Membership · Room Lease · Sequence Floor")]
     end
 
     Browser == "REST /api" ==> AGW

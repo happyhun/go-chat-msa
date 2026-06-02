@@ -1,40 +1,63 @@
 flowchart TB
     Base["deploy/k8s/base<br/>공통 리소스 원형"]
 
-    Base --> Common["공통 정의<br/>Deployment · Service · Ingress<br/>Job · ConfigMap · Secret"]
+    Base --> Common["공통 정의<br/>Deployment · Service · Ingress<br/>ConfigMap · Secret"]
+    Base --> LoadBase["load<br/>k6 Job 원형"]
 
-    Common --> Dev["overlays/dev<br/>로컬 개발 smoke"]
-    Common --> Test["overlays/test<br/>자동 e2e correctness"]
-    Common -. "planned" .-> QA["overlays/qa<br/>멀티 노드 · HPA · k6"]
+    Common --> Dev["overlays/dev<br/>로컬 개발 · C10K 부하"]
+    Common --> Test["overlays/test<br/>자동 E2E 정합성"]
+    Common --> QA["overlays/qa<br/>WebSocket HPA 정합성"]
 
     subgraph DevPhases ["dev phase overlays"]
         direction LR
-        DevFoundation["foundation<br/>secret/data"]
+        DevFoundation["foundation<br/>Secret · data layer"]
         DevObs["observability<br/>Grafana stack"]
-        DevMig["migrations<br/>DB schema jobs"]
-        DevApps["apps<br/>app config + serving workloads"]
+        DevMig["migrations<br/>DB schema Job"]
+        DevApps["apps<br/>설정 + 앱 workload"]
+        DevLoad["load<br/>k6-c10k Job"]
     end
 
     subgraph TestPhases ["test phase overlays"]
         direction LR
-        TestFoundation["foundation<br/>secret/data"]
+        TestFoundation["foundation<br/>Secret · data layer"]
         TestObs["observability<br/>Grafana stack"]
-        TestMig["migrations<br/>DB schema jobs"]
-        TestApps["apps<br/>app config + replicas=2 gate"]
+        TestMig["migrations<br/>DB schema Job"]
+        TestApps["apps<br/>replicas=2 정합성 gate"]
+    end
+
+    subgraph QAPhases ["qa phase overlays"]
+        direction LR
+        QAFoundation["foundation<br/>Secret · data layer"]
+        QAObs["observability<br/>Grafana stack + Prometheus Adapter"]
+        QAMig["migrations<br/>DB schema Job"]
+        QAApps["apps<br/>WebSocket HPA"]
+        QALoad["load<br/>k6-hpa Job"]
     end
 
     Dev --> DevFoundation
     Dev --> DevObs
     Dev --> DevMig
     Dev --> DevApps
+    Dev --> DevLoad
 
     Test --> TestFoundation
     Test --> TestObs
     Test --> TestMig
     Test --> TestApps
 
+    QA --> QAFoundation
+    QA --> QAObs
+    QA --> QAMig
+    QA --> QAApps
+    QA --> QALoad
+
     TestApps --> FixedReplicas["fixed-replicas patch<br/>api/ws/user/chat/websocket = 2"]
     TestApps --> TestConfig["override.yaml: ENV=k8s-test<br/>go-chat-test namespace"]
     DevApps --> DevConfig["override.yaml: ENV=k8s-dev<br/>go-chat-dev namespace"]
-
-    QA --> QANote["Phase 3<br/>k3s + Tailscale + HPA<br/>rollout/drain/load validation"]
+    DevApps --> DevReplicas["websocket-service replicas=2"]
+    LoadBase --> DevLoad
+    LoadBase --> QALoad
+    DevLoad --> DevLoadJob["Indexed Job<br/>k6 Pod x4"]
+    QAApps --> QAHPA["websocket-service HPA<br/>min=1 max=2<br/>metric=active connections"]
+    QAObs --> CustomMetrics["custom.metrics.k8s.io<br/>gochat_ws_connections_active"]
+    QALoad --> HPAJob["hpa-test.js<br/>scale-out 중 sequence/gap 검증"]
