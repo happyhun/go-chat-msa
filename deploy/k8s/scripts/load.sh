@@ -48,6 +48,23 @@ delete_previous_job() {
   kubectl -n "${NAMESPACE}" wait --for=delete "job/${JOB_NAME}" --timeout=60s >/dev/null 2>&1 || true
 }
 
+reset_qa_hpa_start_state() {
+  if [[ "${K8S_ENV}" != "qa" || "${JOB_NAME}" != "k6-hpa" ]]; then
+    return
+  fi
+
+  log "resetting websocket-service to 1 replica before HPA test"
+  kubectl -n "${NAMESPACE}" delete hpa websocket-service --ignore-not-found=true
+  kubectl -n "${NAMESPACE}" wait --for=delete hpa/websocket-service --timeout=60s >/dev/null 2>&1 || true
+  kubectl -n "${NAMESPACE}" scale deployment/websocket-service --replicas=1
+  kubectl -n "${NAMESPACE}" rollout status deployment/websocket-service --timeout=120s
+  kubectl -n "${NAMESPACE}" wait --for=condition=Available deployment/websocket-service --timeout=120s
+
+  log "reapplying websocket-service HPA"
+  kubectl -n "${NAMESPACE}" apply -f "${K8S_DIR}/overlays/qa/apps/websocket-service-hpa.yaml"
+  kubectl -n "${NAMESPACE}" wait --for=condition=AbleToScale hpa/websocket-service --timeout=60s >/dev/null 2>&1 || true
+}
+
 wait_for_pods() {
   local i
   for i in {1..60}; do
@@ -118,6 +135,7 @@ main() {
   create_script_configmap
   create_env_configmap
   delete_previous_job
+  reset_qa_hpa_start_state
 
   log "starting job/${JOB_NAME}"
   kubectl apply -k "${OVERLAY_DIR}"
