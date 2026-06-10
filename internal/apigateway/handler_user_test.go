@@ -360,7 +360,6 @@ func TestRouter_HandleDeleteUser(t *testing.T) {
 	}
 }
 
-
 func TestRouter_HandleBatchGetUsers(t *testing.T) {
 	t.Parallel()
 

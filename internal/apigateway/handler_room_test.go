@@ -53,11 +53,11 @@ func TestRouter_HandleListJoinedRooms(t *testing.T) {
 			expectedBody: map[string]any{
 				"rooms": []any{
 					map[string]any{
-						"id":         "room-1",
-						"name":       "My Room",
-						"manager_id":    "user-1",
-						"capacity":      float64(100),
-						"member_count":  float64(1),
+						"id":           "room-1",
+						"name":         "My Room",
+						"manager_id":   "user-1",
+						"capacity":     float64(100),
+						"member_count": float64(1),
 					},
 				},
 			},

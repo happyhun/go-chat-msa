@@ -47,7 +47,6 @@ type BatchGetUsersResponse struct {
 
 const maxBatchUserIDs = 100
 
-
 func (r *Router) handleCreateUser(w http.ResponseWriter, req *http.Request) {
 	var body CreateUserRequest
 	if err := httpio.ReadJSON(req.Context(), w, req, &body); err != nil {
