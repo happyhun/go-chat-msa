@@ -245,14 +245,10 @@ K8s `dev-load` C10K 결과는 [K8S_C10K_REPORT.md](docs/K8S_C10K_REPORT.md)에 �
 | 문서 | 내용 |
 |------|------|
 | [DESIGN.md](docs/DESIGN.md) | 전체 설계와 트레이드오프 |
-| [k8s-study-guide.md](docs/k8s-study-guide.md) | Kubernetes 학습용 실행/개념 가이드 |
-| [k8s-migration-plan.md](docs/k8s-migration-plan.md) | K8s 이관 목표, 완료 현황, 남은 과제 |
 | [TELEMETRY_CATALOG.md](docs/TELEMETRY_CATALOG.md) | 로그/메트릭/트레이스/프로파일 카탈로그 |
 | [DOCKER_C10K_REPORT.md](docs/DOCKER_C10K_REPORT.md) | Docker Compose C10K 성능 baseline |
 | [DOCKER_C10K_TROUBLESHOOTING.md](docs/DOCKER_C10K_TROUBLESHOOTING.md) | Docker Compose C10K 병목과 해결 기록 |
 | [K8S_C10K_REPORT.md](docs/K8S_C10K_REPORT.md) | K8s `dev-load` C10K 성능 baseline |
-| [velog-grpc-k8s-headless-hpa.md](docs/velog-grpc-k8s-headless-hpa.md) | gRPC Headless Service와 HPA 한계 |
-| [velog-websocket-hpa-handoff.md](docs/velog-websocket-hpa-handoff.md) | WebSocket HPA handoff와 메시지 정합성 |
 
 ## Production Boundary
 
