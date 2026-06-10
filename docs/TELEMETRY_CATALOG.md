@@ -397,7 +397,7 @@ Tempo가 trace 데이터에서 service graph 계열 메트릭을 만들어 Prome
 
 - 서비스: api-gateway, ws-gateway, websocket-service, user-service, chat-service
 - 업로드 주기: pyroscope-go 기본 15s
-- 코드에서 profiler 시작 전에 `runtime.SetMutexProfileFraction(10)`, `runtime.SetBlockProfileRate(10000)`을 설정하지만, 현재 `InitProfiling`의 `ProfileTypes`에는 Mutex/Block profile이 포함되어 있지 않다.
+- Mutex/Block profile은 현재 수집하지 않으며, 관련 Go runtime profiler도 활성화하지 않는다.
 
 ---
 

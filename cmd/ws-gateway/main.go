@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"runtime"
 	"syscall"
 	"time"
 
@@ -56,9 +55,6 @@ func run(ctx context.Context) error {
 	}
 
 	if cfg.Telemetry.PyroscopeEndpoint != "" {
-		runtime.SetMutexProfileFraction(10)
-		runtime.SetBlockProfileRate(10000)
-
 		stopProfiler, err := telemetry.InitProfiling("ws-gateway", cfg.Telemetry.PyroscopeEndpoint)
 		if err != nil {
 			slog.WarnContext(ctx, "failed to initialize pyroscope profiler", "error", err)
