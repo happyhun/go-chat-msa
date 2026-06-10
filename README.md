@@ -221,7 +221,7 @@ Docker Compose 기준으로 아래 부하를 통과한 기록을 보존합니다
 | sync fetch P99 | 15.33ms |
 
 이 수치는 운영 성능 지표가 아니라 HPA handoff 정합성 검증 결과입니다.
-K8s `dev-load`와 `qa-load`의 실행 구조는 [K8S_C10K_HPA_REPORT.md](docs/K8S_C10K_HPA_REPORT.md)에 분리했습니다.
+K8s `dev-load` C10K 결과는 [K8S_C10K_REPORT.md](docs/K8S_C10K_REPORT.md)에 정리했습니다.
 
 ## Design Notes
 
@@ -250,7 +250,7 @@ K8s `dev-load`와 `qa-load`의 실행 구조는 [K8S_C10K_HPA_REPORT.md](docs/K8
 | [TELEMETRY_CATALOG.md](docs/TELEMETRY_CATALOG.md) | 로그/메트릭/트레이스/프로파일 카탈로그 |
 | [DOCKER_C10K_REPORT.md](docs/DOCKER_C10K_REPORT.md) | Docker Compose C10K 성능 baseline |
 | [DOCKER_C10K_TROUBLESHOOTING.md](docs/DOCKER_C10K_TROUBLESHOOTING.md) | Docker Compose C10K 병목과 해결 기록 |
-| [K8S_C10K_HPA_REPORT.md](docs/K8S_C10K_HPA_REPORT.md) | K8s `dev-load` C10K 경로와 `qa-load` HPA 정합성 검증 |
+| [K8S_C10K_REPORT.md](docs/K8S_C10K_REPORT.md) | K8s `dev-load` C10K 성능 baseline |
 | [velog-grpc-k8s-headless-hpa.md](docs/velog-grpc-k8s-headless-hpa.md) | gRPC Headless Service와 HPA 한계 |
 | [velog-websocket-hpa-handoff.md](docs/velog-websocket-hpa-handoff.md) | WebSocket HPA handoff와 메시지 정합성 |
 
