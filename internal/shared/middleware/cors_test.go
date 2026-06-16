@@ -79,6 +79,7 @@ func TestCORSMiddleware(t *testing.T) {
 
 			assert.Equal(t, tt.wantStatus, w.Code)
 			assert.Equal(t, tt.wantOrigin, w.Header().Get("Access-Control-Allow-Origin"))
+			assert.Equal(t, "Origin, Content-Type, Authorization", w.Header().Get("Access-Control-Allow-Headers"))
 			if tt.wantVary != "" {
 				assert.Equal(t, tt.wantVary, w.Header().Get("Vary"))
 			}

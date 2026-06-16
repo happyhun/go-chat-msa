@@ -40,9 +40,7 @@ type Router struct {
 	config    *Config
 	jwtSecret string
 
-	muxV1   *http.ServeMux
-	muxV2   *http.ServeMux
-	handler *middleware.VersionRouter
+	mux *http.ServeMux
 
 	userClient  userpb.UserServiceClient
 	chatClient  chatpb.ChatServiceClient
@@ -70,8 +68,7 @@ func NewRouter(cfg *Config, userClient userpb.UserServiceClient, chatClient chat
 	r := &Router{
 		config:     cfg,
 		jwtSecret:  cfg.JWT.Secret,
-		muxV1:      http.NewServeMux(),
-		muxV2:      http.NewServeMux(),
+		mux:        http.NewServeMux(),
 		userClient: userClient,
 		chatClient: chatClient,
 		userHealth: options.userHealth,
@@ -93,19 +90,13 @@ func NewRouter(cfg *Config, userClient userpb.UserServiceClient, chatClient chat
 		),
 	}
 
-	r.registerV1Routes()
-	r.registerV2Routes()
-
-	r.handler = middleware.NewVersionRouter(r.muxV1, map[string]http.Handler{
-		"v1": r.muxV1,
-		"v2": r.muxV2,
-	})
+	r.registerRoutes()
 
 	return r
 }
 
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	r.handler.ServeHTTP(w, req)
+	r.mux.ServeHTTP(w, req)
 }
 
 func (r *Router) Stop() {
@@ -115,7 +106,7 @@ func (r *Router) Wait() {
 	r.wg.Wait()
 }
 
-func (r *Router) registerV1Routes() {
+func (r *Router) registerRoutes() {
 	globalMws := []func(http.Handler) http.Handler{
 		middleware.CORSMiddleware(r.config.APIGateway.CORS.AllowedOrigins),
 	}
@@ -124,36 +115,32 @@ func (r *Router) registerV1Routes() {
 		middleware.RateLimitMiddleware(r.publicLimiter, middleware.IPKeyFunc()),
 	})
 
-	r.muxV1.Handle("GET /health", middleware.ChainMiddleware(
+	r.mux.Handle("GET /health", middleware.ChainMiddleware(
 		func(w http.ResponseWriter, req *http.Request) {
 			httpio.WriteJSON(req.Context(), w, http.StatusOK, map[string]string{"status": "healthy"})
 		}, globalMws...))
-	r.muxV1.Handle("GET /ready", middleware.ChainMiddleware(r.handleReady, globalMws...))
-	r.muxV1.Handle("POST /users", middleware.ChainMiddleware(r.handleCreateUser, publicMws...))
-	r.muxV1.Handle("POST /auth/token", middleware.ChainMiddleware(r.handleVerifyUser, publicMws...))
-	r.muxV1.Handle("POST /auth/token/refresh", middleware.ChainMiddleware(r.handleRefreshToken, publicMws...))
-	r.muxV1.Handle("DELETE /auth/token", middleware.ChainMiddleware(r.handleRevokeToken, publicMws...))
+	r.mux.Handle("GET /ready", middleware.ChainMiddleware(r.handleReady, globalMws...))
+	r.mux.Handle("POST /users", middleware.ChainMiddleware(r.handleCreateUser, publicMws...))
+	r.mux.Handle("POST /auth/token", middleware.ChainMiddleware(r.handleVerifyUser, publicMws...))
+	r.mux.Handle("POST /auth/token/refresh", middleware.ChainMiddleware(r.handleRefreshToken, publicMws...))
+	r.mux.Handle("DELETE /auth/token", middleware.ChainMiddleware(r.handleRevokeToken, publicMws...))
 
 	authMws := slices.Concat(globalMws, []func(http.Handler) http.Handler{
 		middleware.BearerAuthMiddleware(r.jwtSecret),
 		middleware.RateLimitMiddleware(r.authenticatedLimiter, middleware.ContextKeyFunc(middleware.UserIDKey)),
 	})
 
-	r.muxV1.Handle("DELETE /me", middleware.ChainMiddleware(r.handleDeleteUser, authMws...))
-	r.muxV1.Handle("GET /users", middleware.ChainMiddleware(r.handleBatchGetUsers, authMws...))
-	r.muxV1.Handle("GET /me/rooms", middleware.ChainMiddleware(r.handleListJoinedRooms, authMws...))
-	r.muxV1.Handle("GET /rooms", middleware.ChainMiddleware(r.handleSearchRooms, authMws...))
-	r.muxV1.Handle("POST /rooms", middleware.ChainMiddleware(r.handleCreateRoom, authMws...))
-	r.muxV1.Handle("PATCH /rooms/{id}", middleware.ChainMiddleware(r.handleUpdateRoom, authMws...))
-	r.muxV1.Handle("DELETE /rooms/{id}", middleware.ChainMiddleware(r.handleDeleteRoom, authMws...))
-	r.muxV1.Handle("PUT /rooms/{id}/members/me", middleware.ChainMiddleware(r.handleJoinRoom, authMws...))
-	r.muxV1.Handle("DELETE /rooms/{id}/members/me", middleware.ChainMiddleware(r.handleLeaveRoom, authMws...))
-	r.muxV1.Handle("GET /rooms/{id}/members", middleware.ChainMiddleware(r.handleListRoomMembers, authMws...))
-	r.muxV1.Handle("GET /rooms/{id}/messages", middleware.ChainMiddleware(r.handleListMessages, authMws...))
-}
-
-func (r *Router) registerV2Routes() {
-	r.muxV2.Handle("/", r.muxV1)
+	r.mux.Handle("DELETE /me", middleware.ChainMiddleware(r.handleDeleteUser, authMws...))
+	r.mux.Handle("GET /users", middleware.ChainMiddleware(r.handleBatchGetUsers, authMws...))
+	r.mux.Handle("GET /me/rooms", middleware.ChainMiddleware(r.handleListJoinedRooms, authMws...))
+	r.mux.Handle("GET /rooms", middleware.ChainMiddleware(r.handleSearchRooms, authMws...))
+	r.mux.Handle("POST /rooms", middleware.ChainMiddleware(r.handleCreateRoom, authMws...))
+	r.mux.Handle("PATCH /rooms/{id}", middleware.ChainMiddleware(r.handleUpdateRoom, authMws...))
+	r.mux.Handle("DELETE /rooms/{id}", middleware.ChainMiddleware(r.handleDeleteRoom, authMws...))
+	r.mux.Handle("PUT /rooms/{id}/members/me", middleware.ChainMiddleware(r.handleJoinRoom, authMws...))
+	r.mux.Handle("DELETE /rooms/{id}/members/me", middleware.ChainMiddleware(r.handleLeaveRoom, authMws...))
+	r.mux.Handle("GET /rooms/{id}/members", middleware.ChainMiddleware(r.handleListRoomMembers, authMws...))
+	r.mux.Handle("GET /rooms/{id}/messages", middleware.ChainMiddleware(r.handleListMessages, authMws...))
 }
 
 func (r *Router) handleReady(w http.ResponseWriter, req *http.Request) {
