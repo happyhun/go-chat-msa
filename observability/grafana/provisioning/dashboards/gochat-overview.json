@@ -60,7 +60,7 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, sum by(le) (rate(gochat_http_request_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000 or vector(0)",
+          "expr": "(histogram_quantile(0.99, sum by(le) (rate(gochat_http_request_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000 unless histogram_quantile(0.99, sum by(le) (rate(gochat_http_request_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000 != histogram_quantile(0.99, sum by(le) (rate(gochat_http_request_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000) or vector(0)",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
@@ -78,7 +78,24 @@
             "showPoints": "never"
           },
           "unit": "ms",
-          "decimals": 0
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 100
+              },
+              {
+                "color": "red",
+                "value": 250
+              }
+            ]
+          }
         },
         "overrides": []
       },
@@ -94,7 +111,8 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "noValue": "0"
       }
     },
     {
@@ -113,7 +131,7 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, sum by(le) (rate(gochat_grpc_request_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000 or vector(0)",
+          "expr": "(histogram_quantile(0.99, sum by(le) (rate(gochat_grpc_request_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000 unless histogram_quantile(0.99, sum by(le) (rate(gochat_grpc_request_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000 != histogram_quantile(0.99, sum by(le) (rate(gochat_grpc_request_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000) or vector(0)",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
@@ -131,7 +149,24 @@
             "showPoints": "never"
           },
           "unit": "ms",
-          "decimals": 0
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 100
+              },
+              {
+                "color": "red",
+                "value": 250
+              }
+            ]
+          }
         },
         "overrides": []
       },
@@ -147,12 +182,13 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "noValue": "0"
       }
     },
     {
       "id": 4,
-      "title": "WS Egress P99",
+      "title": "WS P99",
       "type": "stat",
       "gridPos": {
         "x": 8,
@@ -166,7 +202,7 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, sum by(le) (rate(gochat_ws_egress_duration_seconds_bucket{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval]))) * 1000 or vector(0)",
+          "expr": "(histogram_quantile(0.99, sum by(le) (rate(gochat_ws_egress_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000 unless histogram_quantile(0.99, sum by(le) (rate(gochat_ws_egress_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000 != histogram_quantile(0.99, sum by(le) (rate(gochat_ws_egress_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000) or vector(0)",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
@@ -184,7 +220,24 @@
             "showPoints": "never"
           },
           "unit": "ms",
-          "decimals": 0
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 50
+              },
+              {
+                "color": "red",
+                "value": 100
+              }
+            ]
+          }
         },
         "overrides": []
       },
@@ -200,12 +253,13 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "noValue": "0"
       }
     },
     {
       "id": 5,
-      "title": "HTTP 5xx",
+      "title": "5xx RPS",
       "type": "stat",
       "gridPos": {
         "x": 12,
@@ -237,7 +291,20 @@
             "showPoints": "never"
           },
           "unit": "reqps",
-          "decimals": 2
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.001
+              }
+            ]
+          }
         },
         "overrides": []
       },
@@ -253,12 +320,13 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "noValue": "0"
       }
     },
     {
       "id": 6,
-      "title": "gRPC Errors",
+      "title": "gRPC Err",
       "type": "stat",
       "gridPos": {
         "x": 15,
@@ -290,7 +358,20 @@
             "showPoints": "never"
           },
           "unit": "ops",
-          "decimals": 2
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.001
+              }
+            ]
+          }
         },
         "overrides": []
       },
@@ -306,12 +387,13 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "noValue": "0"
       }
     },
     {
       "id": 7,
-      "title": "Active WS",
+      "title": "WS Conn",
       "type": "stat",
       "gridPos": {
         "x": 18,
@@ -343,12 +425,21 @@
             "showPoints": "never"
           },
           "unit": "short",
-          "decimals": 0
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
         },
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
+        "colorMode": "none",
         "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
@@ -359,12 +450,13 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "noValue": "0"
       }
     },
     {
       "id": 8,
-      "title": "Persist Retry",
+      "title": "Retry Q",
       "type": "stat",
       "gridPos": {
         "x": 21,
@@ -396,7 +488,24 @@
             "showPoints": "never"
           },
           "unit": "short",
-          "decimals": 0
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 100
+              }
+            ]
+          }
         },
         "overrides": []
       },
@@ -412,7 +521,8 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "noValue": "0"
       }
     },
     {
@@ -520,7 +630,7 @@
     },
     {
       "id": 12,
-      "title": "Drain & Rebalance",
+      "title": "Persist Drain & Rebalance",
       "type": "timeseries",
       "gridPos": {
         "x": 16,
@@ -540,7 +650,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "legendFormat": "drain {{status}}"
+          "legendFormat": "persist drain {{status}}"
         },
         {
           "expr": "sum(rate(gochat_ws_rebalance_evictions_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval]))",

@@ -78,12 +78,21 @@
             "showPoints": "never"
           },
           "unit": "short",
-          "decimals": 0
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
         },
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
+        "colorMode": "none",
         "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
@@ -94,7 +103,8 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "noValue": "0"
       }
     },
     {
@@ -131,12 +141,21 @@
             "showPoints": "never"
           },
           "unit": "short",
-          "decimals": 0
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
         },
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
+        "colorMode": "none",
         "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
@@ -147,7 +166,8 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "noValue": "0"
       }
     },
     {
@@ -184,12 +204,21 @@
             "showPoints": "never"
           },
           "unit": "ops",
-          "decimals": 2
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
         },
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
+        "colorMode": "none",
         "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
@@ -200,7 +229,8 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "noValue": "0"
       }
     },
     {
@@ -237,12 +267,21 @@
             "showPoints": "never"
           },
           "unit": "ops",
-          "decimals": 2
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
         },
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
+        "colorMode": "none",
         "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
@@ -253,7 +292,8 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "noValue": "0"
       }
     },
     {
@@ -272,7 +312,7 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, sum by(le) (rate(gochat_ws_fanout_duration_seconds_bucket{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval]))) * 1000 or vector(0)",
+          "expr": "(histogram_quantile(0.99, sum by(le) (rate(gochat_ws_fanout_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000 unless histogram_quantile(0.99, sum by(le) (rate(gochat_ws_fanout_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000 != histogram_quantile(0.99, sum by(le) (rate(gochat_ws_fanout_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000) or vector(0)",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
@@ -290,7 +330,24 @@
             "showPoints": "never"
           },
           "unit": "ms",
-          "decimals": 0
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 20
+              },
+              {
+                "color": "red",
+                "value": 50
+              }
+            ]
+          }
         },
         "overrides": []
       },
@@ -306,7 +363,8 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "noValue": "0"
       }
     },
     {
@@ -325,7 +383,7 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, sum by(le) (rate(gochat_ws_egress_duration_seconds_bucket{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval]))) * 1000 or vector(0)",
+          "expr": "(histogram_quantile(0.99, sum by(le) (rate(gochat_ws_egress_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000 unless histogram_quantile(0.99, sum by(le) (rate(gochat_ws_egress_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000 != histogram_quantile(0.99, sum by(le) (rate(gochat_ws_egress_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000) or vector(0)",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
@@ -343,7 +401,24 @@
             "showPoints": "never"
           },
           "unit": "ms",
-          "decimals": 0
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 50
+              },
+              {
+                "color": "red",
+                "value": 100
+              }
+            ]
+          }
         },
         "overrides": []
       },
@@ -359,7 +434,8 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "noValue": "0"
       }
     },
     {
@@ -665,7 +741,7 @@
     },
     {
       "id": 15,
-      "title": "Drain",
+      "title": "Hub Persist Drain",
       "type": "timeseries",
       "gridPos": {
         "x": 16,

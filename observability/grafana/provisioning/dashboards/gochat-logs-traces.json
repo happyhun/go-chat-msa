@@ -46,7 +46,7 @@
     },
     {
       "id": 2,
-      "title": "Recent Errors and Warnings",
+      "title": "Recent WARN/ERROR Logs",
       "type": "logs",
       "gridPos": {
         "x": 0,
@@ -104,7 +104,7 @@
       },
       "targets": [
         {
-          "expr": "sum by(service,level) (count_over_time({namespace=~\"$namespace\", service=~\"$service\", pod=~\"$pod\", component=~\"$component\"}[$__rate_interval]))",
+          "expr": "sum by(service,level) (rate({namespace=~\"$namespace\", service=~\"$service\", pod=~\"$pod\", component=~\"$component\"}[1m]))",
           "refId": "A",
           "datasource": {
             "type": "loki",
@@ -122,8 +122,8 @@
             "fillOpacity": 8,
             "showPoints": "never"
           },
-          "unit": "short",
-          "decimals": 0
+          "unit": "ops",
+          "decimals": 2
         },
         "overrides": []
       },

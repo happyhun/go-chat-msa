@@ -87,7 +87,7 @@
     },
     {
       "id": 3,
-      "title": "Processor Limit",
+      "title": "Go Processors",
       "type": "timeseries",
       "gridPos": {
         "x": 8,
@@ -142,7 +142,7 @@
       },
       "targets": [
         {
-          "expr": "go_config_gogc{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\",node=~\"$node\",component=~\"$component\"}",
+          "expr": "go_config_gogc_percent{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\",node=~\"$node\",component=~\"$component\"}",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
@@ -195,13 +195,13 @@
       },
       "targets": [
         {
-          "expr": "go_memory_used{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\",node=~\"$node\",component=~\"$component\",go_memory_type=~\"stack|other\"}",
+          "expr": "go_memory_used_bytes{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\",node=~\"$node\",component=~\"$component\",go_memory_type=~\"stack|other\"}",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "legendFormat": "{{go_memory_type}} {{service}} {{pod}}"
+          "legendFormat": "{{service}} {{go_memory_type}}"
         }
       ],
       "fieldConfig": {
@@ -236,7 +236,7 @@
       },
       "targets": [
         {
-          "expr": "rate(go_memory_allocated_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\",node=~\"$node\",component=~\"$component\"}[$__rate_interval])",
+          "expr": "rate(go_memory_allocated_bytes_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\",node=~\"$node\",component=~\"$component\"}[$__rate_interval])",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
@@ -277,7 +277,7 @@
       },
       "targets": [
         {
-          "expr": "go_memory_gc_goal{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\",node=~\"$node\",component=~\"$component\"}",
+          "expr": "go_memory_gc_goal_bytes{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\",node=~\"$node\",component=~\"$component\"}",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
@@ -355,24 +355,88 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "instant": true
+          "instant": true,
+          "format": "table",
+          "range": false
         }
       ],
       "fieldConfig": {
         "defaults": {
           "custom": {
-            "drawStyle": "line",
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "fillOpacity": 8,
-            "showPoints": "never"
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
           },
           "unit": "short",
           "decimals": 0
         },
         "overrides": []
       },
-      "options": {}
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      },
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {
+            "mode": "columns"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "Value": true,
+              "container": true,
+              "component": true,
+              "created_by_kind": true,
+              "created_by_name": true,
+              "host_ip": true,
+              "host_network": true,
+              "id": true,
+              "image": true,
+              "instance": true,
+              "job": true,
+              "namespace": true,
+              "node": true,
+              "pod": true,
+              "pod_ip": true,
+              "service_instance_id": true,
+              "uid": true,
+              "endpoint": true,
+              "cpu": true,
+              "name": true,
+              "deployment": true,
+              "vcs_revision": true,
+              "vcs_time": true
+            },
+            "includeByName": {},
+            "indexByName": {
+              "service": 0,
+              "goversion": 1,
+              "vcs_modified": 2
+            },
+            "renameByName": {
+              "service": "Service",
+              "goversion": "Go",
+              "vcs_modified": "Dirty"
+            }
+          }
+        }
+      ]
     }
   ],
   "refresh": "15s",
