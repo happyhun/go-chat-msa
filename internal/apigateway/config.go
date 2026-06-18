@@ -22,7 +22,6 @@ type GatewayConfig struct {
 	Server     config.HTTPServerConfig `mapstructure:"SERVER" validate:"required"`
 	HTTPClient config.HTTPClientConfig `mapstructure:"HTTP_CLIENT" validate:"required"`
 	GRPCClient config.GRPCClientConfig `mapstructure:"GRPC_CLIENT" validate:"required"`
-	CORS       config.CORSConfig       `mapstructure:"CORS" validate:"required"`
 	RateLimit  RateLimitConfig         `mapstructure:"RATE_LIMIT" validate:"required"`
 }
 

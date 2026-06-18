@@ -19,7 +19,6 @@ type Config struct {
 type WSGatewayConfig struct {
 	Server     config.HTTPWSServerConfig `mapstructure:"SERVER" validate:"required"`
 	HTTPClient config.HTTPClientConfig   `mapstructure:"HTTP_CLIENT" validate:"required"`
-	CORS       config.CORSConfig         `mapstructure:"CORS" validate:"required"`
 	TicketTTL  time.Duration             `mapstructure:"TICKET_TTL" validate:"required"`
 	RateLimit  RateLimitConfig           `mapstructure:"RATE_LIMIT" validate:"required"`
 }

@@ -72,10 +72,6 @@ type JWTConfig struct {
 	Secret string `mapstructure:"SECRET" validate:"required"`
 }
 
-type CORSConfig struct {
-	AllowedOrigins []string `mapstructure:"ALLOWED_ORIGINS" validate:"required,min=1"`
-}
-
 type InternalConfig struct {
 	Secret string `mapstructure:"SECRET" validate:"required"`
 }

@@ -54,7 +54,6 @@ func TestRouter_Ready(t *testing.T) {
 				MaxIdleConns:        10,
 				MaxIdleConnsPerHost: 10,
 			},
-			CORS: config.CORSConfig{AllowedOrigins: []string{"*"}},
 			RateLimit: RateLimitConfig{
 				Public:        config.RateLimitConfig{RPS: 100, Burst: 100, TTL: time.Minute},
 				Authenticated: config.RateLimitConfig{RPS: 100, Burst: 100, TTL: time.Minute},

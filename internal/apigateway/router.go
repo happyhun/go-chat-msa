@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math"
 	"net/http"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -107,28 +106,23 @@ func (r *Router) Wait() {
 }
 
 func (r *Router) registerRoutes() {
-	globalMws := []func(http.Handler) http.Handler{
-		middleware.CORSMiddleware(r.config.APIGateway.CORS.AllowedOrigins),
+	publicMws := []func(http.Handler) http.Handler{
+		middleware.RateLimitMiddleware(r.publicLimiter, middleware.IPKeyFunc()),
 	}
 
-	publicMws := slices.Concat(globalMws, []func(http.Handler) http.Handler{
-		middleware.RateLimitMiddleware(r.publicLimiter, middleware.IPKeyFunc()),
+	r.mux.HandleFunc("GET /health", func(w http.ResponseWriter, req *http.Request) {
+		httpio.WriteJSON(req.Context(), w, http.StatusOK, map[string]string{"status": "healthy"})
 	})
-
-	r.mux.Handle("GET /health", middleware.ChainMiddleware(
-		func(w http.ResponseWriter, req *http.Request) {
-			httpio.WriteJSON(req.Context(), w, http.StatusOK, map[string]string{"status": "healthy"})
-		}, globalMws...))
-	r.mux.Handle("GET /ready", middleware.ChainMiddleware(r.handleReady, globalMws...))
+	r.mux.HandleFunc("GET /ready", r.handleReady)
 	r.mux.Handle("POST /users", middleware.ChainMiddleware(r.handleCreateUser, publicMws...))
 	r.mux.Handle("POST /auth/token", middleware.ChainMiddleware(r.handleVerifyUser, publicMws...))
 	r.mux.Handle("POST /auth/token/refresh", middleware.ChainMiddleware(r.handleRefreshToken, publicMws...))
 	r.mux.Handle("DELETE /auth/token", middleware.ChainMiddleware(r.handleRevokeToken, publicMws...))
 
-	authMws := slices.Concat(globalMws, []func(http.Handler) http.Handler{
+	authMws := []func(http.Handler) http.Handler{
 		middleware.BearerAuthMiddleware(r.jwtSecret),
 		middleware.RateLimitMiddleware(r.authenticatedLimiter, middleware.ContextKeyFunc(middleware.UserIDKey)),
-	})
+	}
 
 	r.mux.Handle("DELETE /me", middleware.ChainMiddleware(r.handleDeleteUser, authMws...))
 	r.mux.Handle("GET /users", middleware.ChainMiddleware(r.handleBatchGetUsers, authMws...))

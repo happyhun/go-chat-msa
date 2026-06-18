@@ -55,8 +55,6 @@ API_GATEWAY:
     KEEPALIVE:
       TIME: "20s"
       TIMEOUT: "5s"
-  CORS:
-    ALLOWED_ORIGINS: [] # 오버라이드 필수
   RATE_LIMIT:
     PUBLIC:
       RPS: 5
@@ -75,8 +73,6 @@ WS_GATEWAY:
     TIMEOUT: "3s"
     MAX_IDLE_CONNS: 10000
     MAX_IDLE_CONNS_PER_HOST: 10000
-  CORS:
-    ALLOWED_ORIGINS: [] # 오버라이드 필수
   TICKET_TTL: "30s"
   RATE_LIMIT:
     PUBLIC:

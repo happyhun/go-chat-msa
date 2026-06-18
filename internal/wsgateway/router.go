@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -94,24 +93,19 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Router) registerRoutes() {
-	globalMws := []func(http.Handler) http.Handler{
-		middleware.CORSMiddleware(r.config.WSGateway.CORS.AllowedOrigins),
+	publicMws := []func(http.Handler) http.Handler{
+		middleware.RateLimitMiddleware(r.publicLimiter, middleware.IPKeyFunc()),
 	}
 
-	publicMws := slices.Concat(globalMws, []func(http.Handler) http.Handler{
-		middleware.RateLimitMiddleware(r.publicLimiter, middleware.IPKeyFunc()),
+	r.mux.HandleFunc("GET /health", func(w http.ResponseWriter, req *http.Request) {
+		httpio.WriteJSON(req.Context(), w, http.StatusOK, map[string]string{"status": "healthy"})
 	})
+	r.mux.HandleFunc("GET /ready", r.handleReady)
 
-	r.mux.Handle("GET /health", middleware.ChainMiddleware(
-		func(w http.ResponseWriter, req *http.Request) {
-			httpio.WriteJSON(req.Context(), w, http.StatusOK, map[string]string{"status": "healthy"})
-		}, globalMws...))
-	r.mux.Handle("GET /ready", middleware.ChainMiddleware(r.handleReady, globalMws...))
-
-	ticketMws := slices.Concat(globalMws, []func(http.Handler) http.Handler{
+	ticketMws := []func(http.Handler) http.Handler{
 		middleware.BearerAuthMiddleware(r.jwtSecret),
 		middleware.RateLimitMiddleware(r.wsEstablishLimiter, middleware.ContextKeyFunc(middleware.UserIDKey)),
-	})
+	}
 	r.mux.Handle("POST /ws/ticket", middleware.ChainMiddleware(r.handleCreateWSTicket, ticketMws...))
 	r.mux.Handle("GET /ws", middleware.ChainMiddleware(r.proxyWebSocket, publicMws...))
 
