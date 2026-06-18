@@ -1,40 +1,41 @@
 flowchart TB
-    subgraph ClientLayer ["Client Layer"]
+    subgraph ClientLayer ["클라이언트"]
         direction LR
-        Browser["Web Browser"]
+        Browser["브라우저"]
     end
 
-    subgraph Edge ["Edge Services"]
+    subgraph Edge ["외부 진입 계층"]
         direction LR
-        AGW["API Gateway<br/>REST API · auth middleware<br/>API version routing"]
-        WSGW["WS Gateway<br/>ticket API · WebSocket proxy<br/>room_id consistent hashing"]
+        FE["Frontend<br/>정적 화면 제공"]
+        AGW["API Gateway<br/>REST 계약<br/>인증 경계"]
+        WSGW["WS Gateway<br/>일회성 티켓 발급<br/>방 기준 연결 라우팅"]
     end
 
-    subgraph Core ["Core Services"]
+    subgraph Core ["도메인 서비스"]
         direction LR
-        UserSvc["User Service<br/>users · rooms · memberships<br/>refresh token state"]
-        ChatSvc["Chat Service<br/>message persistence<br/>history lookup"]
-        WSSvc["WebSocket Service<br/>sessions · hubs<br/>Room Lease · Sequence Floor<br/>persistence queue"]
+        UserSvc["User Service<br/>사용자 · 방 · 멤버십<br/>refresh token 상태"]
+        ChatSvc["Chat Service<br/>메시지 저장<br/>이력과 누락 메시지 조회"]
+        WSSvc["WebSocket Service<br/>방 처리기와 세션<br/>순번 부여 · 방 소유권"]
     end
 
-    subgraph Data ["Data Stores"]
+    subgraph Data ["상태 저장소"]
         direction LR
-        PG[("PostgreSQL<br/>users · rooms · memberships")]
-        MG[("MongoDB<br/>messages")]
-        RD[("Redis<br/>refresh token TTL<br/>ws tickets · rate limit<br/>Membership · Room Lease · Sequence Floor")]
+        PG[("PostgreSQL<br/>사용자 · 방 · 멤버십")]
+        MG[("MongoDB<br/>채팅 메시지")]
+        RD[("Redis<br/>만료되는 인증 상태<br/>연결 티켓 · 라우팅 후보<br/>방 소유권 · 순번 기준값")]
     end
 
-    Browser == "REST /api" ==> AGW
-    Browser == "ticket /ws-api" ==> WSGW
-    Browser == "WebSocket /ws" ==> WSGW
+    Browser == "화면 요청" ==> FE
+    Browser == "REST 요청" ==> AGW
+    Browser == "WebSocket 연결 준비" ==> WSGW
 
-    AGW -- "internal HTTP<br/>ticket delegation" --> WSGW
-    WSGW == "L7 proxy<br/>selected by room_id" ==> WSSvc
+    AGW -- "참여·퇴장 알림<br/>방 삭제 시 연결 정리" --> WSGW
+    WSGW == "담당 인스턴스 선택<br/>WebSocket 프록시" ==> WSSvc
 
-    AGW -- "gRPC" --> UserSvc
-    AGW -- "gRPC" --> ChatSvc
-    WSSvc -- "gRPC<br/>membership check" --> UserSvc
-    WSSvc -- "gRPC<br/>persist/history" --> ChatSvc
+    AGW -- "사용자 · 방 요청 위임" --> UserSvc
+    AGW -- "메시지 조회 위임" --> ChatSvc
+    WSSvc -- "방 멤버십 확인" --> UserSvc
+    WSSvc -- "메시지 저장 · 순번 조회" --> ChatSvc
 
     UserSvc --> PG
     UserSvc --> RD

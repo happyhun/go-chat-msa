@@ -1,66 +1,64 @@
 flowchart TB
-    Client["Client"]
+    Client["클라이언트"]
+
+    subgraph Control ["라우팅 제어 상태"]
+        direction LR
+        Membership[("라우팅 후보 목록<br/>주기 갱신과 만료")]
+        Lease[("방 소유권<br/>활성 처리기 보호")]
+        SeqFloor[("순번 기준값<br/>저장 실패 후 재사용 방지")]
+    end
 
     subgraph WSGateway ["WS Gateway"]
         direction TB
-        Router["Router"]
-        Hashring["Consistent Hashing"]
-        Watcher_G["Membership Watcher"]
+        Ticket["일회성 티켓 소비"]
+        GatewayRing["방 기준<br/>담당 인스턴스 선택"]
+        Target{"선택된 담당<br/>인스턴스"}
+        WatcherG["후보 목록 감시"]
     end
 
-    subgraph WS_Cluster ["WebSocket Service Deployment"]
-        direction TB
-        subgraph WSS1 ["Pod A"]
-            Reg1["Registry (self heartbeat)"]
-            Watcher1["Membership Watcher"]
-            Ring1["Hash Ring (self-check)"]
-            Router1["Router<br/>PrepareRegister before upgrade"]
-            Manager1["Manager<br/>Room Lease · Sequence Floor"]
-            Hub1["Hub<br/>sequence · fan-out · drain"]
+    subgraph Cluster ["WebSocket Service 클러스터"]
+        direction LR
+
+        subgraph PodA ["인스턴스 A"]
+            direction TB
+            RegistryA["후보 등록과 주기 갱신"]
+            RingA["담당 인스턴스 자기검증"]
+            ManagerA["방 관리자<br/>소유권 확보 · 이전 감지"]
+            HubA["방 처리기<br/>순번 부여 · 브로드캐스트"]
         end
-        subgraph WSS2 ["Pod B"]
-            Reg2["Registry (self heartbeat)"]
-            Watcher2["Membership Watcher"]
-            Ring2["Hash Ring (self-check)"]
-            Router2["Router<br/>PrepareRegister before upgrade"]
-            Manager2["Manager<br/>Room Lease · Sequence Floor"]
-            Hub2["Hub<br/>sequence · fan-out · drain"]
+
+        subgraph PodB ["인스턴스 B"]
+            direction TB
+            RegistryB["후보 등록과 주기 갱신"]
+            RingB["담당 인스턴스 자기검증"]
+            ManagerB["방 관리자<br/>소유권 확보 · 이전 감지"]
+            HubB["방 처리기<br/>순번 부여 · 브로드캐스트"]
         end
-        More["... more pods<br/>when scaled"]
     end
 
-    RedisMembers[("Redis<br/>wss:member:*")]
-    RedisLeases[("Redis<br/>wss:room:lease:{roomID}<br/>owner_addr · token")]
-    RedisSeqFloor[("Redis<br/>wss:room:seqfloor:{roomID}<br/>last issued sequence")]
+    Client == "WebSocket 연결 요청" ==> Ticket
+    Ticket ==> GatewayRing
+    GatewayRing ==> Target
+    Target -- "A" --> RingA
+    Target -- "B" --> RingB
 
-    Client == "WS Upgrade" ==> Router
+    RegistryA -- "후보 상태 갱신" --> Membership
+    RegistryB -- "후보 상태 갱신" --> Membership
+    Membership -- "변경 알림과 주기 재조회" --> WatcherG
+    Membership -- "변경 알림과 주기 재조회" --> RingA
+    Membership -- "변경 알림과 주기 재조회" --> RingB
 
-    Reg1 -- "SET membership_token EX 30s" --> RedisMembers
-    Reg2 -- "SET membership_token EX 30s" --> RedisMembers
+    WatcherG --> GatewayRing
+    RingA --> ManagerA
+    RingB --> ManagerB
 
-    RedisMembers -- "keyspace notify + SCAN" --> Watcher_G
-    RedisMembers -- "keyspace notify + SCAN" --> Watcher1
-    RedisMembers -- "keyspace notify + SCAN" --> Watcher2
+    ManagerA -- "확보 · 갱신 · 반납" --> Lease
+    ManagerB -- "확보 · 갱신 · 반납" --> Lease
+    ManagerA -- "시작 순번 결정에 사용" --> SeqFloor
+    ManagerB -- "시작 순번 결정에 사용" --> SeqFloor
 
-    Watcher_G -- "ring.Set(addrs)" --> Hashring
-    Watcher1 -- "ring.Set(addrs)" --> Ring1
-    Watcher2 -- "ring.Set(addrs)" --> Ring2
+    ManagerA --> HubA
+    ManagerB --> HubB
 
-    Router -- "Locate(roomID)" --> Hashring
-    Router == "프록시" ==> WSS1
-    Router == "프록시" ==> WSS2
-    Router -. "same logic" .-> More
-    WSS1 -- "self-check Locate(roomID)" --> Ring1
-    WSS2 -- "self-check Locate(roomID)" --> Ring2
-    Ring1 --> Router1
-    Ring2 --> Router2
-    Router1 -- "PrepareRegister" --> Manager1
-    Router2 -- "PrepareRegister" --> Manager2
-    Manager1 -- "acquire/renew/release" --> RedisLeases
-    Manager2 -- "acquire/renew/release" --> RedisLeases
-    Manager1 -- "read before Hub start<br/>SETMAX on Persist failure" --> RedisSeqFloor
-    Manager2 -- "read before Hub start<br/>SETMAX on Persist failure" --> RedisSeqFloor
-    Manager1 --> Hub1
-    Manager2 --> Hub2
-    Hub1 -. "persist drain 완료 후 lease release" .-> Manager1
-    Hub2 -. "persist drain 완료 후 lease release" .-> Manager2
+    RingA -. "담당이 아니면 새 티켓으로 재시도" .-> Client
+    RingB -. "담당이 아니면 새 티켓으로 재시도" .-> Client

@@ -1,30 +1,29 @@
 flowchart TB
-    Start([bootstrap.sh 시작])
+    Start([배포 부트스트랩 시작])
 
-    Env["K8S_ENV 선택<br/>dev · test · qa"]
-    NS["Namespace 결정<br/>go-chat-{env}"]
+    Env["환경 선택<br/>dev · test · qa"]
+    Namespace["환경별 네임스페이스 준비"]
 
-    Foundation["1. foundation apply<br/>Secret · Postgres · Mongo · Redis"]
-    DataWait["2. data layer rollout wait<br/>Postgres/Mongo/Redis Ready"]
+    Data["데이터 계층 준비<br/>PostgreSQL · MongoDB · Redis"]
+    DataReady["데이터 계층 준비 확인"]
 
-    ObservabilityCM["3. observability ConfigMap 생성<br/>Alloy/Prometheus/Loki/Tempo/Pyroscope/Grafana 설정"]
-    Observability["4. observability apply<br/>Alloy · Prometheus · Grafana<br/>Loki · Tempo · Pyroscope<br/>qa: Prometheus Adapter"]
-    ObsWait["5. observability rollout wait<br/>telemetry 수신 대상 준비"]
+    Observability["관측성 계층 준비<br/>로그 · 메트릭 · 트레이스 · 프로파일"]
+    ObservabilityReady["관측성 수신 경로 확인"]
 
-    MigrationCM["6. migration ConfigMap 생성<br/>db/migrations/postgres<br/>db/migrations/mongo"]
-    MigrationJob["7. migration Job 재생성<br/>postgres-migrate · mongo-migrate"]
-    MigrationWait{"8. migration 완료?"}
+    Migrations["스키마와 인덱스 적용<br/>앱 시작 전 데이터 계약 확정"]
+    MigrationCheck{"마이그레이션 성공?"}
 
-    OpenAPICM["9. OpenAPI · k6 ConfigMap 생성<br/>Swagger UI spec · test/load scripts"]
-    Apps["10. apps apply<br/>App ConfigMap · Deployment · Service · Ingress<br/>qa: websocket-service HPA"]
-    CoreRestart["11. user/chat rollout restart/wait<br/>gRPC backend 먼저 안정화"]
-    WSRestart["12. websocket rollout restart/wait<br/>새 gRPC endpoint 기준 연결"]
-    EdgeRestart["13. edge rollout restart/wait"]
-    Done([K8s dev/test/qa ready])
+    Contracts["외부 계약과 검증 자료 배포<br/>OpenAPI · 부하 시나리오"]
+    Apps["애플리케이션 워크로드 배포"]
+    Core["도메인 서비스 안정화<br/>User · Chat"]
+    Realtime["실시간 연결 계층 안정화<br/>WebSocket Service"]
+    Edge["외부 진입 계층 공개<br/>Gateway · Frontend · Docs"]
+    Done([환경 준비 완료])
 
-    Fail["중단<br/>describe/logs 확인 후 수정"]
+    Fail["중단<br/>원인 확인 후 재시도"]
 
-    Start --> Env --> NS --> Foundation --> DataWait --> ObservabilityCM --> Observability --> ObsWait
-    ObsWait --> MigrationCM --> MigrationJob --> MigrationWait
-    MigrationWait -- "yes" --> OpenAPICM --> Apps --> CoreRestart --> WSRestart --> EdgeRestart --> Done
-    MigrationWait -- "no" --> Fail
+    Start --> Env --> Namespace --> Data --> DataReady
+    DataReady --> Observability --> ObservabilityReady
+    ObservabilityReady --> Migrations --> MigrationCheck
+    MigrationCheck -- "예" --> Contracts --> Apps --> Core --> Realtime --> Edge --> Done
+    MigrationCheck -- "아니오" --> Fail

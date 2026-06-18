@@ -1,81 +1,69 @@
 flowchart TB
-    subgraph External ["External Layer"]
+    subgraph External ["외부 사용자"]
         direction LR
-        Client["Web Browser"]
+        Client["브라우저"]
     end
 
-    subgraph K8s ["Kubernetes Namespace (dev/test/qa)"]
+    subgraph K8s ["Kubernetes 환경"]
         direction TB
 
-        Ingress["Ingress<br/>/ · /api · /ws-api · /ws"]
+        Ingress["Ingress<br/>화면 · REST · WebSocket · 운영 화면 진입점"]
 
-        subgraph Edge ["Edge Deployments"]
+        subgraph Edge ["외부 진입 워크로드"]
             direction LR
-            FE["Frontend Deployment<br/>replicas: 1"]
-            Docs["Swagger UI Deployment<br/>OpenAPI docs"]
-            WSGW["WS Gateway Deployment<br/>dev/qa=1, test=2"]
-            AGW["API Gateway Deployment<br/>dev/qa=1, test=2"]
-
-            AGW -- "Internal HTTP" --> WSGW
+            FE["Frontend<br/>정적 화면"]
+            Docs["Swagger UI<br/>API 계약 확인"]
+            AGW["API Gateway<br/>인증 · REST 요청 라우팅"]
+            WSGW["WS Gateway<br/>티켓 발급 · 방 기준 연결 라우팅"]
         end
 
-        subgraph Core ["Core Deployments"]
+        subgraph Core ["도메인 워크로드"]
             direction LR
-            WSS["WebSocket Service Deployment<br/>dev/test=2, qa=HPA 1→2<br/>Room Lease · Sequence Floor · HPA Handoff"]
-            US["User Service Deployment<br/>Headless Service<br/>dev/qa=1, test=2"]
-            CS["Chat Service Deployment<br/>Headless Service<br/>dev/qa=1, test=2"]
+            US["User Service<br/>사용자 · 방 · 멤버십"]
+            CS["Chat Service<br/>메시지 저장 · 조회"]
+            WSS["WebSocket Service<br/>방 처리기 · 세션<br/>소유권 이전 · 순번 정합성"]
         end
 
-        subgraph Data ["Local Data Layer"]
+        subgraph Data ["로컬 데이터 계층"]
             direction LR
-            PG[("PostgreSQL<br/>Deployment")]
-            MG[("MongoDB<br/>Deployment")]
-            RD[("Redis<br/>Deployment<br/>Membership · Room Lease · Sequence Floor")]
+            PG[("PostgreSQL<br/>관계형 기준 데이터")]
+            MG[("MongoDB<br/>채팅 메시지")]
+            RD[("Redis<br/>만료 상태와 라우팅 제어 상태")]
         end
 
-        subgraph Observability ["Observability Layer"]
+        subgraph Observability ["관측성 계층"]
             direction LR
-            Alloy["Alloy"]
-            Prometheus[("Prometheus")]
-            Loki[("Loki")]
-            Tempo[("Tempo")]
-            Pyroscope[("Pyroscope")]
-            Grafana["Grafana"]
-            Adapter["Prometheus Adapter<br/>qa custom metrics"]
-
-            Alloy -- "metrics" --> Prometheus
-            Alloy -- "logs" --> Loki
-            Alloy -- "traces" --> Tempo
-            Prometheus -- "gochat_ws_connections_active" --> Adapter
-            Prometheus & Loki & Tempo & Pyroscope --> Grafana
+            Alloy["Alloy<br/>수집기"]
+            Prometheus[("Prometheus<br/>메트릭")]
+            Loki[("Loki<br/>로그")]
+            Tempo[("Tempo<br/>트레이스")]
+            Pyroscope[("Pyroscope<br/>프로파일")]
+            Grafana["Grafana<br/>대시보드"]
+            Adapter["Custom Metrics Adapter<br/>활성 연결 기반 HPA"]
         end
 
-        subgraph Load ["Load Jobs"]
+        subgraph Verification ["검증 작업"]
             direction LR
-            C10K["dev-load<br/>k6-c10k Job x4"]
-            HPAK6["qa-load<br/>k6-hpa Job"]
+            Load["부하 테스트<br/>연결 수와 메시지 처리량"]
+            HPAProbe["스케일아웃 검증<br/>이전 중 순번 정합성"]
         end
 
-        subgraph Autoscaling ["Autoscaling"]
-            direction LR
-            HPA["HPA websocket-service<br/>qa only · min=1 max=2"]
-        end
+        HPA["WebSocket Service HPA<br/>qa 환경에서 활성 연결 기준"]
     end
 
-    Client == "HTTP / WebSocket" ==> Ingress
-    Ingress == "/" ==> FE
-    Ingress == "/api" ==> AGW
-    Ingress == "/ws-api, /ws" ==> WSGW
-    Ingress == "/docs" ==> Docs
-    Ingress == "/grafana" ==> Grafana
+    Client == "브라우저 트래픽" ==> Ingress
+    Ingress ==> FE
+    Ingress ==> AGW
+    Ingress ==> WSGW
+    Ingress ==> Docs
+    Ingress ==> Grafana
 
-    WSGW -- "L7 Proxy<br/>room_id hashing<br/>Pod IP direct" --> WSS
-
-    AGW -- "gRPC" --> US
-    AGW -- "gRPC" --> CS
-
-    WSS -- "gRPC" --> US
-    WSS -- "gRPC" --> CS
+    AGW -- "사용자 · 방 요청" --> US
+    AGW -- "메시지 조회" --> CS
+    AGW -- "참여·퇴장 알림<br/>방 삭제 시 연결 정리" --> WSGW
+    WSGW == "담당 인스턴스로 프록시" ==> WSS
+    WSS -- "멤버십 확인" --> US
+    WSS -- "메시지 저장 · 순번 조회" --> CS
 
     US --> PG
     CS --> MG
@@ -83,18 +71,20 @@ flowchart TB
     WSGW --> RD
     WSS --> RD
 
-    Adapter -. "custom.metrics.k8s.io" .-> HPA
-    HPA -. "scaleTargetRef" .-> WSS
-    C10K -. "internal HTTP/WebSocket" .-> AGW
-    C10K -. "internal HTTP/WebSocket" .-> WSGW
-    HPAK6 -. "internal HTTP/WebSocket" .-> AGW
-    HPAK6 -. "internal HTTP/WebSocket" .-> WSGW
+    Alloy -. "Pod 로그 수집" .-> AGW & WSGW & WSS & US & CS
+    AGW & WSGW & WSS & US & CS -. "메트릭 · 트레이스 전송" .-> Alloy
+    AGW & WSGW & WSS & US & CS -. "프로파일" .-> Pyroscope
+    Alloy --> Prometheus
+    Alloy --> Loki
+    Alloy --> Tempo
+    Prometheus --> Adapter
+    Prometheus --> Grafana
+    Loki --> Grafana
+    Tempo --> Grafana
+    Pyroscope --> Grafana
 
-    Alloy -. "pull: pod logs" .-> AGW
-    Alloy -. "pull: pod logs" .-> WSGW
-    Alloy -. "pull: pod logs" .-> WSS
-    Alloy -. "pull: pod logs" .-> US
-    Alloy -. "pull: pod logs" .-> CS
-
-    AGW & WSGW & WSS & US & CS -. "push: traces, metrics" .-> Alloy
-    AGW & WSGW & WSS & US & CS -. "push: profiles" .-> Pyroscope
+    Adapter -. "활성 연결 지표" .-> HPA
+    HPA -. "인스턴스 수 조정" .-> WSS
+    Load -. "공개 진입점 검증" .-> AGW
+    Load -. "실시간 연결 검증" .-> WSGW
+    HPAProbe -. "스케일아웃 중 메시지 정합성 검증" .-> WSGW

@@ -1,43 +1,47 @@
 sequenceDiagram
     autonumber
 
-    participant Client as Client
+    participant Client as 클라이언트
     participant AGW as API Gateway
     participant UserSvc as User Service
-    participant Redis as Redis Lua Store
+    participant Redis as Redis
     participant DB as PostgreSQL
 
-    Note over Client, DB: 1. 정상 refresh rotation
-    Client->>AGW: POST /auth/refresh<br/>refresh token cookie
-    AGW->>UserSvc: RefreshToken(old_token)
-    UserSvc->>Redis: EVAL rotate(old_digest, new_digest, ttl)
-    Redis->>Redis: active old 삭제
-    Redis->>Redis: used old tombstone 생성<br/>남은 TTL 유지
-    Redis->>Redis: active new 생성<br/>auth:rt:active:{new_digest}
-    Redis-->>UserSvc: userID 반환
-    UserSvc->>DB: GetUserByID(userID)
-    DB-->>UserSvc: active user
-    UserSvc-->>AGW: new access token + new refresh token
-    AGW-->>Client: access token 반환<br/>refresh cookie 교체
+    Note over Client, DB: 1. 정상 refresh token rotation
+    Client->>AGW: 토큰 재발급 요청
+    AGW->>UserSvc: refresh token 전달
+    UserSvc->>Redis: refresh token 유효 상태 확인
+    Redis-->>UserSvc: 유효한 사용자 식별자 반환
+    UserSvc->>DB: 사용자 존재 확인
+    DB-->>UserSvc: 사용자 정보 반환
+    UserSvc->>UserSvc: 새 access token과 refresh token 생성
+    UserSvc->>Redis: 기존 토큰 사용 완료 처리<br/>새 refresh token 등록
+    Redis-->>UserSvc: 회전 완료
+    UserSvc-->>AGW: 새 토큰 쌍 반환
+    AGW-->>Client: access token 반환<br/>refresh token 쿠키 교체
 
-    Note over Client, Redis: 2. 이미 사용된 old token 재사용 감지
-    Client->>AGW: POST /auth/refresh<br/>old refresh token 재사용
-    AGW->>UserSvc: RefreshToken(old_token)
-    UserSvc->>Redis: EVAL rotate(old_digest, another_new_digest, ttl)
-    Redis->>Redis: used old tombstone 발견
-    Redis->>Redis: auth:rt:user:{userID} 조회
-    Redis->>Redis: 해당 사용자의 active token 전부 삭제
-    Redis-->>UserSvc: reuse detected
-    UserSvc-->>AGW: Unauthenticated
-    AGW-->>Client: 401 Unauthorized<br/>재로그인 필요
+    Note over Client, Redis: 2. 사용 완료된 토큰 재사용 감지
+    Client->>AGW: 이전 refresh token으로 재발급 요청
+    AGW->>UserSvc: refresh token 전달
+    UserSvc->>Redis: refresh token 유효 상태 확인
+    Redis->>Redis: 사용 완료 표식 확인
+    Redis->>Redis: 해당 사용자의 유효한 refresh token 모두 폐기
+    Redis-->>UserSvc: 재사용 감지
+    UserSvc-->>AGW: 인증 실패
+    AGW-->>Client: 재로그인 필요
 
-    Note over Client, Redis: 3. 로그아웃과 회원탈퇴
-    Client->>AGW: POST /auth/logout
-    AGW->>UserSvc: RevokeToken(refresh_token)
-    UserSvc->>Redis: active digest 삭제
-    Redis-->>UserSvc: revoked
+    Note over Client, Redis: 3. 세션 종료와 사용자 삭제
+    Client->>AGW: 로그아웃 요청
+    AGW->>UserSvc: 현재 refresh token 폐기 요청
+    UserSvc->>Redis: 현재 토큰 폐기
+    Redis-->>UserSvc: 폐기 완료
+    UserSvc-->>AGW: 로그아웃 완료
+    AGW-->>Client: refresh token 쿠키 만료
 
-    AGW->>UserSvc: DeleteUser(userID)
-    UserSvc->>DB: 방 나가기 처리 + users row 삭제
-    UserSvc->>Redis: RevokeUser(userID)
-    Redis->>Redis: auth:rt:user:{userID} 기반 active token 삭제
+    Client->>AGW: 회원탈퇴 요청<br/>비밀번호 재확인
+    AGW->>UserSvc: 사용자 삭제 요청
+    UserSvc->>DB: 사용자와 비밀번호 확인
+    UserSvc->>Redis: 해당 사용자의 refresh token 모두 폐기
+    UserSvc->>DB: 방 나가기 처리와 사용자 삭제
+    UserSvc-->>AGW: 삭제 완료
+    AGW-->>Client: 세션 종료

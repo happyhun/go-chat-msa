@@ -1,63 +1,46 @@
 flowchart TB
-    Base["deploy/k8s/base<br/>공통 리소스 원형"]
+    Base["공통 리소스 원형<br/>워크로드 · 서비스 · 진입점 · 설정"]
+    LoadBase["부하 검증 작업 원형"]
 
-    Base --> Common["공통 정의<br/>Deployment · Service · Ingress<br/>ConfigMap · Secret"]
-    Base --> LoadBase["load<br/>k6 Job 원형"]
-
-    Common --> Dev["overlays/dev<br/>로컬 개발 · C10K 부하"]
-    Common --> Test["overlays/test<br/>자동 E2E 정합성"]
-    Common --> QA["overlays/qa<br/>WebSocket HPA 정합성"]
-
-    subgraph DevPhases ["dev phase overlays"]
+    subgraph Environments ["환경별 목적"]
         direction LR
-        DevFoundation["foundation<br/>Secret · data layer"]
-        DevObs["observability<br/>Grafana stack"]
-        DevMig["migrations<br/>DB schema Job"]
-        DevApps["apps<br/>설정 + 앱 workload"]
-        DevLoad["load<br/>k6-c10k Job"]
+        Dev["dev<br/>로컬 개발과 C10K 부하 확인"]
+        Test["test<br/>다중 인스턴스 E2E 정합성"]
+        QA["qa<br/>WebSocket HPA와 소유권 이전 검증"]
     end
 
-    subgraph TestPhases ["test phase overlays"]
+    subgraph Phases ["공통 배포 단계"]
         direction LR
-        TestFoundation["foundation<br/>Secret · data layer"]
-        TestObs["observability<br/>Grafana stack"]
-        TestMig["migrations<br/>DB schema Job"]
-        TestApps["apps<br/>replicas=2 정합성 gate"]
+        Foundation["foundation<br/>비밀값과 데이터 계층"]
+        Observability["observability<br/>Grafana Stack"]
+        Migrations["migrations<br/>스키마와 인덱스"]
+        Apps["apps<br/>애플리케이션 워크로드"]
+        Load["load<br/>부하와 정합성 검증"]
     end
 
-    subgraph QAPhases ["qa phase overlays"]
-        direction LR
-        QAFoundation["foundation<br/>Secret · data layer"]
-        QAObs["observability<br/>Grafana stack + Prometheus Adapter"]
-        QAMig["migrations<br/>DB schema Job"]
-        QAApps["apps<br/>WebSocket HPA"]
-        QALoad["load<br/>k6-hpa Job"]
-    end
+    Base --> Dev
+    Base --> Test
+    Base --> QA
+    LoadBase --> Load
 
-    Dev --> DevFoundation
-    Dev --> DevObs
-    Dev --> DevMig
-    Dev --> DevApps
-    Dev --> DevLoad
+    Dev --> Foundation
+    Dev --> Observability
+    Dev --> Migrations
+    Dev --> Apps
+    Dev --> Load
 
-    Test --> TestFoundation
-    Test --> TestObs
-    Test --> TestMig
-    Test --> TestApps
+    Test --> Foundation
+    Test --> Observability
+    Test --> Migrations
+    Test --> Apps
 
-    QA --> QAFoundation
-    QA --> QAObs
-    QA --> QAMig
-    QA --> QAApps
-    QA --> QALoad
+    QA --> Foundation
+    QA --> Observability
+    QA --> Migrations
+    QA --> Apps
+    QA --> Load
 
-    TestApps --> FixedReplicas["fixed-replicas patch<br/>api/ws/user/chat/websocket = 2"]
-    TestApps --> TestConfig["override.yaml: ENV=k8s-test<br/>go-chat-test namespace"]
-    DevApps --> DevConfig["override.yaml: ENV=k8s-dev<br/>go-chat-dev namespace"]
-    DevApps --> DevReplicas["websocket-service replicas=2"]
-    LoadBase --> DevLoad
-    LoadBase --> QALoad
-    DevLoad --> DevLoadJob["Indexed Job<br/>k6 Pod x4"]
-    QAApps --> QAHPA["websocket-service HPA<br/>min=1 max=2<br/>metric=active connections"]
-    QAObs --> CustomMetrics["custom.metrics.k8s.io<br/>gochat_ws_connections_active"]
-    QALoad --> HPAJob["hpa-test.js<br/>scale-out 중 sequence/gap 검증"]
+    Test --> TestGate["고정 다중 인스턴스<br/>라우팅과 메시지 정합성 검증 관문"]
+    QA --> QAHPA["활성 연결 기준 HPA<br/>스케일아웃 중 방 소유권 이전"]
+    QA --> QAAdapter["사용자 지표 경로<br/>HPA가 보는 지표 검증"]
+    Dev --> DevLoad["개발 부하 검증<br/>대량 연결과 메시지 핵심 경로 확인"]

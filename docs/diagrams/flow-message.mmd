@@ -1,64 +1,49 @@
 flowchart TB
-    Client["Client"]
+    Client["클라이언트"]
 
-    subgraph Manager ["Manager"]
+    subgraph WSS ["WebSocket Service"]
         direction TB
-        ManagerLoop(("Manager Actor Loop"))
-        PersistCh[/"Persist Channel"/]
-        RetryCh[/"Retry Channel"/]
-        RetryWorker("Retry Worker")
+        Session["세션<br/>메시지 형식 검증<br/>도배 제한"]
+        Hub["방 처리기<br/>사용자별 연결 관리"]
+        Dedup{"이미 처리한<br/>클라이언트 메시지인가?"}
+        Drop["중복 요청 무시"]
+        Capacity{"저장 대기 슬롯<br/>확보 가능한가?"}
+        Reject["일시 오류 반환<br/>순번 미발급 · 브로드캐스트 없음"]
+        Sequence["방 순번 발급<br/>단일 처리기에서 단조 증가"]
+        Persist["저장 작업 등록<br/>전달할 메시지를 추적"]
+        Fanout["방 안의 세션에 전달"]
+        Drain["소유권 이전·종료 시<br/>저장 완료까지 대기"]
 
-        subgraph WorkerPool ["Batch Worker Pool"]
-            direction LR
-            W1("Worker 1")
-            W2("Worker 2")
+        subgraph Persistence ["저장 파이프라인"]
+            direction TB
+            Worker["저장 워커<br/>배치 저장"]
+            Result{"저장 결과"}
+            Retry["재시도 대기<br/>지수 백오프"]
+            Ack["저장 완료 처리"]
+            Conflict["정합성 오류 기록<br/>중복 순번은 운영 신호"]
         end
     end
 
-    subgraph Hub ["Hub"]
-        direction TB
-        HubLoop(("Hub Actor Loop"))
-        Idempotency["Dedup LRU"]
-        Seq["room sequence_number"]
-        Pending["pendingPersist"]
-    end
+    ChatSvc["Chat Service"]
+    Others["방 안의 다른 세션"]
 
-    subgraph Session ["Session"]
-        direction TB
-        Socket(("WebSocket"))
-        RP("Read Pump")
-        RateLimit{"Rate Limiter"}
+    Client == "채팅 메시지 전송" ==> Session
+    Session ==> Hub
+    Hub ==> Dedup
+    Dedup -- "예" --> Drop
+    Dedup -- "아니오" --> Capacity
+    Capacity -- "아니오" --> Reject --> Client
+    Capacity -- "예" --> Sequence
+    Sequence --> Persist
+    Persist ==> Fanout
+    Fanout ==> Client
+    Fanout ==> Others
+    Persist --> Worker --> ChatSvc --> Result
 
-        WP("Write Pump")
-        Buffer[/"Send Channel"/]
-    end
+    Result -- "성공 또는 이미 저장됨" --> Ack
+    Result -- "일시 실패" --> Retry --> Worker
+    Result -- "재시도 불가" --> Conflict
 
-    ChatService["Chat Service"]
-
-    Client == "메시지 전송" ==> Socket
-    Socket ==> RP
-    RP ==> RateLimit
-    RateLimit ==> HubLoop
-
-    ManagerLoop -- "시스템 메시지 주입" --> HubLoop
-
-    HubLoop -. "client_msg_id 중복 검사" .-> Idempotency
-    HubLoop -- "persist slot reserve" --> PersistCh
-    PersistCh -. "queue full" .-> RP
-    RP -. "transient error<br/>sequence 증가 없음" .-> Socket
-    HubLoop -. "slot 확보 후 sequence++" .-> Seq
-    HubLoop ==>|"fan-out"| Buffer
-    Buffer ==> WP
-    WP ==> Socket
-    Socket ==> Client
-
-    HubLoop -- "저장 task + ack callback" --> PersistCh
-    HubLoop -. "drain 시 0까지 대기" .-> Pending
-    PersistCh --> WorkerPool
-    WorkerPool -- "배치 저장" --> ChatService
-    WorkerPool -. "성공 / idempotent success" .-> Pending
-    WorkerPool -. "sequence conflict<br/>split-brain metric" .-> Pending
-    WorkerPool -. "retryable 실패" .-> RetryCh
-    RetryCh -. "재시도 대기" .-> RetryWorker
-    RetryWorker -. "지수 백오프 재시도" .-> ChatService
-    RetryWorker -. "성공 / 최종 실패 ack" .-> Pending
+    Persist -. "대기 중인 저장 작업" .-> Drain
+    Ack -. "완료 감소" .-> Drain
+    Conflict -. "실패 확정" .-> Drain
