@@ -7,14 +7,6 @@ resources:
   - ../../../base/foundation
 
 patches:
-  - patch: |-
-      apiVersion: v1
-      kind: Secret
-      metadata:
-        name: gochat-secret
-      stringData:
-        APP_JWT_SECRET: e2e_secret
-        APP_INTERNAL_SECRET: e2e_internal_secret
   - target:
       kind: Deployment
       name: postgres
