@@ -7,7 +7,7 @@ info:
     url: https://choosealicense.com/no-permission/
   description: |
     Go Chat MSA 프로젝트의 REST API 명세서입니다.
-    - 에러 응답은 모두 RFC 7807 (Problem Details) 형식을 따릅니다.
+    - 에러 응답은 모두 RFC 9457 (Problem Details) 형식을 따릅니다.
     - 보안을 위해 JWT(Access Token)와 HttpOnly Cookie(Refresh Token)를 혼합하여 사용합니다.
     - 웹소켓 연결은 1회용 단기 티켓 기반으로 수행됩니다.
 
@@ -825,7 +825,7 @@ components:
     # Common
     ProblemDetails:
       type: object
-      description: 에러 발생 시 반환되는 표준 형식 (RFC 7807)
+      description: 에러 발생 시 반환되는 표준 형식 (RFC 9457)
       properties:
         type:
           type: string
