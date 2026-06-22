@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useId, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 
 interface Props {
   title: string
@@ -21,33 +21,63 @@ export default function ConfirmModal({
   onConfirm,
   onCancel,
 }: Props) {
+  const titleId = useId()
+  const descriptionId = useId()
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const cancelRef = useRef<HTMLButtonElement>(null)
   const confirmRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
-    confirmRef.current?.focus()
-  }, [])
+    if (danger) cancelRef.current?.focus()
+    else confirmRef.current?.focus()
+  }, [danger])
 
   useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onCancel()
+    const handleKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === 'Escape' && !loading) onCancel()
     }
     document.addEventListener('keydown', handleKey)
     return () => document.removeEventListener('keydown', handleKey)
-  }, [onCancel])
+  }, [loading, onCancel])
+
+  const handleFocusTrap = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'Tab') return
+    const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
+      'button, [tabindex]:not([tabindex="-1"])',
+    )
+    if (!focusable || focusable.length === 0) return
+    const first = focusable[0]
+    const last = focusable[focusable.length - 1]
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault()
+      last.focus()
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault()
+      first.focus()
+    }
+  }
 
   return (
     <div
       className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
-      onClick={onCancel}
+      onClick={() => !loading && onCancel()}
     >
       <div
-        className="bg-white rounded-2xl p-6 w-full max-w-xs shadow-xl"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
+        className="bg-white rounded-lg p-6 w-full max-w-xs shadow-xl"
         onClick={(e) => e.stopPropagation()}
+        onKeyDown={handleFocusTrap}
       >
-        <h3 className="text-base font-bold text-gray-900">{title}</h3>
-        <p className="mt-2 text-sm text-gray-500">{description}</p>
+        <h3 id={titleId} className="text-base font-bold text-gray-900">{title}</h3>
+        <p id={descriptionId} className="mt-2 text-sm text-gray-500">{description}</p>
         <div className="flex gap-2 mt-5">
           <button
+            ref={cancelRef}
+            type="button"
             onClick={onCancel}
             disabled={loading}
             className="flex-1 py-2.5 border border-gray-300 rounded-lg text-sm text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50"
@@ -56,6 +86,7 @@ export default function ConfirmModal({
           </button>
           <button
             ref={confirmRef}
+            type="button"
             onClick={onConfirm}
             disabled={loading}
             className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 ${

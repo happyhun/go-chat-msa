@@ -1,23 +1,36 @@
-import { useState } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
+import { useId, useState } from 'react'
+import { useNavigate, Link, useLocation } from 'react-router-dom'
 import { login, ApiError } from '../api/client'
 import { useAuth } from '../context/auth'
 
 export default function LoginPage() {
-  const [username, setUsername] = useState('')
+  const location = useLocation()
+  const locationState = location.state as { username?: string; notice?: string } | null
+  const usernameId = useId()
+  const passwordId = useId()
+  const errorId = useId()
+  const noticeId = useId()
+  const [username, setUsername] = useState(locationState?.username ?? '')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState(locationState?.notice ?? '')
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
   const { doLogin } = useAuth()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    const userName = username.trim()
+    if (!userName) {
+      setError('사용자 이름을 입력해 주세요.')
+      return
+    }
     setError('')
+    setNotice('')
     setLoading(true)
     try {
-      const res = await login(username, password)
-      doLogin(res.access_token, res.user_id, username)
+      const res = await login(userName, password)
+      doLogin(res.access_token, res.user_id, userName)
       navigate('/lobby')
     } catch (err) {
       if (err instanceof ApiError) setError(err.message)
@@ -31,7 +44,7 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <div className="w-14 h-14 bg-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
+          <div className="w-14 h-14 bg-indigo-600 rounded-lg flex items-center justify-center mx-auto mb-4">
             <svg className="w-7 h-7 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
             </svg>
@@ -40,14 +53,19 @@ export default function LoginPage() {
           <p className="text-sm text-gray-500 mt-1">계정에 로그인하세요</p>
         </div>
 
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+        <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-6">
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">사용자 이름</label>
+              <label htmlFor={usernameId} className="block text-sm font-medium text-gray-700 mb-1">사용자 이름</label>
               <input
+                id={usernameId}
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
+                autoComplete="username"
+                disabled={loading}
+                aria-invalid={Boolean(error)}
+                aria-describedby={error ? errorId : notice ? noticeId : undefined}
                 className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm"
                 placeholder="사용자 이름을 입력하세요"
                 required
@@ -55,17 +73,27 @@ export default function LoginPage() {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">비밀번호</label>
+              <label htmlFor={passwordId} className="block text-sm font-medium text-gray-700 mb-1">비밀번호</label>
               <input
+                id={passwordId}
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
+                disabled={loading}
+                aria-invalid={Boolean(error)}
+                aria-describedby={error ? errorId : undefined}
                 className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm"
                 placeholder="비밀번호를 입력하세요"
                 required
               />
             </div>
-            {error && <p className="text-red-500 text-sm">{error}</p>}
+            {notice && (
+              <p id={noticeId} role="status" className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">
+                {notice}
+              </p>
+            )}
+            {error && <p id={errorId} role="alert" aria-live="polite" className="text-red-500 text-sm">{error}</p>}
             <button
               type="submit"
               disabled={loading}
