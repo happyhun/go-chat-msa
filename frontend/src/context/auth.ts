@@ -4,6 +4,7 @@ export interface AuthState {
   userId: string | null
   username: string | null
   isLoggedIn: boolean
+  initializing: boolean
   doLogin: (token: string, userId: string, username: string) => void
   doLogout: () => void
 }

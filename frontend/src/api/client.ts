@@ -3,7 +3,19 @@ import type { ProblemDetails } from '../types'
 let accessToken: string | null = null
 let currentUserId: string | null = null
 let currentUsername: string | null = null
-let refreshPromise: Promise<boolean> | null = null
+let refreshPromise: Promise<AuthSession | null> | null = null
+
+export interface AuthSession {
+  accessToken: string
+  userId: string
+  username: string
+}
+
+interface AccessTokenPayload {
+  sub?: string
+  username?: string
+  exp?: number
+}
 
 export function getAccessToken() {
   return accessToken
@@ -28,6 +40,10 @@ export function restoreAuth() {
   accessToken = sessionStorage.getItem('access_token')
   currentUserId = sessionStorage.getItem('user_id')
   currentUsername = sessionStorage.getItem('username')
+  if (accessToken && (!currentUserId || !currentUsername)) {
+    const session = sessionFromAccessToken(accessToken)
+    if (session) setAuth(session.accessToken, session.userId, session.username)
+  }
 }
 
 export function getCurrentUserId() {
@@ -36,6 +52,47 @@ export function getCurrentUserId() {
 
 export function getCurrentUsername() {
   return currentUsername
+}
+
+function decodeBase64Url(value: string) {
+  const normalized = value.replace(/-/g, '+').replace(/_/g, '/')
+  const padded = normalized.padEnd(normalized.length + (4 - (normalized.length % 4)) % 4, '=')
+  const binary = atob(padded)
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0))
+  return new TextDecoder().decode(bytes)
+}
+
+function parseAccessToken(token: string): AccessTokenPayload | null {
+  const payload = token.split('.')[1]
+  if (!payload) return null
+  try {
+    return JSON.parse(decodeBase64Url(payload)) as AccessTokenPayload
+  } catch {
+    return null
+  }
+}
+
+export function isAccessTokenExpired(token: string, skewSeconds = 30) {
+  const payload = parseAccessToken(token)
+  if (!payload?.exp) return true
+  return payload.exp <= Math.floor(Date.now() / 1000) + skewSeconds
+}
+
+function sessionFromAccessToken(token: string): AuthSession | null {
+  const payload = parseAccessToken(token)
+  if (!payload?.sub || !payload.username) return null
+  return {
+    accessToken: token,
+    userId: payload.sub,
+    username: payload.username,
+  }
+}
+
+function setAuthFromAccessToken(token: string): AuthSession | null {
+  const session = sessionFromAccessToken(token)
+  if (!session) return null
+  setAuth(session.accessToken, session.userId, session.username)
+  return session
 }
 
 const errorMessages: Record<string, string> = {
@@ -84,7 +141,11 @@ const statusFallback: Record<number, string> = {
   504: '서버 응답 시간이 초과되었습니다.',
 }
 
-function translateError(status: number, detail: string): string {
+function translateError(status: number, detail: string, retryAfterSeconds?: number | null): string {
+  if (status === 429 && retryAfterSeconds && retryAfterSeconds > 0) {
+    return `요청이 너무 많습니다. ${retryAfterSeconds}초 후 다시 시도해 주세요.`
+  }
+
   const key = detail.toLowerCase().trim()
   for (const [pattern, msg] of Object.entries(errorMessages)) {
     if (key === pattern || key.includes(pattern)) return msg
@@ -92,19 +153,36 @@ function translateError(status: number, detail: string): string {
   return statusFallback[status] ?? '알 수 없는 오류가 발생했습니다.'
 }
 
+function parseRetryAfter(value: string | null): number | null {
+  if (!value) return null
+
+  const seconds = Number(value)
+  if (Number.isFinite(seconds) && seconds > 0) {
+    return Math.ceil(seconds)
+  }
+
+  const retryAt = Date.parse(value)
+  if (Number.isNaN(retryAt)) return null
+
+  const deltaSeconds = Math.ceil((retryAt - Date.now()) / 1000)
+  return deltaSeconds > 0 ? deltaSeconds : null
+}
+
 export class ApiError extends Error {
   status: number
   problem: ProblemDetails
+  retryAfterSeconds: number | null
 
-  constructor(status: number, problem: ProblemDetails) {
+  constructor(status: number, problem: ProblemDetails, retryAfterSeconds: number | null = null) {
     const detail = problem.detail || problem.title || ''
-    super(translateError(status, detail))
+    super(translateError(status, detail, retryAfterSeconds))
     this.status = status
     this.problem = problem
+    this.retryAfterSeconds = retryAfterSeconds
   }
 }
 
-async function tryRefresh(): Promise<boolean> {
+async function tryRefresh(): Promise<AuthSession | null> {
   // 동시 요청 시 하나의 refresh만 실행
   if (refreshPromise) return refreshPromise
 
@@ -114,15 +192,12 @@ async function tryRefresh(): Promise<boolean> {
         method: 'POST',
         credentials: 'include',
       })
-      if (!res.ok) return false
+      if (!res.ok) return null
       const data = await res.json()
-      accessToken = data.access_token
-      if (accessToken) {
-        sessionStorage.setItem('access_token', accessToken)
-      }
-      return true
+      if (!data.access_token) return null
+      return setAuthFromAccessToken(data.access_token)
     } catch {
-      return false
+      return null
     } finally {
       refreshPromise = null
     }
@@ -131,17 +206,22 @@ async function tryRefresh(): Promise<boolean> {
   return refreshPromise
 }
 
+export function refreshAuthSession() {
+  return tryRefresh()
+}
+
 async function parseErrorResponse(res: Response): Promise<ApiError> {
+  const retryAfterSeconds = parseRetryAfter(res.headers.get('Retry-After'))
   try {
     const problem = await res.json()
-    return new ApiError(res.status, problem)
+    return new ApiError(res.status, problem, retryAfterSeconds)
   } catch {
     return new ApiError(res.status, {
       type: 'about:blank',
       title: res.statusText || 'Error',
       status: res.status,
       detail: statusFallback[res.status] ?? '서버와 통신 중 오류가 발생했습니다.',
-    })
+    }, retryAfterSeconds)
   }
 }
 
