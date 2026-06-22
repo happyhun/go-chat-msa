@@ -545,8 +545,12 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/MessageInfo'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/TooManyRequests'
 
