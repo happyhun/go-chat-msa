@@ -38,6 +38,8 @@ MSA로 구성한 이유는 사용자/방 관리, 메시지 저장, 실시간 연
 | user-service | 사용자, 채팅방, 멤버십, refresh token 관리 | gRPC | PostgreSQL, Redis (refresh token 상태) |
 | chat-service | 메시지 저장, 이력 조회, 누락 메시지 조회 | gRPC | MongoDB |
 
+서비스 경계와 저장소 의존성은 [MSA 앱 아키텍처](diagrams/flow-msa.mmd)에 정리했습니다.
+
 ### 1.3 주요 기술 선택
 
 아래 표는 주요 기술 선택과 그 근거를 정리한 것입니다.
@@ -120,7 +122,7 @@ refresh token이 탈취되더라도 같은 토큰을 계속 사용할 수 없도
 
 Redis 장애로 refresh token 상태를 확인하거나 갱신할 수 없으면 로그인, 토큰 재발급, 로그아웃 요청은 실패시킵니다. 유효성을 확인할 수 없는 토큰을 허용하지 않기 위해서입니다.
 
-관련 흐름은 [로그인과 WebSocket 인증 시퀀스](diagrams/seq-auth-ticket.mmd)와 [refresh token rotation 시퀀스](diagrams/seq-refresh-token-rotation.mmd)에서 확인할 수 있습니다.
+로그인부터 WebSocket 티켓 발급까지의 흐름은 [로그인과 WebSocket 인증 시퀀스](diagrams/seq-auth-ticket.mmd)에 정리했습니다. refresh token 회전 흐름은 [refresh token rotation 시퀀스](diagrams/seq-refresh-token-rotation.mmd)에 따로 정리했습니다.
 
 #### WebSocket 티켓
 
@@ -286,6 +288,8 @@ WebSocket Service 후보 목록은 변경 감지와 목록 재구성을 분리�
 
 클라이언트의 WebSocket 요청은 처음에는 일반 HTTP 요청으로 들어오고, 검증이 끝난 뒤 WebSocket 연결로 전환됩니다. WebSocket Service는 이 전환 전에 요청을 처리할 인스턴스와 채팅방 소유권을 확정합니다. 이를 위해 Router, Manager, Hub가 역할을 나눕니다. Router는 티켓과 멤버십, 담당 인스턴스 여부를 확인하고, Manager는 방 소유권과 Hub 생명주기를 관리합니다. Hub는 한 채팅방의 세션, 브로드캐스트, 메시지 순번을 담당합니다.
 
+연결 준비부터 세션 등록까지의 순서는 [WebSocket 연결 시퀀스](diagrams/seq-websocket.mmd)에 정리했습니다.
+
 #### WebSocket 연결 수립
 
 1. 클라이언트가 WS Gateway에 티켓을 제시하여 WebSocket 연결을 요청합니다.
@@ -317,6 +321,8 @@ WebSocket Service 후보 목록은 변경 감지와 목록 재구성을 분리�
 ### 2.8 메시지 흐름
 
 WebSocket은 실시간 전송만 담당합니다. 저장된 메시지 조회와 누락분 동기화는 REST API가 맡습니다. 그래서 실시간 연결이 잠시 끊겨도 클라이언트는 `sequence_number`를 기준으로 빠진 메시지를 다시 맞출 수 있습니다.
+
+메시지 수신부터 저장 완료 처리까지의 흐름은 [메시지 처리 흐름](diagrams/flow-message.mmd)에 정리했습니다.
 
 #### 전송 및 브로드캐스트
 
@@ -388,48 +394,54 @@ Go의 `http.Server.Shutdown`은 WebSocket처럼 hijack된 연결을 기다리지
 
 WebSocket 메시지는 같은 방의 세션을 한 WebSocket Service 인스턴스로 모아 브로드캐스트합니다. 메시지마다 Redis Pub/Sub를 거치지 않고, WS Gateway가 `room_id` 기반 consistent hashing으로 대상 인스턴스를 고릅니다.
 
-이 구조의 목적은 메시지 분배 경로를 짧게 유지하는 것입니다. 방 단위 브로드캐스트는 로컬 메모리에서 처리하고, Redis는 라우팅 후보 목록과 방 담당 인스턴스 이전 같은 제어 상태만 맡습니다.
+이 구조의 목적은 메시지 분배 지연을 낮추고 중앙 병목을 피하는 것입니다. 방 단위 브로드캐스트와 순번 부여는 담당 WebSocket Service 인스턴스의 로컬 메모리에서 처리하고, Redis는 라우팅 후보 목록과 방 소유권 같은 제어 상태만 맡습니다. 여기서 방 소유권은 특정 방을 현재 어느 인스턴스가 처리하는지를 뜻합니다.
 
-WebSocket Service 인스턴스는 Redis에 자기 주소를 등록합니다. 주소는 Service DNS가 아니라 `POD_IP:8081`입니다. Service VIP를 거치면 consistent hashing이 고른 담당 인스턴스가 Kubernetes Service 로드밸런싱으로 다시 바뀔 수 있기 때문입니다.
+WebSocket Service 인스턴스는 Redis에 자기 주소를 `POD_IP:PORT` 형식으로 등록합니다. Service VIP를 거치면 consistent hashing이 고른 담당 인스턴스가 Kubernetes Service 로드밸런싱으로 다시 바뀔 수 있기 때문입니다.
 
-WS Gateway는 Redis의 후보 키 변화를 감지해 해시 링을 갱신합니다. Keyspace notification은 변경 신호로 사용하고, 실제 후보 목록은 `SCAN wss:member:*`로 다시 읽습니다. 30초 주기 재검사도 함께 둬 이벤트를 놓쳐도 목록이 다시 수렴하게 합니다.
-
-빠른 재시작 중 이전 프로세스가 새 프로세스의 멤버십을 지우지 않도록 멤버십 값에는 프로세스별 토큰을 넣습니다. 종료 시에는 Lua 스크립트로 자기 토큰이 맞을 때만 삭제합니다.
-
-멤버십은 라우팅 후보 인스턴스 목록만 말합니다. 실제 방 담당 인스턴스의 정합성은 room lease가 담당합니다.
+WS Gateway는 Redis의 후보 키 변화를 감지해 해시 링을 갱신합니다. Keyspace notification은 변경 신호로 사용하고, 실제 후보 목록은 `SCAN wss:member:*`로 다시 읽습니다. 30초 주기 재검사도 함께 둬 이벤트를 놓쳐도 Redis에 남아 있는 후보 목록으로 해시 링을 다시 맞춥니다.
 
 라우팅 경로에서 Redis가 맡는 상태는 세 가지입니다.
 
 | 상태 | 책임 |
 | :--- | :--- |
 | 멤버십 | 해시 링 후보 인스턴스 목록 |
-| room lease | 실행 중인 Hub 소유권 |
-| sequence floor | 저장 실패 후 순번 재사용 방지 |
+| 방 소유권 | 한 방의 Hub가 동시에 여러 인스턴스에서 열리지 않게 보호 |
+| 마지막 순번 기준값 | 저장 실패 후 순번 재사용 방지 |
 
-정확한 키 이름, TTL, 책임 서비스는 §2.4의 Redis 저장소 표에 정리되어 있습니다.
+정확한 키 이름, TTL, 책임 서비스는 2.4의 Redis 저장소 표에 정리되어 있습니다.
 
-room lease에는 별도 `epoch`을 두지 않습니다. 대신 기존 Hub가 신규 수신을 막고, 이미 받은 메시지의 저장 대기 작업을 끝낸 뒤에만 lease를 반납합니다. 저장 실패가 확정된 경우에는 마지막 발급 순번을 `wss:room:seqfloor:{roomID}`에 기록합니다. 새 담당 인스턴스는 이 값을 함께 보고 시작 순번을 정하므로, 이미 발급된 순번을 다시 쓰지 않습니다.
+멤버십 주소는 같은 값이 짧은 시간 안에 다시 등록될 수 있으므로, 값에는 프로세스별 토큰을 넣습니다. 종료 시에는 자기 토큰이 맞을 때만 Lua 스크립트로 삭제해 새 프로세스의 멤버십을 지우지 않게 합니다.
+
+방 소유권은 기존 Hub가 신규 수신을 막고, 이미 받은 메시지의 저장 대기 작업을 끝낸 뒤에만 반납됩니다. 저장 실패가 확정된 경우에는 마지막 발급 순번을 `wss:room:seqfloor:{roomID}`에 기록합니다. 새 담당 인스턴스는 이 값을 함께 보고 시작 순번을 정하므로, 이미 발급된 순번을 다시 쓰지 않습니다.
+
+전체 라우팅 구조와 정적 라우팅 대비 차이는 [WebSocket 라우팅 비교](diagrams/flow-ws-routing.mmd)에 정리했습니다.
 
 ### 3.2 분산 라우팅 정합성
 
-각 프로세스는 Redis 후보 목록을 관찰해 해시 링을 갱신합니다. 하지만 모든 프로세스가 같은 순간에 같은 목록을 보는 것은 아닙니다. 그래서 WS Gateway의 해시 링과 WebSocket Service의 해시 링이 일시적으로 다를 수 있다는 전제로 방어합니다.
+WS Gateway와 WebSocket Service의 각 인스턴스는 Redis 후보 목록을 관찰해 자기 로컬 해시 링을 갱신합니다. 하지만 모든 인스턴스가 같은 순간에 같은 목록을 보는 것은 아닙니다. 그래서 WS Gateway의 해시 링과 WebSocket Service의 해시 링이 일시적으로 다를 수 있다는 전제로 방어합니다.
+
+후보 목록이 각 인스턴스의 로컬 해시 링에 반영되는 과정은 [멤버십 동기화 시퀀스](diagrams/seq-membership-sync.mmd)에 정리했습니다.
 
 | 상황 | 처리 | 이유 |
 | :--- | :--- | :--- |
-| 잘못된 담당 인스턴스로 라우팅 | WebSocket Service가 421 응답, WS Gateway가 503으로 변환 | 오래된 라우팅 정보를 빠르게 드러내고 클라이언트 재시도로 수렴 |
-| 새 Hub 생성 | WebSocket upgrade 전에 room lease 획득 및 순번 초기화 | 소켓을 열기 전에 담당 인스턴스와 순번 기준을 확정 |
+| 잘못된 담당 인스턴스로 라우팅 | WebSocket Service가 421 응답, WS Gateway가 503으로 변환 | 오래된 라우팅 정보를 빠르게 드러내고 클라이언트가 새 담당 인스턴스로 다시 연결 |
+| 새 Hub 생성 | WebSocket upgrade 전에 방 소유권 획득 및 순번 초기화 | 소켓을 열기 전에 담당 인스턴스와 순번 기준을 확정 |
 | 스케일아웃 시 재배치 | 0~2초 무작위 지연 후 기존 연결 종료 | 재접속 트래픽 집중 완화 |
-| 담당 인스턴스 변경 | 저장 대기 작업 완료 후 lease 반납 | 새 담당 인스턴스가 이전 저장 완료 전에 순번을 시작하지 않게 함 |
-| lease 갱신 실패 | 토큰 불일치, 키 없음, Redis 오류 시 종료 절차 진입 | 담당 인스턴스가 불확실한 상태에서 메시지 수신 차단 |
+| 담당 인스턴스 변경 | 저장 대기 작업 완료 후 방 소유권 반납 | 새 담당 인스턴스가 이전 저장 완료 전에 순번을 시작하지 않게 함 |
+| 방 소유권 갱신 실패 | 토큰 불일치나 키 없음은 즉시 Hub 종료, Redis 오류는 마지막 성공 갱신 후 20초 초과 시 Hub 종료 | 일시 오류는 흡수하되 소유권이 불확실해진 상태에서는 메시지 수신 차단 |
 | 빈 후보 목록 관측 | 기존 해시 링은 유지, readiness는 별도 판단 | Redis 일시 오류와 실제 후보 없음 구분 |
 
-담당 인스턴스 변경은 멤버십 변경 이벤트를 받으면 바로 검사하고, 기존 Hub는 0~2초 무작위 지연 후 종료 절차에 들어갑니다. 이벤트를 놓친 경우에도 Manager가 10초마다 자신이 가진 Hub의 담당 여부를 다시 확인하므로, 최대 약 12초 안에 종료 절차가 시작됩니다. 이후 Hub는 이미 브로드캐스트한 메시지의 저장 완료를 기다린 뒤 room lease를 반납합니다.
+담당 인스턴스 변경은 멤버십 변경 이벤트를 받으면 바로 검사하고, 기존 Hub는 0~2초 무작위 지연 후 종료 절차에 들어갑니다. 이벤트를 놓친 경우에도 Manager가 10초마다 자신이 가진 Hub의 담당 여부를 다시 확인하므로, 최대 약 12초 안에 종료 절차가 시작됩니다. 이후 Hub는 이미 브로드캐스트한 메시지의 저장 완료를 기다린 뒤 방 소유권을 반납합니다.
 
-서버 측 재시도는 하지 않습니다. 연결 재시도는 클라이언트가 무작위 지연을 섞어 수행하게 해 재시도 트래픽이 한 번에 몰리지 않게 합니다.
+스케일아웃 중 담당 인스턴스가 바뀌는 흐름은 [스케일아웃 시 재배치](diagrams/seq-rebalance.mmd)에 정리했습니다.
+
+WebSocket 연결 라우팅 실패에 대해서는 WS Gateway나 WebSocket Service가 다른 인스턴스로 서버 측 재시도를 하지 않습니다. 연결 재시도는 클라이언트가 무작위 지연을 섞어 수행하게 해 재시도 트래픽이 한 번에 몰리지 않게 합니다.
+
+421/503 변환 흐름은 [담당 인스턴스 자가 확인](diagrams/seq-owner-self-check.mmd)에 정리했습니다.
 
 HashRing의 `Set`은 여러 후보 추가/삭제를 한 번에 반영하는 복합 작업입니다. 중간 상태에서 잘못된 담당 인스턴스가 나오지 않도록 HashRing 내부에서 `Set`은 Lock, `Locate`는 RLock으로 보호합니다.
 
-#### Liveness와 readiness 분리
+#### Liveness와 Readiness 분리
 
 `/health`는 프로세스 생존 확인용으로 단순 200을 반환합니다. `/ready`는 트래픽을 받아도 되는지 확인하므로 의존성 상태를 더 엄격하게 봅니다.
 
@@ -437,28 +449,19 @@ HashRing의 `Set`은 여러 후보 추가/삭제를 한 번에 반영하는 복�
 | :--- | :--- |
 | api-gateway | Redis `PING`, user/chat gRPC health |
 | ws-gateway | Redis `PING`, 후보 목록 관측 여부, 해시 링 후보 존재 |
-| websocket-service | Redis `PING`, user/chat gRPC health, 자기 주소가 포함된 해시 링, 저장 큐 사용률 80% 미만 |
+| websocket-service | Redis `PING`, user/chat gRPC health, Manager 동작 상태, 자기 주소가 포함된 해시 링, 저장 큐 사용률 80% 미만 |
 
 user-service와 chat-service의 gRPC health는 각각 PostgreSQL `Ping`, MongoDB `Ping` 결과를 주기적으로 반영합니다. HTTP gateway가 DB를 직접 확인하지 않고, 각 서비스가 자기 의존성 상태를 gRPC Health Checking Protocol로 노출하는 구조입니다.
 
-#### 제어면과 메시지 전달 경로 분리
+#### Redis를 메시지 경로에서 제외한 이유
 
-같은 Redis 인프라를 쓰더라도 라우팅 제어와 메시지 전달은 분리합니다. 후보 목록 동기화와 room lease 같은 제어면에는 keyspace notification, SCAN, TTL, Lua를 사용하고, 실제 메시지 브로드캐스트는 채팅방 어피니티와 로컬 메모리에서 처리합니다. 두 경로는 부하와 정합성 요구가 다릅니다.
+채팅 메시지는 사용자 입력마다 발생하고 지연이 바로 체감되므로, 메시지마다 Redis Pub/Sub 왕복을 추가하면 Redis가 중앙 병목이 될 수 있습니다. 그래서 실제 브로드캐스트는 담당 Hub의 로컬 메모리에서 처리합니다.
 
-| 측면 | 메시지 브로드캐스트 | 후보 목록 동기화 |
-| :--- | :--- | :--- |
-| 트래픽 | 지속적으로 발생하는 사용자 메시지 | 스케일 이벤트나 heartbeat 중심 |
-| 정합성 요구 | 메시지 손실이 사용자 경험에 직접 영향 | 일시 지연 허용, SCAN/TTL/lease 갱신으로 자가 치유 |
-| 순서 보장 | 방 안의 순번 단조 증가 필수 | 후보 목록은 순서와 무관, room lease는 이전 순서 보호 |
-| 선택한 도구 | 방 어피니티 + Hub 로컬 브로드캐스트 | Redis keyspace notification, SCAN, room lease Lua |
+반대로 Redis에는 라우팅을 맞추기 위한 제어 상태만 둡니다. WebSocket Service 후보 목록, 방 소유권, 마지막 순번 기준값은 사용자 메시지보다 변경 빈도가 낮고, 일시적으로 늦게 반영돼도 421/503 응답, 주기적 재검사 등으로 복구할 수 있습니다.
 
 #### Redis keyspace notification 옵션
 
 후보 목록 관찰자는 `__keyspace@<db>__:wss:member:*` 채널을 구독합니다. Redis 옵션은 SET/DEL/expired 이벤트만 켜는 `K$gx`로 제한해 멤버십 키 변화만 관측합니다.
-
-#### 다이어그램
-
-[정적 vs 동적 라우팅 비교](diagrams/flow-ws-routing.mmd), [멤버십 동기화 시퀀스](diagrams/seq-membership-sync.mmd), [담당 인스턴스 자가 확인 + 503 변환](diagrams/seq-owner-self-check.mmd), [스케일아웃 시 재배치](diagrams/seq-rebalance.mmd).
 
 ### 3.3 WebSocket 계층 구조
 
@@ -474,34 +477,39 @@ Router (1)
         └── Session (유저 3)
 ```
 
-Manager와 Hub는 actor 방식에 가깝게 동작합니다. 대부분의 상태 변경은 단일 고루틴의 `select` 루프에서 순서대로 처리하고, 외부와는 채널 또는 주입된 함수로 통신합니다. 다만 Hub가 종료 절차에 들어간 뒤 새 메시지가 `broadcastCh`에 들어가지 않도록 `RWMutex`와 atomic flag로 수신 경계를 닫습니다.
+Manager와 Hub는 액터 모델로 동시성을 처리합니다. Manager는 Hub 목록과 생명주기를 단일 `select` 루프에서 관리하고, Hub는 세션 목록, 순번 부여, 브로드캐스트를 자기 루프에서 순서대로 처리합니다. 외부와는 채널 또는 주입된 함수로만 통신해 공유 상태를 직접 잠그는 범위를 줄였습니다. 다만 Hub가 종료 절차에 들어간 뒤 새 메시지가 `broadcastCh`에 들어가지 않도록 `RWMutex`와 atomic flag로 수신 경계를 닫습니다.
 
 #### 계층별 책임
 
 | 계층 | 책임 |
 | :--- | :--- |
-| Router | HTTP 요청 수신, `/health`/`/ready`, 담당 인스턴스 확인, upgrade 전 등록 준비, WebSocket 업그레이드 |
-| Manager | Hub 생명주기, room lease 획득/갱신/반납, 우아한 종료, 저장 워커, 재시도 워커, 처리율 제한기 |
-| Hub | Session 생명주기, 순번 부여, 브로드캐스트, 저장 완료 대기 |
-| Session | 개별 연결의 송수신, 메시지 검증, rate-limit 검사 |
+| Router | HTTP 요청을 검증하고 WebSocket upgrade 전까지의 준비 절차를 조율 |
+| Manager | Hub 생성과 종료, 방 소유권, 저장 파이프라인을 관리 |
+| Hub | 한 방의 세션 목록, 순번 부여, 브로드캐스트를 직렬 처리 |
+| Session | 개별 WebSocket 연결의 읽기/쓰기와 메시지 검증을 담당 |
 
 #### 부모 직접 참조 차단
 
 자식 계층이 부모를 직접 참조하면 순환 의존이 생깁니다. 상향 통신이 필요한 경우에도 자식이 부모의 구체 타입을 모르도록 제한합니다.
 
-- **송신 전용 채널**: 부모의 채널 참조만 보유하여 값 전달 (Hub → Manager 저장 요청)
-- **콜백 함수**: 부모가 정의한 함수를 클로저로 감싸 자식에게 주입 (Hub publish 함수·Manager의 처리율 제한기 → Session)
-- **인터페이스 추상화**: 구현체가 아닌 인터페이스에 의존 (Manager가 메시지 저장소 구현체를 Hub에 주입)
+상향 통신 방식은 호출 성격에 따라 나눴습니다. 부모의 작업 큐로 넘기는 일은 송신 전용 채널로, 호출한 자리에서 바로 결과가 필요한 일은 콜백 함수로 분리했습니다.
+
+| 방식 | 쓰는 기준 | 이 프로젝트의 예 |
+| :--- | :--- | :--- |
+| 송신 전용 채널 | 자식이 부모의 작업 큐나 이벤트 루프에 일을 맡길 때 | Hub가 저장 작업을 `persistCh`로 전달 |
+| 콜백 함수 | 호출한 자리에서 바로 허용 여부나 처리 결과가 필요할 때 | Session이 메시지 publish 함수와 rate-limit 함수를 호출 |
+
+콜백으로 둔 동작은 부모 액터 루프에서 반드시 직렬화해야 하는 상태 변경이 아닙니다. 메시지 발행 위임이나 처리율 제한 검사처럼 호출한 자리에서 결과를 받아 다음 동작을 정하면 되므로, 채널 요청으로 만들지 않고 함수 주입으로 단순하게 유지했습니다.
 
 ### 3.4 비동기 배치 저장
 
-메시지를 브로드캐스트와 동시에 저장하면 저장 지연이 실시간 전송 경로에 직접 영향을 줍니다. 그래서 실시간 분배와 저장을 분리하고, 저장은 배치 워커 풀에서 비동기로 처리합니다.
+메시지를 브로드캐스트와 동시에 저장하면 저장 지연이 실시간 전송 경로에 직접 영향을 줍니다. 그래서 실시간 분배와 저장을 분리하고, 저장은 배치 워커에서 비동기로 처리합니다.
 
-Hub는 저장 큐 슬롯을 먼저 예약한 뒤 순번을 부여하고, 저장 작업을 `persistCh`에 넣은 다음 브로드캐스트합니다. 저장 워커는 채널에서 작업을 꺼내 일정 건수 또는 타이머 기준으로 배치 저장합니다. 메시지 순서는 애플리케이션에서 이미 부여하므로 워커 간 DB 저장 순서는 중요하지 않습니다.
+분리하더라도 저장 경로가 꽉 찬 메시지를 클라이언트에 먼저 전달하지는 않습니다. Hub는 `persistCh`에 작업을 넣기 전에 같은 크기의 버퍼드 채널을 세마포어처럼 사용해 저장 경로에 들어갈 자리를 먼저 확보합니다. 자리를 확보한 뒤에만 순번을 부여하고, 저장 작업을 `persistCh`에 넣은 다음 브로드캐스트합니다. 저장 경로가 꽉 차 있거나 중간 단계에서 실패하면 순번과 예약을 되돌리고 메시지를 보낸 세션에 일시 오류를 반환합니다.
 
-저장 성공 또는 이미 저장된 메시지(`AlreadyExists`)는 성공으로 보고 Hub의 저장 대기 카운터를 줄입니다. 재시도 가능한 오류는 재시도 큐로 이동하고, 재시도 성공·최종 실패·종료 대기 전까지 저장 완료 처리를 늦춥니다. 서버 종료나 방 담당 인스턴스 변경 시 Hub는 이미 브로드캐스트한 메시지의 저장 완료를 기다린 뒤 세션을 닫습니다.
+저장 워커는 채널에서 작업을 꺼내 일정 건수 또는 타이머 기준으로 배치 저장합니다. 메시지 순서는 Hub가 이미 부여하므로 DB 저장 순서는 정합성 기준이 아닙니다. 이미 저장된 메시지는 성공으로 보고, 재시도 가능한 오류만 재시도 큐로 보냅니다.
 
-이 구조는 브로드캐스트 지연을 낮추는 대신, 저장 실패가 길어지면 Hub 종료가 `shutdown_timeout`까지 늦어질 수 있습니다. 무한히 기다리지는 않고, 시간이 초과되면 지표와 로그를 남긴 뒤 종료를 계속합니다.
+이 구조는 브로드캐스트 지연을 낮추는 대신, 저장 실패가 길어지면 Hub 종료가 늦어질 수 있습니다. 서버 종료나 방 담당 인스턴스 변경 시 Hub는 이미 브로드캐스트한 메시지의 저장 완료를 기다리지만, `shutdown_timeout`을 넘으면 지표와 로그를 남기고 종료를 계속합니다.
 
 ### 3.5 서비스 간 통신
 
@@ -509,75 +517,78 @@ Hub는 저장 큐 슬롯을 먼저 예약한 뒤 순번을 부여하고, 저장 
 
 내부 서비스 간 호출은 REST 대신 gRPC로 통일했습니다. 외부 API는 사람이 읽고 디버깅하기 쉬운 HTTP/JSON 계약이 중요하지만, 내부 호출은 서비스 간 타입 계약과 호출부 일관성이 더 중요하다고 봤습니다.
 
-`.proto` 파일은 서비스 간 계약입니다. 요청/응답 필드와 메서드 시그니처가 생성 코드에 반영되므로, 계약 변경 후 서버와 클라이언트가 맞지 않으면 컴파일 시점에 드러납니다. 또한 서버/클라이언트 코드가 생성되기 때문에 반복적인 요청 파싱과 직렬화 코드를 직접 작성하지 않아도 됩니다.
+`.proto` 파일은 서비스 간 계약입니다. 요청/응답 필드와 메서드 시그니처가 생성 코드에 반영되므로, 계약 변경 후 서버와 클라이언트가 맞지 않으면 컴파일 시점에 드러납니다. 반복적인 요청 파싱과 직렬화 코드를 직접 작성하지 않아도 되는 점도 선택 이유였습니다.
 
-각 서비스는 대상 서비스마다 하나의 `grpc.ClientConn`을 공유합니다. 이 값은 단일 TCP 연결 하나를 뜻하기보다, 대상별 HTTP/2 연결과 로드밸런싱 정책을 함께 가진 채널에 가깝습니다. Headless Service가 반환한 대상 Pod IP 목록을 gRPC resolver가 보고, `round_robin` 정책으로 RPC를 분산합니다.
+각 서비스는 요청마다 연결을 새로 만들지 않고, 대상 서비스마다 `grpc.ClientConn`을 공유합니다. `ClientConn`은 단일 TCP 연결 하나라기보다 대상별 HTTP/2 연결과 로드밸런싱 상태를 관리하는 클라이언트 객체에 가깝습니다. Headless Service가 반환한 대상 Pod IP 목록을 gRPC resolver가 보고, `round_robin` 정책으로 RPC를 분산합니다.
 
-대상 목록은 DNS 재조회와 gRPC 연결 상태에 따라 갱신됩니다. 새 Pod가 추가됐다고 즉시 모든 클라이언트의 분산 대상에 들어간다고 보장할 수는 없습니다. 그래서 user-service와 chat-service는 현재 HPA 대상이 아니라 고정 replica에서 분산 동작만 검증합니다.
+이 방식은 고정 replica에서는 단순하지만, HPA 확장까지 맡기기에는 부족합니다. 기존 `ClientConn`이 정상 연결을 유지하는 동안 새 Pod를 찾기 위한 DNS 재조회가 보장되지 않으므로, scale-out 후에도 트래픽이 기존 Pod에만 분산될 수 있습니다. user-service와 chat-service까지 HPA 대상으로 삼으려면 동적 endpoint 갱신을 안정적으로 처리할 중간 로드밸런싱 계층 도입을 검토해야 합니다.
 
-### 3.6 Bcrypt 워커 풀
+### 3.6 bcrypt 워커 풀
 
-Bcrypt는 무차별 대입을 어렵게 만들기 위해 계산 비용이 큰 해시 알고리즘입니다. 요청마다 제한 없이 고루틴을 만들면 CPU 경합이 커지고, 해싱보다 스케줄링 비용이 먼저 늘어날 수 있습니다. 그래서 워커 풀로 동시에 실행되는 해싱 수를 코어 수 기준으로 제한합니다.
+bcrypt는 무차별 대입을 어렵게 만들기 위해 의도적으로 느리게 동작하는 CPU 바운드 해시 알고리즘입니다. DB나 네트워크 I/O는 응답을 기다리는 동안 고루틴이 block되어 다른 고루틴이 CPU를 사용할 수 있지만, bcrypt는 실행되는 동안 CPU를 계속 사용합니다. Go 런타임이 동시에 실행할 수 있는 Go 코드는 `GOMAXPROCS` 범위로 제한되므로, CPU 바운드 작업은 많이 시작한다고 처리량이 그만큼 늘지 않습니다.
 
-- 워커 수를 `runtime.GOMAXPROCS(0)`로 고정하여 CPU 바운드 작업의 동시성을 제한
-- 대기열이 꽉 차면 즉시 `ErrQueueFull`을 반환해 연쇄 장애 방지
+가입이나 로그인 요청이 몰릴 때 모든 요청 고루틴이 bcrypt를 바로 수행하면, 코어 수보다 많은 해싱 작업이 한정된 CPU 시간을 나눠 갖습니다. 작업 하나가 빨리 끝나기보다 여러 작업이 동시에 조금씩 진행되면서 대기열이 길어집니다. 이 상태가 길어지면 인증 요청뿐 아니라 같은 인스턴스의 다른 요청도 함께 밀립니다.
+
+그래서 bcrypt 연산에는 워커 풀 패턴을 도입했습니다. 워커 수는 `runtime.GOMAXPROCS(0)` 기준으로 두어 동시에 실행되는 해싱 수를 실제 병렬 실행 폭에 맞춥니다. 짧은 순간의 요청 증가는 제한된 큐로 흡수하되, 큐가 가득 차면 더 기다리게 하지 않고 `ErrQueueFull`을 반환합니다.
+
+이 선택은 일부 요청을 빠르게 실패시키는 대신, CPU 경합이 user-service 인스턴스 전체로 번지는 것을 막는 쪽에 가깝습니다. user-service는 `ErrQueueFull`을 `ResourceExhausted`로 바꿔 gateway가 과부하 응답을 낼 수 있게 합니다. 과부하가 런타임의 고루틴 대기열에 숨지 않고, 큐 깊이와 queue full 지표로 관측 가능한 backpressure가 되도록 한 것입니다.
 
 ### 3.7 ID 생성 위치와 UUID v7
 
-사용자, 채팅방, 메시지 같은 주요 ID는 DB가 아니라 애플리케이션에서 UUID v7로 생성합니다. ID 생성 시점과 저장 시점을 분리하기 위해서입니다.
+사용자, 채팅방, 메시지 같은 주요 ID는 DB가 아니라 애플리케이션에서 UUID v7로 생성합니다. ID 생성 시점과 저장 시점을 분리해, 저장 전에 로그와 응답 객체에서 같은 식별자를 사용할 수 있게 하기 위해서입니다.
 
-UUID v7은 생성 시각을 포함하므로 시간순 정렬과 로그 추적에 유리합니다. UUID v4보다 B-tree 삽입 위치가 덜 분산되어 인덱스 관리에도 부담이 적습니다. 동시에 auto-increment처럼 전체 레코드 수나 생성 속도를 외부에서 쉽게 추측하게 만들지 않습니다.
+UUID v7은 생성 시각을 포함하므로 대략적인 시간순 정렬과 로그 추적에 유리합니다. UUID v4보다 B-tree 삽입 위치가 덜 분산되어 인덱스 관리에도 부담이 적습니다. 동시에 auto-increment처럼 전체 레코드 수나 생성 속도를 외부에서 쉽게 추측하게 만들지 않습니다.
 
-애플리케이션에서 ID를 만들면 INSERT 전에 식별자가 확정됩니다. 그래서 관련 엔티티의 FK를 DB 왕복 없이 설정할 수 있고, 비동기 저장 파이프라인에서도 브로드캐스트와 저장을 분리하기 쉽습니다.
+애플리케이션에서 ID를 만들면 INSERT 전에 식별자가 확정됩니다. 그래서 관련 엔티티의 FK를 DB 왕복 없이 설정할 수 있고, 비동기 저장 파이프라인에서도 브로드캐스트와 저장을 분리하기 쉽습니다. user-service와 chat-service는 UUID v7의 시간을 `created_at` 기준으로도 사용해 ID와 생성 시각이 어긋나지 않게 합니다.
+
+다만 UUID v7의 시간성은 운영 중 추적과 인덱스 locality를 위한 선택입니다. 채팅방 안의 메시지 순서는 ID가 아니라 Hub가 부여하는 `sequence_number`로 판단합니다.
 
 ---
 
 ## 4. Kubernetes 배포 설계
 
-K8s 전환의 목표는 실행 명령을 바꾸는 데 그치지 않습니다. Docker Compose는 한 머신에서 여러 컨테이너를 띄우는 개발 도구에 가깝지만, Kubernetes는 replica가 동적으로 생성·종료되는 환경에서 트래픽 라우팅, readiness, rollout, 배치 작업, 관측성을 함께 다룹니다. 그래서 애플리케이션도 “프로세스 하나가 오래 떠 있다”는 가정에서 벗어나야 합니다.
+K8s 전환의 목표는 서비스 인스턴스 수가 동적으로 변해도 서비스 동작과 데이터 정합성이 유지되는지 검증하는 것입니다. Kubernetes에서는 서비스 인스턴스가 Pod 단위로 생성·종료되고 트래픽 대상에서 제외됩니다. 애플리케이션은 readiness와 종료 절차로 트래픽 수신 가능 상태를 명확히 드러내야 합니다.
 
-먼저 계속 요청을 처리하는 책임과 한 번만 실행되어야 하는 책임을 나눴습니다.
+리소스 구분은 다음과 같습니다.
 
-| 책임 | K8s 리소스 | 이유 |
+| K8s 리소스 | 역할 | 선택 이유 |
 | :--- | :--- | :--- |
-| 계속 요청을 받아야 하는 서비스 | Deployment | replica 수를 조절하고 rolling update 대상이 됨 |
-| 내부 라우팅 대상 | Service | 파드 IP가 바뀌어도 안정적인 DNS 이름 제공 |
-| gRPC 대상 발견 | Headless Service | 클라이언트가 대상 Pod IP 목록을 직접 보고 round_robin 수행 |
-| 일회성 마이그레이션 | Job | 성공/실패가 명확하고 완료 후 종료됨 |
-| 주기적 배치 | CronJob | Deployment replica 수와 실행 횟수를 분리 |
-| 외부 HTTP/WebSocket 진입점 | Ingress | `/`, `/api`, `/ws-api`, `/ws` 경로 라우팅 |
+| Deployment | 지속 실행 서비스 | replica 수 조절과 rolling update 대상 |
+| Service | 안정적인 내부 진입점 | 파드 IP 변경을 DNS 이름 뒤로 숨김 |
+| Headless Service | gRPC 대상 발견 | 고정 replica에서 Pod 목록을 직접 보고 `round_robin` 수행 |
+| Job | 일회성 마이그레이션 | 성공/실패와 완료 상태가 명확함 |
+| Ingress | 외부 HTTP/WebSocket 진입점 | 외부 경로를 서비스로 라우팅 |
 
-MSA 앱 책임 구조는 [MSA 앱 아키텍처](diagrams/flow-msa.mmd), K8s 런타임 배치 구조는 [K8s 런타임 배포 구조](diagrams/flow-k8s-runtime.mmd), overlay 구성은 [K8s overlay 구조](diagrams/flow-k8s-overlays.mmd), bootstrap 순서는 [K8s bootstrap 흐름](diagrams/flow-k8s-bootstrap.mmd)에서 확인할 수 있습니다.
+K8s 안에서 각 워크로드와 데이터 계층이 배치되는 구조는 [K8s 런타임 배포 구조](diagrams/flow-k8s-runtime.mmd)에 정리했습니다.
 
 ### 4.1 Manifest 구조
 
-K8s manifest는 공통 구조와 실행 목적별 차이를 분리합니다. 서비스 이름, 포트, probe, label, Ingress path처럼 변하지 않는 구조는 `base`에 두고, replica 수와 리소스 정책처럼 환경마다 달라지는 값은 overlay에서 덮어씁니다.
+K8s manifest는 `base`와 overlay로 나눕니다. `base`에는 서비스 구조와 probe처럼 공통인 리소스를 두고, overlay에는 replica 수와 리소스 정책처럼 환경별 차이를 둡니다.
 
 | Overlay | 목적 | 특징 |
 | :--- | :--- | :--- |
 | `dev` | 로컬 개발과 C10K 부하 확인 | 앱은 대부분 1 replica, `websocket-service`는 C10K 기준에 맞춰 2 replicas |
 | `test` | 자동화된 K8s 전체 시나리오 검증 | 주요 gateway/service `replicas: 2`, 메모리 request/limit으로 테스트 격리 |
-| `qa` | WebSocket HPA 확장 중 담당 Pod 이전 검증 | `websocket-service`만 HPA `1→2`, 활성 연결 수 사용자 정의 메트릭, `hpa-test.js` |
+| `qa` | WebSocket HPA 확장 중 담당 Pod 이전 검증 | WebSocket HPA `1→2` 정합성 검증 |
 
-`local` 대신 `dev/test/qa`로 이름을 나눈 이유는 실행 위치보다 목적을 드러내기 위해서입니다. `dev`는 사람이 기능과 부하 경로를 확인하는 환경이고, `test`는 자동화된 전체 시나리오 검증 환경입니다. `qa`는 HPA처럼 동적인 확장 조건에서 WebSocket 정합성을 확인하는 환경입니다.
+`local` 대신 `dev/test/qa`로 나눈 이유는 실행 위치가 아니라 검증 목적을 드러내기 위해서입니다. 각 overlay의 차이는 표처럼 실행 목적에 맞춰 제한합니다.
 
-### 4.2 Phase Overlay와 Bootstrap 순서
+### 4.2 Phase Overlay와 Bootstrap 스크립트
 
-K8s manifest는 한 번에 적용할 수 있지만, 이 시스템은 실행 순서가 중요합니다. DB와 migration이 준비되기 전에 앱이 트래픽을 받으면 실패하고, 관측성 백엔드가 없으면 exporter 실패 로그가 불필요한 잡음이 됩니다.
+로컬 K8s 환경의 부트스트랩 순서는 [bootstrap.sh](../deploy/k8s/scripts/bootstrap.sh)가 제어합니다. 스크립트는 `K8S_ENV`에 맞는 overlay를 선택하고, phase별 Kustomize overlay를 순서대로 적용한 뒤 각 단계의 준비 상태를 기다립니다. manifest를 한 번에 적용하면 DB 준비나 migration 완료 전에 앱이 뜰 수 있으므로, 데이터 계층, migration, 앱 rollout을 명시적으로 직렬화했습니다.
 
-그래서 bootstrap은 phase 단위로 적용합니다.
-
-| Phase | 포함 리소스 | 목적 |
+| Phase | 스크립트 동작 | 완료 조건 |
 | :--- | :--- | :--- |
-| `foundation` | Secret, Postgres, Mongo, Redis | 앱이 의존하는 기본 실행 기반 |
-| `observability` | Alloy, Prometheus, Grafana, Loki, Tempo, Pyroscope, Grafana Ingress | 앱 rollout 전에 텔레메트리 수신 대상 준비 |
-| `migrations` | `postgres-migrate`, `mongo-migrate` Job | 스키마와 인덱스를 앱 시작 전에 확정 |
-| `apps` | `gochat-app-config` ConfigMap, 앱 Deployment, Service, app Ingress | 실제 요청 처리 리소스 기동 |
-| `load` | k6 Job | 이미 떠 있는 환경에 부하/정합성 시나리오 실행 |
+| `foundation` | Secret과 Postgres/Mongo/Redis overlay 적용 | 데이터 계층 Deployment rollout 완료 |
+| `observability` | Grafana 스택 ConfigMap 생성 후 observability overlay 적용 | 관측성 Deployment rollout 완료 |
+| `migrations` | migration ConfigMap 생성, 기존 Job 삭제, migration overlay 적용 | `postgres-migrate`, `mongo-migrate` Job 완료 |
+| `apps` | OpenAPI ConfigMap 생성, apps overlay 적용, 핵심 백엔드 → WebSocket Service → 진입 계층 순서로 rollout restart | 앱 Deployment rollout 완료 |
+
+환경별 overlay 관계는 [K8s overlay 구조](diagrams/flow-k8s-overlays.mmd), 단계별 적용 순서는 [K8s bootstrap 흐름](diagrams/flow-k8s-bootstrap.mmd)에 정리했습니다.
 
 마이그레이션이 실패하면 앱 rollout을 진행하지 않습니다. 스키마가 불확실한 상태에서 앱을 띄우지 않기 위한 즉시 중단 전략입니다.
 
-`load` phase는 bootstrap에 포함하지 않습니다. 환경을 띄우는 일과 부하를 거는 일을 분리해야 실패 원인을 좁히기 쉽기 때문입니다.
+부하 검증은 [load.sh](../deploy/k8s/scripts/load.sh)가 별도로 실행합니다. 환경을 띄우는 일과 부하를 거는 일을 분리해야 실패 원인을 좁히기 쉽기 때문입니다. `load.sh`는 k6 ConfigMap을 만들고 기존 Job을 삭제한 뒤 load overlay를 적용합니다. QA에서는 HPA 테스트 전 `websocket-service`를 1 replica로 되돌리고 HPA를 다시 붙여 스케일아웃을 매번 같은 시작 상태에서 검증합니다.
 
 ### 4.3 Runtime 리소스 모델
 
@@ -591,8 +602,9 @@ K8s manifest는 한 번에 적용할 수 있지만, 이 시스템은 실행 순�
 | `user-service` | 사용자/방/멤버십 gRPC 서비스 | Headless |
 | `chat-service` | 메시지 저장/조회 gRPC 서비스 | Headless |
 | `frontend` | 정적 프론트엔드 | ClusterIP |
+| `swagger-ui` | OpenAPI 문서 UI | ClusterIP |
 
-`api-gateway`, `ws-gateway`, `frontend`는 ClusterIP Service를 사용합니다. Ingress나 내부 호출자는 안정적인 DNS 이름만 필요하고, 특정 Pod를 직접 고를 필요가 없습니다.
+`api-gateway`, `ws-gateway`, `frontend`, `swagger-ui`는 ClusterIP Service를 사용합니다. Ingress나 내부 호출자는 안정적인 DNS 이름만 필요하고, 특정 Pod를 직접 고를 필요가 없습니다.
 
 `websocket-service`는 의도적으로 Service를 두지 않습니다. WebSocket 방 담당 Pod 라우팅은 Redis 멤버십에 등록된 Pod IP로 직접 들어갑니다. Service VIP를 거치면 consistent hashing이 고른 담당 Pod가 Kubernetes Service 로드밸런싱으로 다시 바뀔 수 있습니다.
 
@@ -600,37 +612,37 @@ K8s manifest는 한 번에 적용할 수 있지만, 이 시스템은 실행 순�
 
 base manifest에는 resource request/limit을 넣지 않습니다. 리소스 정책은 실행 목적에 따라 달라지므로 overlay에서만 추가합니다.
 
-`dev`는 Docker Compose 시절 C10K 기준과 비교하기 위해 앱 메모리 limit을 두지 않습니다. TCP accept queue 관련 `net.core.somaxconn` sysctl은 주요 서비스에 이관합니다. `websocket-service`는 C10K 경로 검증을 위해 2 replicas로 시작하고, `user-service`는 Bcrypt 워커 풀 검증 기준에 맞춰 CPU limit 4를 둡니다.
+`dev`는 Compose 시절 C10K 기준과 비교할 수 있게 앱 메모리 limit을 두지 않습니다. `websocket-service`는 2 replicas로 시작하고, `user-service`만 bcrypt 워커 풀 검증용 CPU limit 4를 둡니다. TCP accept queue 관련 sysctl은 주요 서비스에 적용합니다.
 
-`test`는 성능 기준을 만드는 환경이 아니라 반복 가능한 전체 시나리오 검증 환경입니다. 그래서 gateway/service 계열은 2 replicas로 고정하고, 테스트 환경이 로컬 머신 전체 메모리를 잠식하지 않도록 memory request/limit을 둡니다.
+`test`는 성능 기준이 아니라 반복 가능한 전체 시나리오 검증 환경입니다. gateway/service 계열은 2 replicas로 고정하고, 로컬 머신 전체 메모리를 잠식하지 않도록 memory request/limit을 둡니다.
 
-`qa`는 성능 수치를 대표하는 환경이 아니라 WebSocket Service 확장 중 메시지 정합성을 보는 환경입니다. 앱 메모리 limit은 제거해 Docker Compose 기준과 불필요하게 달라지지 않게 했고, `websocket-service`만 활성 연결 수 메트릭으로 HPA `min=1, max=2`를 겁니다. HPA가 잦은 확장 이벤트를 만들면 담당 Pod 이전 자체가 성능 지표를 흔들 수 있으므로, QA의 합격 기준은 P99 성능보다 순번 중복/역전, 누락 구간 회복, DB 순번 공백 여부입니다.
+`qa`는 WebSocket Service 확장 중 메시지 정합성을 보는 환경입니다. 앱 메모리 limit은 제거하고, `websocket-service`만 활성 연결 수 기준 HPA `1→2`를 겁니다. 담당 Pod 이전 자체가 성능 지표를 흔들 수 있으므로, 합격 기준은 P99 성능이 아니라 순번 일관성과 누락 회복 여부입니다.
 
-`user-service`와 `chat-service`는 HPA 대상이 아닙니다. 고정 replica에서 Headless Service와 gRPC `round_robin` 분산이 의도대로 동작하는지만 검증 범위로 둡니다.
+`user-service`와 `chat-service`는 HPA 대상이 아닙니다. 현재 구조는 Headless Service와 gRPC `round_robin`으로 고정 replica 분산만 검증합니다. 두 서비스를 HPA 대상으로 확장하려면 동적 endpoint 갱신을 안정적으로 처리할 중간 로드밸런싱 계층 도입을 검토해야 합니다.
 
 ### 4.4 Local Data Layer
 
-Postgres, Mongo, Redis도 dev/test/qa에서는 K8s 안에 띄웁니다. 운영용 DB manifest가 아니라 K8s 실행 경로와 e2e/HPA 정합성 검증을 독립적으로 재현하기 위한 로컬 데이터 계층입니다.
+dev/test/qa에서는 데이터 저장소도 K8s 안에 띄웁니다. 운영용 DB manifest가 아니라 K8s 실행 경로와 E2E/HPA 정합성 검증을 독립적으로 재현하기 위한 로컬 데이터 계층입니다.
 
 | 리소스 | 구현 | 저장소 | 이유 |
 | :--- | :--- | :--- | :--- |
 | Postgres | Deployment + ClusterIP | `emptyDir` | 사용자/방 스키마와 마이그레이션 검증 |
 | Mongo | Deployment + ClusterIP | `emptyDir` | 메시지 스키마, 인덱스, 누락 메시지 조회 검증 |
-| Redis | Deployment + ClusterIP | 메모리 | 인증 토큰 TTL, WebSocket 티켓, 처리율 제한, 라우팅 제어 상태 검증 |
+| Redis | Deployment + ClusterIP | 메모리 | 상태성 Redis 기능과 라우팅 제어 상태 검증 |
 
-여기서는 운영 수준의 데이터 보존보다 재현성과 정합성 검증을 우선했습니다. 로컬 데이터 계층은 매번 깨끗하게 재생성할 수 있고, e2e 데이터 정리도 단순합니다.
+로컬 데이터 계층은 운영용 데이터 보존보다 재현성과 정합성 검증을 우선합니다. 매번 깨끗하게 재생성할 수 있고, E2E 데이터 정리도 단순합니다.
 
 #### 데이터 저장소 이미지 기준
 
-dev/test/qa에서 쓰는 저장소 이미지는 특정 최신 기능이 필요하지 않으면 최신 메이저를 바로 따라가지 않습니다. 운영 사례가 많은 안정 버전으로 실행 기준선을 고정해, 애플리케이션 검증 결과가 이미지 변경에 흔들리지 않게 합니다.
+dev/test/qa에서 쓰는 저장소 이미지는 애플리케이션이 의존하는 기능을 기준으로 고정합니다. 최신 기능을 따라가기보다 실행 기준선을 고정해, 애플리케이션 검증 결과가 이미지 변경에 흔들리지 않게 합니다.
 
-| 저장소 | 현재 이미지 | 적용 기준 |
+| 저장소 | 현재 이미지 | 검증 포인트 |
 | :--- | :--- | :--- |
-| PostgreSQL | `postgres:17` | 트랜잭션, 행 잠금, `pg_trgm`을 검증할 수 있습니다. |
-| MongoDB | `mongo:7.0` | 메시지 저장, 유니크 인덱스, TTL 인덱스를 검증할 수 있습니다. |
-| Redis | `redis:7-alpine` | TTL, Lua 스크립트, keyspace notification을 검증할 수 있습니다. |
+| PostgreSQL | `postgres:17` | 트랜잭션, 행 잠금, `pg_trgm` |
+| MongoDB | `mongo:7.0` | 메시지 저장, 유니크 인덱스, TTL 인덱스 |
+| Redis | `redis:7-alpine` | TTL, Lua 스크립트, keyspace notification |
 
-운영 배포에서는 패치 버전 태그 또는 이미지 다이제스트 고정, 백업/복구, 고가용성, 업그레이드 리허설을 별도로 설계합니다.
+운영 배포에서는 저장소 버전 고정과 백업/복구 같은 운영 기준을 별도로 설계합니다.
 
 ### 4.5 Ingress와 외부 경로
 
@@ -647,9 +659,9 @@ Ingress는 브라우저와 테스트 클라이언트가 접근하는 외부 경�
 
 같은 kind 클러스터에 `dev`, `test`, `qa` namespace를 동시에 띄울 수 있으므로, Ingress host는 overlay에서 분리합니다. namespace와 host를 함께 나눠 외부 라우팅 규칙 충돌을 피합니다.
 
-kind 로컬 클러스터에서는 host port가 control-plane node에 매핑됩니다. 그래서 ingress-nginx controller도 해당 node에 고정해, 로컬 브라우저와 e2e runner가 같은 Ingress 경로를 사용하게 합니다.
+kind 로컬 클러스터에서는 host port가 control-plane node에 매핑됩니다. ingress-nginx controller를 해당 node에 고정해, 로컬 브라우저와 E2E runner가 같은 Ingress 경로를 사용하게 합니다.
 
-프론트엔드와 API는 인증 쿠키를 단순하게 다루기 위해 같은 origin 아래에 둡니다. 로컬 K8s 기준선에서는 Ingress 경로 라우팅으로 same-origin을 유지해 인증 흐름을 단순하게 둡니다.
+프론트엔드와 API는 refresh token 쿠키를 same-origin으로 다루기 위해 같은 host 아래에 둡니다. access token은 `Authorization` 헤더, refresh token은 HttpOnly cookie로 전달합니다. 이 구조에서는 Ingress 경로 라우팅만으로 CORS와 쿠키 경로 처리를 단순하게 유지할 수 있습니다.
 
 WebSocket 경로는 일반 HTTP와 달리 upgrade 연결이 길게 유지됩니다. 짧은 기본 timeout 때문에 정상 채팅 연결이 끊기지 않도록 Ingress에 WebSocket timeout 관련 nginx annotation을 명시합니다.
 
@@ -663,26 +675,15 @@ K8s에서 probe는 단순 헬스체크가 아니라 rollout과 트래픽 라우�
 | livenessProbe | 프로세스가 살아있는지 확인 | HTTP는 `/health`, gRPC는 TCP socket |
 | readinessProbe | 트래픽을 받아도 되는지 확인 | HTTP는 `/ready`, gRPC는 native gRPC health |
 
-user-service와 chat-service의 gRPC health는 DB 상태를 반영합니다. 이 값을 liveness에 넣으면 DB가 잠깐 느려졌다는 이유로 애플리케이션 Pod를 재시작하는 악순환이 생길 수 있습니다. 그래서 gRPC 서비스 liveness는 TCP socket으로 두고, readiness에서 DB 의존성을 확인합니다. 준비되지 않은 Pod는 Service 엔드포인트에서 빠져 새 트래픽을 받지 않지만, 프로세스 자체는 재시작하지 않습니다.
+`tcpSocket`과 `grpc`는 Kubernetes가 제공하는 probe 방식입니다. `tcpSocket`은 지정한 포트에 연결이 열리는지만 확인하고, `grpc`는 애플리케이션이 등록한 gRPC Health Checking Protocol의 `Check` 응답을 확인합니다.
+
+user-service와 chat-service의 gRPC health는 DB 상태를 반영합니다. 이 값을 liveness에 넣으면 DB가 잠깐 느려졌다는 이유로 애플리케이션 Pod를 재시작하는 악순환이 생길 수 있습니다. gRPC 서비스 liveness는 TCP socket으로 두고, readiness에서 DB 의존성을 확인합니다. 준비되지 않은 Pod는 Service 엔드포인트에서 빠져 새 트래픽을 받지 않지만, 프로세스 자체는 재시작하지 않습니다.
 
 WebSocket Service는 종료 조건이 더 엄격합니다. 연결 중인 세션과 저장 중인 메시지가 있기 때문에 Pod가 바로 내려가면 처리 중이던 메시지가 손실될 수 있습니다. 애플리케이션 내부의 우아한 종료 절차는 이미 브로드캐스트한 메시지의 저장 완료를 기다리도록 설계되어 있으므로, K8s Deployment에는 `terminationGracePeriodSeconds`를 주어 이 과정이 끝날 시간을 확보합니다.
 
-### 4.7 Job/CronJob 판단 기준
+### 4.7 E2E 실행 기준
 
-K8s에서는 요청을 계속 처리하는 프로세스와 배치 작업을 분리하는 것이 기본 원칙입니다. Deployment replica가 2개면 그 안의 백그라운드 고루틴도 2번 실행됩니다. 그래서 주기적으로 한 번만 실행되어야 하는 작업은 Deployment 내부 루프가 아니라 Job/CronJob으로 분리해야 합니다.
-
-다만 이번 설계에서는 “CronJob을 어떻게 만들까”보다 “정말 CronJob이 필요한가”를 먼저 다시 봤습니다.
-
-| 후보 작업 | 최종 판단 | 이유 |
-| :--- | :--- | :--- |
-| Refresh Token 만료 정리 | 제거 | Refresh Token 기준 저장소를 Redis TTL로 옮겨 만료 정리를 Redis가 담당 |
-| 탈퇴 사용자/삭제 방 보관 데이터 삭제 | 제거 | 기본 정책을 물리 삭제로 단순화하여 별도 보관 기간과 삭제 대상이 사라짐 |
-
-현재 dev/test/qa K8s overlay에는 애플리케이션 CronJob이 없습니다. K8s 기능을 보여주기 위한 리소스보다 실제로 필요한 실행 모델을 우선했습니다.
-
-### 4.8 E2E 실행 기준
-
-Docker Compose 실행 경로는 기본 실행 경로에서 제거했습니다. 현재 e2e는 K8s `test` overlay가 이미 bootstrap되어 있다는 전제로 실행됩니다.
+Docker Compose 실행 경로는 기본 실행 경로에서 제거했습니다. 현재 E2E는 K8s `test` overlay가 이미 bootstrap되어 있다는 전제로 실행됩니다.
 
 ```bash
 make test-up
@@ -695,7 +696,7 @@ go test -count=1 -tags=e2e ./test/e2e
 go test -count=1 -tags=integration,e2e ./...
 ```
 
-기본 엔드포인트는 다음과 같습니다. 클러스터 밖에서 실행되는 Go e2e runner가 Ingress를 통해 실제 HTTP/WebSocket 경로를 검증합니다.
+기본 엔드포인트는 다음과 같습니다. 클러스터 밖에서 실행되는 Go E2E runner가 Ingress를 통해 실제 HTTP/WebSocket 경로를 검증합니다.
 
 | 환경변수 | 기본값 | 용도 |
 | :--- | :--- | :--- |
@@ -703,11 +704,11 @@ go test -count=1 -tags=integration,e2e ./...
 | `E2E_WS_BASE_URL` | `http://test.gochat.localhost:30080/ws-api` | WebSocket ticket/API |
 | `E2E_K8S_NAMESPACE` | `go-chat-test` | readiness/replica/멤버십 검증 대상 |
 
-`test` overlay는 api-gateway, ws-gateway, websocket-service, user-service, chat-service를 `replicas: 2`로 고정합니다. HPA를 바로 붙이면 replica 변화, 라우팅 변화, 부하 변화가 한 번에 섞입니다. 먼저 같은 코드가 두 개 떠도 정합성이 깨지지 않는지 확인하고, `qa` overlay에서 WebSocket HPA 확장과 부하 조건을 검증합니다.
+`test` overlay는 주요 gateway/service를 `replicas: 2`로 고정합니다. HPA를 바로 붙이면 replica 변화와 부하 변화가 섞여 실패 원인을 좁히기 어렵습니다. 고정 replica에서 정합성을 확인한 뒤, `qa` overlay에서 WebSocket HPA 조건을 검증합니다.
 
-E2E 데이터 정리에서는 Redis `FLUSHALL`을 사용하지 않습니다. Redis에는 테스트 데이터뿐 아니라 WebSocket Service 후보 목록과 해시 링 검증 대상도 들어 있습니다. 전체 삭제를 하면 테스트가 검증해야 할 제어 상태까지 지우게 됩니다. 대신 Postgres/Mongo 데이터는 테스트 전용 데이터 정리로 격리하고, Redis는 `auth:rt:*`, `ws:ticket:*`, `rate:*`, `wss:room:lease:*`처럼 테스트 요청이 만든 상태성 키만 선택적으로 삭제합니다. `wss:member:*` 멤버십 키는 검증 대상이므로 보존합니다.
+E2E 데이터 정리에서는 Redis `FLUSHALL`을 사용하지 않습니다. Redis에는 테스트 데이터와 검증 대상인 멤버십 상태가 함께 있기 때문입니다. Postgres/Mongo는 테스트 데이터만 정리하고, Redis는 `auth:rt:*`, `ws:ticket:*`, `wss:room:lease:*` 등 테스트 요청이 만든 상태성 키만 삭제합니다. `wss:member:*`는 검증 대상이라 보존합니다.
 
-### 4.9 K6 부하와 HPA 정합성 검증
+### 4.8 K6 부하와 HPA 정합성 검증
 
 부하 테스트는 목적별로 분리합니다.
 
@@ -718,21 +719,21 @@ E2E 데이터 정리에서는 Redis `FLUSHALL`을 사용하지 않습니다. Red
 
 `dev-load`는 많은 연결과 메시지를 넣는 성능/부하 시나리오입니다. k6 자체가 병목이 되지 않도록 Kubernetes Job `parallelism=4`, `completionMode=Indexed`로 k6 Pod 4개를 띄우고, 각 Pod가 VU offset을 나눠 가집니다.
 
-`qa-load`는 C10K 성능 테스트가 아닙니다. 시작 전 기존 HPA와 Job을 지우고 `websocket-service`를 1 replica로 되돌린 뒤 HPA를 다시 붙입니다. 이전 테스트의 축소 안정화 시간 때문에 시작 replica가 2로 남아 있으면 WebSocket Service 확장 중 담당 Pod 이전을 재현하지 못하기 때문입니다. 합격 기준은 HTTP/WebSocket 에러 0, 순번 중복/역전 0, 누락 구간 회복, 정상 이전 기준 MongoDB 순번 공백 없음입니다.
+`qa-load`는 C10K 성능 테스트가 아닙니다. 매 실행마다 `websocket-service`를 1 replica에서 다시 시작해 HPA `1→2` 전환을 재현합니다. 이전 실행의 축소 안정화 때문에 2 replicas에서 시작하면 담당 Pod 이전을 검증하지 못합니다. 합격 기준은 HTTP/WebSocket 에러 없이 메시지 순번과 누락 회복이 유지되는지입니다.
 
-### 4.10 Docker Compose 제거와 기준점 보존
+### 4.9 Docker Compose 제거와 기준점 보존
 
-Docker Compose는 더 이상 기본 실행 경로가 아닙니다. 개발 확인과 e2e 모두 K8s 기준으로 정리했습니다. 다만 Docker 자체는 계속 사용합니다. 로컬 이미지를 빌드하고 kind/OrbStack/K8s 클러스터에 이미지를 제공하기 위해 Dockerfile은 필요합니다.
+Docker Compose는 더 이상 기본 실행 경로가 아닙니다. 개발 확인과 E2E 모두 K8s 기준으로 정리했습니다. Dockerfile은 계속 필요합니다. 로컬 이미지를 빌드하고 kind/OrbStack/K8s 클러스터에 이미지를 제공하기 위해서입니다.
 
 Compose 제거 전에 `legacy-compose-baseline` annotated tag를 남겼습니다. 나중에 “Compose 대비 K8s 성능 지표”를 비교하고 싶을 때, 기본 브랜치에 Compose 파일을 계속 들고 갈 필요 없이 해당 tag를 기준점으로 참조할 수 있습니다.
 
-이 결정으로 문서와 e2e가 K8s 하나만 바라보게 됩니다. “Compose에서는 되는데 K8s에서는 안 되는” 이중 실행 경로를 줄일 수 있습니다. 대신 처음 실행하려면 K8s bootstrap이 먼저 필요합니다. README는 dev/test/qa 실행 명령의 기준 문서로 두고, 디자인 문서는 왜 그런 구조가 되었는지를 설명합니다.
+Compose 제거의 효과는 문서와 E2E가 K8s 하나만 바라보게 하는 것입니다. “Compose에서는 되는데 K8s에서는 안 되는” 이중 실행 경로를 줄이는 대신, 처음 실행할 때는 K8s bootstrap이 먼저 필요합니다. README는 dev/test/qa 실행 명령의 기준 문서로 두고, 디자인 문서는 구조의 판단 근거를 설명합니다.
 
 ---
 
 ## 5. 테스트 전략
 
-테스트는 실행 범위에 따라 나눕니다. 단위 테스트는 빠르게 로직을 검증하고, 통합 테스트는 실제 저장소와의 차이를 확인합니다. E2E 테스트는 K8s `test` overlay에서 외부 사용자의 흐름을 검증합니다.
+테스트 전략은 빠른 로직 검증과 실제 실행 경로 검증을 분리합니다. 단위 테스트는 외부 의존성을 끊고, 통합 테스트는 실제 저장소와의 차이를 확인하며, E2E 테스트는 K8s `test` overlay에서 사용자 흐름을 검증합니다.
 
 ### 5.1 테스트 구성
 
@@ -760,7 +761,7 @@ Compose 제거 전에 `legacy-compose-baseline` annotated tag를 남겼습니다
 #### E2E 테스트
 
 - K8s `test` overlay로 전체 시스템을 띄우고 블랙박스로 검증한다.
-- e2e suite는 이미 bootstrap된 `go-chat-test` namespace의 readiness를 확인한 뒤 실행한다.
+- E2E suite는 이미 bootstrap된 `go-chat-test` namespace의 readiness를 확인한 뒤 실행한다.
 - 테스트 간 데이터 정리는 K8s 내부 Postgres truncate와 MongoDB drop으로 수행한다.
 - Redis 멤버십과 해시 링 상태는 검증 대상이므로 전체 삭제하지 않는다.
 - 시나리오 번호 순서대로 사용자 여정을 이어가며 검증한다.
@@ -769,9 +770,9 @@ Compose 제거 전에 `legacy-compose-baseline` annotated tag를 남겼습니다
 
 ## 6. 관측성
 
-관측성의 목표는 장애 위치를 빠르게 좁히는 것입니다. 메트릭으로 이상을 감지하고, 트레이스로 느린 구간을 찾고, 로그로 상세 맥락을 확인합니다. 프로파일은 코드 레벨 병목을 볼 때 사용합니다.
+관측성은 장애 위치를 빠르게 좁히기 위한 흐름으로 구성합니다. 메트릭으로 이상 범위를 잡고, 트레이스와 로그로 요청 맥락을 확인하며, 프로파일로 코드 병목을 봅니다.
 
-계측은 OpenTelemetry SDK를 중심으로 두고, 백엔드는 Grafana 스택으로 통일합니다. 로그·메트릭·트레이스는 Grafana Alloy가 수집하고, 프로파일은 `pyroscope-go`가 Pyroscope로 직접 보냅니다.
+계측은 OpenTelemetry SDK와 Grafana 스택으로 통일합니다. Alloy는 로그/메트릭/트레이스를 수집하고, 프로파일은 `pyroscope-go`가 Pyroscope로 보냅니다.
 
 ### 6.1 신호 구성
 
@@ -793,9 +794,11 @@ Compose 제거 전에 `legacy-compose-baseline` annotated tag를 남겼습니다
 | 커버리지 | HTTP/gRPC 경로, 저장소, WebSocket, 인증 경로 계측 |
 | 샘플링 | 트레이스는 10% 샘플링 |
 
+수집량도 설계 대상입니다. `/health`, `/ready` 같은 probe 요청은 장애 분석보다 노이즈를 많이 만들기 때문에 로그와 트레이스에서 제외합니다. URL path에 UUID를 그대로 남기면 사용자나 방마다 메트릭 시계열이 늘어나므로 `:id`로 정규화합니다. 트레이스는 10%만 샘플링해 로컬 검증 환경의 비용을 제한합니다.
+
 ### 6.3 통합 조회
 
-Grafana 대시보드는 장애를 좁히는 순서에 맞춰 나눕니다. 먼저 전체 상태를 보고, 트래픽과 저장소 지표로 범위를 좁힌 뒤, 메시지 흐름과 런타임 지표로 원인을 확인합니다.
+Grafana 대시보드는 장애 분석 흐름에 맞춥니다. 전체 상태에서 시작해 트래픽과 저장소 지표로 범위를 좁히고, 메시지 흐름과 런타임 지표로 원인을 확인합니다.
 
 | 대시보드 | 내용 |
 | :--- | :--- |
@@ -812,7 +815,7 @@ Grafana 대시보드는 장애를 좁히는 순서에 맞춰 나눕니다. 먼�
 
 ## 7. 검증 범위와 운영 경계
 
-이 문서가 주장하는 검증 범위는 로컬 kind 기반 K8s `dev`/`test`/`qa` 실행과 WebSocket HPA 정합성 검증까지입니다.
+검증 범위는 로컬 kind 기반 K8s `dev`/`test`/`qa` 실행과 WebSocket HPA 정합성 검증까지입니다.
 
 부하 검증 결과는 [Kubernetes C10K 부하 테스트 보고서](K8S_C10K_REPORT.md)에 정리합니다. HPA 확장 중 담당 Pod 이전 정합성 결과는 [README의 WebSocket HPA Consistency](../README.md#websocket-hpa-consistency)에 요약되어 있습니다.
 
@@ -829,4 +832,4 @@ Grafana 대시보드는 장애를 좁히는 순서에 맞춰 나눕니다. 먼�
 
 `local-secret.yaml`은 로컬 dev/test/qa용 샘플 값만 담습니다. 실제 인증 정보는 Git에 올리지 않고 외부 Secret 저장소나 배포 파이프라인에서 주입해야 합니다.
 
-이 문서는 로컬 재현 가능한 설계와 검증 범위를 설명합니다. 실제 운영으로 확장하려면 멀티 노드 장애 실험, Secret·백업 관리, 롤링 업데이트 중 연결 유지 정책을 별도 운영 설계로 다뤄야 합니다.
+현재 설계는 로컬에서 재현 가능한 실행과 검증에 초점을 둡니다. 실제 운영으로 확장하려면 멀티 노드 장애 실험, Secret·백업 관리, 롤링 업데이트 중 연결 유지 정책을 별도 운영 설계로 다뤄야 합니다.
