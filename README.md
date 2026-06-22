@@ -8,15 +8,15 @@ Go와 Kubernetes로 구현한 실시간 채팅 MSA입니다. WebSocket 서버를
 
 ## 화면
 
-채팅 흐름을 확인하기 위한 프론트엔드입니다. 이 프로젝트의 핵심은 백엔드 분산 처리와 Kubernetes 검증입니다.
+clean `dev` 클러스터에서 `demomanager`와 `demomember`가 `Kubernetes Demo Room`에 참여해 메시지를 주고받은 뒤 캡처한 화면입니다. 대시보드는 같은 시나리오 트래픽이 반영된 Grafana `OVERVIEW`입니다.
 
 | 로비 | 채팅 |
 | :---: | :---: |
-| ![로비](docs/images/스크린샷_로비.png) | ![채팅](docs/images/스크린샷_채팅방.png) |
+| ![로비](docs/images/readme-lobby.png) | ![채팅](docs/images/readme-chat.png) |
 
 | 대시보드 |
 | :---: |
-| ![대시보드](docs/images/스크린샷_대시보드.png) |
+| ![대시보드](docs/images/readme-dashboard.png) |
 
 ## 빠른 실행
 
