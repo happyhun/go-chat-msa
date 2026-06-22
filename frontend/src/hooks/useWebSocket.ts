@@ -1,6 +1,6 @@
 import { useRef, useCallback, useEffect, useState } from 'react'
 import type { WsOutgoing } from '../types'
-import { createWsTicket } from '../api/client'
+import { ApiError, createWsTicket } from '../api/client'
 
 const MAX_RECONNECT_ATTEMPTS = 20
 const INITIAL_RECONNECT_MIN_MS = 500
@@ -14,6 +14,17 @@ type OutboundMessage = {
   type: string
 }
 
+export type SendResult =
+  | { ok: true; queued: boolean; clientMsgId: string }
+  | { ok: false; reason: 'queue_full'; clientMsgId: string }
+
+export type WebSocketStopReason =
+  | 'auth'
+  | 'rate_limited'
+  | 'service_unavailable'
+  | 'connection_failed'
+  | 'ticket_failed'
+
 function normalizeClientMsgIds(value: void | string[] | Set<string>): Set<string> {
   if (!value) return new Set()
   if (value instanceof Set) return value
@@ -25,13 +36,22 @@ interface UseWebSocketOptions {
   onMessage: (msg: WsOutgoing) => void
   onConflict?: () => void
   onReconnected?: () => void | string[] | Set<string> | Promise<void | string[] | Set<string>>
-  onGaveUp?: () => void
+  onGaveUp?: (reason: WebSocketStopReason) => void
+}
+
+function ticketFailureReason(err: unknown): WebSocketStopReason {
+  if (!(err instanceof ApiError)) return 'ticket_failed'
+  if (err.status === 401) return 'auth'
+  if (err.status === 429) return 'rate_limited'
+  if ([502, 503, 504].includes(err.status)) return 'service_unavailable'
+  return 'ticket_failed'
 }
 
 export function useWebSocket({ roomId, onMessage, onConflict, onReconnected, onGaveUp }: UseWebSocketOptions) {
   const wsRef = useRef<WebSocket | null>(null)
   const [connected, setConnected] = useState(false)
   const [reconnecting, setReconnecting] = useState(false)
+  const [queuedCount, setQueuedCount] = useState(0)
   const attemptRef = useRef(0)
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
   const mountedRef = useRef(true)
@@ -53,15 +73,23 @@ export function useWebSocket({ roomId, onMessage, onConflict, onReconnected, onG
     onGaveUpRef.current = onGaveUp
   }, [onMessage, onConflict, onReconnected, onGaveUp])
 
+  const updateQueuedCount = useCallback(() => {
+    setQueuedCount(sendQueueRef.current.length)
+  }, [])
+
   const queueMessages = useCallback((messages: OutboundMessage[]) => {
     const existing = new Set(sendQueueRef.current.map((msg) => msg.client_msg_id))
+    let queued = 0
     for (const msg of messages) {
       if (existing.has(msg.client_msg_id)) continue
       if (sendQueueRef.current.length >= MAX_SEND_QUEUE_SIZE) break
       sendQueueRef.current.push(msg)
       existing.add(msg.client_msg_id)
+      queued += 1
     }
-  }, [])
+    updateQueuedCount()
+    return queued
+  }, [updateQueuedCount])
 
   const movePendingToQueue = useCallback(() => {
     const pending = Array.from(pendingRef.current.values())
@@ -75,8 +103,12 @@ export function useWebSocket({ roomId, onMessage, onConflict, onReconnected, onG
   const scheduleReconnect = useCallback(() => {
     if (!mountedRef.current || !shouldReconnectRef.current) return
     if (attemptRef.current >= MAX_RECONNECT_ATTEMPTS) {
+      shouldReconnectRef.current = false
+      acceptingDirectSendRef.current = false
+      sendQueueRef.current = []
+      updateQueuedCount()
       setReconnecting(false)
-      onGaveUpRef.current?.()
+      onGaveUpRef.current?.('connection_failed')
       return
     }
 
@@ -90,7 +122,7 @@ export function useWebSocket({ roomId, onMessage, onConflict, onReconnected, onG
         connectOnceRef.current()
       }
     }, delay)
-  }, [])
+  }, [updateQueuedCount])
 
   const connectOnce = useCallback(async (): Promise<boolean> => {
     if (!mountedRef.current) return false
@@ -99,11 +131,15 @@ export function useWebSocket({ roomId, onMessage, onConflict, onReconnected, onG
     try {
       const res = await createWsTicket()
       ticket = res.ticket
-    } catch {
-      // 티켓 발급 실패 (토큰 만료, 방 삭제 등) — 재접속 중단
+    } catch (err) {
+      // 티켓 발급 실패는 HTTP 상태를 보고 사용자에게 다른 복구 경로를 안내한다.
       if (mountedRef.current) {
         shouldReconnectRef.current = false
-        onGaveUpRef.current?.()
+        acceptingDirectSendRef.current = false
+        sendQueueRef.current = []
+        updateQueuedCount()
+        setReconnecting(false)
+        onGaveUpRef.current?.(ticketFailureReason(err))
       }
       return false
     }
@@ -127,6 +163,7 @@ export function useWebSocket({ roomId, onMessage, onConflict, onReconnected, onG
         acceptingDirectSendRef.current = !wasReconnect
         let queued = sendQueueRef.current
         sendQueueRef.current = []
+        updateQueuedCount()
         if (wasReconnect) {
           try {
             const caughtUp = await onReconnectedRef.current?.()
@@ -136,6 +173,7 @@ export function useWebSocket({ roomId, onMessage, onConflict, onReconnected, onG
             }
           } catch {
             sendQueueRef.current = [...queued, ...sendQueueRef.current].slice(0, MAX_SEND_QUEUE_SIZE)
+            updateQueuedCount()
             acceptingDirectSendRef.current = false
             ws.close()
             resolve(false)
@@ -144,11 +182,13 @@ export function useWebSocket({ roomId, onMessage, onConflict, onReconnected, onG
         }
         if (!mountedRef.current || ws.readyState !== WebSocket.OPEN) {
           sendQueueRef.current = [...queued, ...sendQueueRef.current].slice(0, MAX_SEND_QUEUE_SIZE)
+          updateQueuedCount()
           resolve(false)
           return
         }
         queued = [...queued, ...sendQueueRef.current].slice(0, MAX_SEND_QUEUE_SIZE)
         sendQueueRef.current = []
+        updateQueuedCount()
         for (const msg of queued) {
           pendingRef.current.set(msg.client_msg_id, msg)
           ws.send(JSON.stringify(msg))
@@ -163,7 +203,13 @@ export function useWebSocket({ roomId, onMessage, onConflict, onReconnected, onG
       }
 
       ws.onmessage = (ev) => {
-        const msg: WsOutgoing = JSON.parse(ev.data)
+        let msg: WsOutgoing
+        try {
+          msg = JSON.parse(ev.data)
+        } catch {
+          ws.close()
+          return
+        }
         if (msg.type === 'conflict') {
           shouldReconnectRef.current = false
           acceptingDirectSendRef.current = false
@@ -190,7 +236,7 @@ export function useWebSocket({ roomId, onMessage, onConflict, onReconnected, onG
         }
       }
     })
-  }, [movePendingToQueue, roomId, scheduleReconnect])
+  }, [movePendingToQueue, roomId, scheduleReconnect, updateQueuedCount])
 
   useEffect(() => {
     connectOnceRef.current = connectOnce
@@ -207,7 +253,7 @@ export function useWebSocket({ roomId, onMessage, onConflict, onReconnected, onG
     await connectOnce()
   }, [connectOnce])
 
-  const send = useCallback((content: string) => {
+  const send = useCallback((content: string): SendResult => {
     const msg: OutboundMessage = {
       content,
       client_msg_id: crypto.randomUUID(),
@@ -216,9 +262,13 @@ export function useWebSocket({ roomId, onMessage, onConflict, onReconnected, onG
     if (acceptingDirectSendRef.current && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       pendingRef.current.set(msg.client_msg_id, msg)
       wsRef.current.send(JSON.stringify(msg))
-      return
+      return { ok: true, queued: false, clientMsgId: msg.client_msg_id }
     }
-    queueMessages([msg])
+    const queued = queueMessages([msg])
+    if (queued === 0) {
+      return { ok: false, reason: 'queue_full', clientMsgId: msg.client_msg_id }
+    }
+    return { ok: true, queued: true, clientMsgId: msg.client_msg_id }
   }, [queueMessages])
 
   const disconnect = useCallback(() => {
@@ -228,9 +278,10 @@ export function useWebSocket({ roomId, onMessage, onConflict, onReconnected, onG
     clearTimeout(timerRef.current)
     pendingRef.current.clear()
     sendQueueRef.current = []
+    updateQueuedCount()
     wsRef.current?.close()
     wsRef.current = null
-  }, [])
+  }, [updateQueuedCount])
 
   useEffect(() => {
     const pending = pendingRef.current
@@ -242,9 +293,10 @@ export function useWebSocket({ roomId, onMessage, onConflict, onReconnected, onG
       clearTimeout(timerRef.current)
       pending.clear()
       sendQueueRef.current = []
+      setQueuedCount(0)
       wsRef.current?.close()
     }
   }, [])
 
-  return { connected, reconnecting, connect, disconnect, send }
+  return { connected, reconnecting, queuedCount, connect, disconnect, send }
 }
