@@ -8,7 +8,7 @@ Go와 Kubernetes로 구현한 실시간 채팅 MSA입니다. WebSocket 서버를
 
 ## 화면
 
-clean `dev` 클러스터에서 `demomanager`와 `demomember`가 `Kubernetes Demo Room`에 참여해 메시지를 주고받은 뒤 캡처한 화면입니다. 대시보드는 같은 시나리오 트래픽이 반영된 Grafana `OVERVIEW`입니다.
+데모용 프론트엔드와 Grafana 대시보드 화면입니다.
 
 | 로비 | 채팅 |
 | :---: | :---: |

@@ -223,7 +223,6 @@ HTTP/gRPC panic recovery는 `gochat_panic_recovered` counter를 증가시키고 
 | gochat_persistence_retry_queue_full_total | counter | - |
 
 - 서비스: websocket-service
-- 코드상 `gochat_persistence_retry_queue_full_total`은 등록되어 있지만 현재 Grafana dashboard query에는 직접 쓰이지 않는다.
 
 ### PostgreSQL
 
@@ -343,7 +342,7 @@ Alloy는 cAdvisor에서 위 container 메트릭만 keep하고, namespace/pod가 
 | go_memory_allocations_total | observable counter | - |
 | go_memory_gc_goal | observable updowncounter | - |
 
-K8s 공통 라벨(`namespace`, `service`, `pod`, `node`, `component` 등)은 Alloy transform으로 추가된다. `go_memory_type`은 OTel attribute `go.memory.type`이 Prometheus label로 변환된 이름이며, 현재 runtime dashboard는 `stack`, `other`를 조회한다.
+K8s 공통 라벨(`namespace`, `service`, `pod`, `node`, `component` 등)은 Alloy transform으로 추가된다. `go_memory_type`은 OTel attribute `go.memory.type`이 Prometheus label로 변환된 이름이다.
 
 ---
 

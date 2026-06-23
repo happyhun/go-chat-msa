@@ -790,18 +790,17 @@ Compose 제거의 효과는 문서와 E2E가 K8s 하나만 바라보게 하는 �
 
 ### 6.3 통합 조회
 
-Grafana 대시보드는 장애 분석 흐름에 맞춥니다. 전체 상태에서 시작해 트래픽과 저장소 지표로 범위를 좁히고, 메시지 흐름과 런타임 지표로 원인을 확인합니다.
+Grafana 대시보드는 장애 분석 흐름에 맞춥니다. 전체 상태에서 시작해 API traffic, realtime, 저장소, platform runtime 지표로 범위를 좁힙니다.
 
 | 대시보드 | 내용 |
 | :--- | :--- |
-| Overview | 서비스 상태, 전체 시스템 헬스 |
-| Traffic | HTTP/gRPC 요청률, 지연, 에러율 |
-| Database | PostgreSQL, MongoDB 쿼리 성능 |
-| Message | WebSocket 메시지 흐름, 저장, 재시도 |
-| Runtime | Go 런타임 (GC, 메모리, 고루틴) |
-| Infra | 컨테이너 CPU/메모리 사용량 (cAdvisor) |
+| Operations Overview | active alerts, availability, latency, traffic, realtime, persistence, platform 핵심 상태 |
+| API Traffic | HTTP/gRPC 요청률, latency, error, route/method별 상위 지표 |
+| Realtime Messaging | WebSocket 연결, message RPS, drop/rate limit, routing, ownership, handoff |
+| Data Persistence | persistence retry/drain, PostgreSQL, MongoDB, Redis pool 지표 |
+| Platform Runtime | Kubernetes replica/restart/HPA, container CPU/memory, Go runtime |
 
-`trace_id`를 기준으로 Loki 로그와 Tempo 트레이스를 연결합니다. 로그에서 트레이스로, 트레이스에서 로그로 바로 이동할 수 있어 장애 분석 중 화면 전환 비용을 줄입니다.
+`trace_id`를 기준으로 Loki 로그와 Tempo 트레이스를 연결합니다. 로그/트레이스/프로파일은 별도 커스텀 대시보드보다 Grafana Explore와 drilldown 화면을 기본 경로로 사용해 장애 분석 중 화면 전환 비용을 줄입니다.
 
 ---
 
