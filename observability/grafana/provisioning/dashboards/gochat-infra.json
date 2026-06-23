@@ -35,7 +35,7 @@
     {
       "collapsed": false,
       "id": 1,
-      "title": "K8s Workloads",
+      "title": "Kubernetes Health",
       "type": "row",
       "gridPos": {
         "x": 0,
@@ -46,7 +46,7 @@
     },
     {
       "id": 2,
-      "title": "Ready Replicas",
+      "title": "Replica Readiness",
       "type": "timeseries",
       "gridPos": {
         "x": 0,
@@ -92,11 +92,23 @@
         },
         "overrides": []
       },
-      "options": {}
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "Ready vs desired deployment replicas."
     },
     {
       "id": 3,
-      "title": "Pod Restarts",
+      "title": "Replica Shortfall",
       "type": "timeseries",
       "gridPos": {
         "x": 8,
@@ -110,7 +122,60 @@
       },
       "targets": [
         {
-          "expr": "sum by(pod,container) (increase(kube_pod_container_status_restarts_total{namespace=~\"$namespace\",pod=~\"$pod\"}[$__range]))",
+          "expr": "(kube_deployment_spec_replicas{namespace=~\"$namespace\"} - kube_deployment_status_replicas_available{namespace=~\"$namespace\"})",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "{{deployment}} unavailable"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "Desired minus available replicas by deployment."
+    },
+    {
+      "id": 4,
+      "title": "Pod Restarts",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 16,
+        "y": 1,
+        "w": 8,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by(pod,container) (increase(kube_pod_container_status_restarts_total{namespace=~\"$namespace\",pod=~\"$pod\"}[$__range])) or on() vector(0)",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
@@ -133,17 +198,29 @@
         },
         "overrides": []
       },
-      "options": {}
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "Container restarts over the selected time range."
     },
     {
-      "id": 4,
-      "title": "Pod Placement",
-      "type": "table",
+      "id": 6,
+      "title": "HPA Replicas",
+      "type": "timeseries",
       "gridPos": {
-        "x": 16,
-        "y": 1,
-        "w": 8,
-        "h": 7
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
       },
       "datasource": {
         "type": "prometheus",
@@ -151,25 +228,41 @@
       },
       "targets": [
         {
-          "expr": "kube_pod_info{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}",
+          "expr": "kube_horizontalpodautoscaler_status_current_replicas{namespace=~\"$namespace\"}",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "instant": true,
-          "format": "table",
-          "range": false
+          "legendFormat": "{{horizontalpodautoscaler}} current"
+        },
+        {
+          "expr": "kube_horizontalpodautoscaler_status_desired_replicas{namespace=~\"$namespace\"}",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "{{horizontalpodautoscaler}} desired"
+        },
+        {
+          "expr": "kube_horizontalpodautoscaler_spec_max_replicas{namespace=~\"$namespace\"}",
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "{{horizontalpodautoscaler}} max"
         }
       ],
       "fieldConfig": {
         "defaults": {
           "custom": {
-            "align": "auto",
-            "cellOptions": {
-              "type": "auto"
-            },
-            "inspect": false
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
           },
           "unit": "short",
           "decimals": 0
@@ -177,84 +270,106 @@
         "overrides": []
       },
       "options": {
-        "showHeader": true,
-        "cellHeight": "sm",
-        "footer": {
-          "show": false,
-          "reducer": [
-            "sum"
-          ],
-          "countRows": false,
-          "fields": ""
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
         }
       },
-      "transformations": [
+      "description": "HPA current, desired, and max replicas. No HPA remains No data."
+    },
+    {
+      "id": 7,
+      "title": "Recovered Panics",
+      "type": "stat",
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
         {
-          "id": "labelsToFields",
-          "options": {
-            "mode": "columns"
-          }
-        },
-        {
-          "id": "organize",
-          "options": {
-            "excludeByName": {
-              "Time": true,
-              "__name__": true,
-              "Value": true,
-              "container": true,
-              "component": true,
-              "created_by_kind": true,
-              "created_by_name": true,
-              "host_ip": true,
-              "host_network": true,
-              "id": true,
-              "image": true,
-              "instance": true,
-              "job": true,
-              "namespace": true,
-              "pod_ip": true,
-              "service_instance_id": true,
-              "uid": true,
-              "endpoint": true,
-              "cpu": true,
-              "name": true,
-              "deployment": true,
-              "vcs_revision": true,
-              "vcs_time": true
-            },
-            "includeByName": {},
-            "indexByName": {
-              "pod": 0,
-              "node": 1
-            },
-            "renameByName": {
-              "pod": "Pod",
-              "node": "Node"
-            }
+          "expr": "sum(increase(gochat_panic_recovered_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\",node=~\"$node\",component=~\"$component\"}[$__range])) or on() vector(0)",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
           }
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "noValue": "No data"
+      },
+      "description": "Recovered panics during the selected range."
     },
     {
       "collapsed": false,
-      "id": 5,
-      "title": "Compute",
+      "id": 8,
+      "title": "Resource Usage",
       "type": "row",
       "gridPos": {
         "x": 0,
-        "y": 8,
+        "y": 17,
         "w": 24,
         "h": 1
       }
     },
     {
-      "id": 6,
-      "title": "App CPU by Pod",
+      "id": 9,
+      "title": "CPU by Pod",
       "type": "timeseries",
       "gridPos": {
         "x": 0,
-        "y": 9,
+        "y": 18,
         "w": 8,
         "h": 7
       },
@@ -283,19 +398,31 @@
             "showPoints": "never"
           },
           "unit": "cores",
-          "decimals": 3
+          "decimals": 2
         },
         "overrides": []
       },
-      "options": {}
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "CPU cores used by application containers."
     },
     {
-      "id": 7,
-      "title": "App Memory by Pod",
+      "id": 10,
+      "title": "Working Set Memory",
       "type": "timeseries",
       "gridPos": {
         "x": 8,
-        "y": 9,
+        "y": 18,
         "w": 8,
         "h": 7
       },
@@ -328,15 +455,27 @@
         },
         "overrides": []
       },
-      "options": {}
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "Container memory working set by pod."
     },
     {
-      "id": 8,
-      "title": "Namespace CPU by Node",
+      "id": 11,
+      "title": "RSS Memory",
       "type": "timeseries",
       "gridPos": {
         "x": 16,
-        "y": 9,
+        "y": 18,
         "w": 8,
         "h": 7
       },
@@ -346,13 +485,13 @@
       },
       "targets": [
         {
-          "expr": "sum by(node) (rate(container_cpu_usage_seconds_total{namespace=~\"$namespace\",node=~\"$node\",container!=\"\",container!=\"POD\"}[$__rate_interval]))",
-          "refId": "A",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "legendFormat": "{{node}}"
+          "expr": "sum by(pod,container) (container_memory_rss{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\",container!=\"\",container!=\"POD\",container!=\"k6\"})",
+          "refId": "A",
+          "legendFormat": "{{pod}} {{container}}"
         }
       ],
       "fieldConfig": {
@@ -364,33 +503,45 @@
             "fillOpacity": 8,
             "showPoints": "never"
           },
-          "unit": "cores",
-          "decimals": 3
+          "unit": "bytes",
+          "decimals": 2
         },
         "overrides": []
       },
-      "options": {}
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "Resident Set Size by pod/container. Compare with working set for memory pressure and Go heap behavior."
     },
     {
       "collapsed": false,
-      "id": 9,
-      "title": "Autoscaling Readiness",
+      "id": 12,
+      "title": "Go Runtime",
       "type": "row",
       "gridPos": {
         "x": 0,
-        "y": 16,
+        "y": 26,
         "w": 24,
         "h": 1
       }
     },
     {
-      "id": 10,
-      "title": "HPA Replicas",
+      "id": 13,
+      "title": "Goroutines",
       "type": "timeseries",
       "gridPos": {
         "x": 0,
-        "y": 17,
-        "w": 8,
+        "y": 27,
+        "w": 6,
         "h": 7
       },
       "datasource": {
@@ -399,167 +550,13 @@
       },
       "targets": [
         {
-          "expr": "kube_horizontalpodautoscaler_status_current_replicas{namespace=~\"$namespace\"} or vector(0)",
+          "expr": "go_goroutine_count{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\",node=~\"$node\",component=~\"$component\"}",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "legendFormat": "{{horizontalpodautoscaler}} current"
-        },
-        {
-          "expr": "kube_horizontalpodautoscaler_status_desired_replicas{namespace=~\"$namespace\"} or vector(0)",
-          "refId": "B",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "legendFormat": "{{horizontalpodautoscaler}} desired"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "drawStyle": "line",
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "fillOpacity": 8,
-            "showPoints": "never"
-          },
-          "unit": "short",
-          "decimals": 0
-        },
-        "overrides": []
-      },
-      "options": {}
-    },
-    {
-      "id": 11,
-      "title": "Build Info",
-      "type": "table",
-      "gridPos": {
-        "x": 8,
-        "y": 17,
-        "w": 8,
-        "h": 7
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "targets": [
-        {
-          "expr": "gochat_build_info{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\",node=~\"$node\",component=~\"$component\"}",
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "instant": true,
-          "format": "table",
-          "range": false
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "align": "auto",
-            "cellOptions": {
-              "type": "auto"
-            },
-            "inspect": false
-          },
-          "unit": "short",
-          "decimals": 0
-        },
-        "overrides": []
-      },
-      "options": {
-        "showHeader": true,
-        "cellHeight": "sm",
-        "footer": {
-          "show": false,
-          "reducer": [
-            "sum"
-          ],
-          "countRows": false,
-          "fields": ""
-        }
-      },
-      "transformations": [
-        {
-          "id": "labelsToFields",
-          "options": {
-            "mode": "columns"
-          }
-        },
-        {
-          "id": "organize",
-          "options": {
-            "excludeByName": {
-              "Time": true,
-              "__name__": true,
-              "Value": true,
-              "container": true,
-              "component": true,
-              "created_by_kind": true,
-              "created_by_name": true,
-              "host_ip": true,
-              "host_network": true,
-              "id": true,
-              "image": true,
-              "instance": true,
-              "job": true,
-              "namespace": true,
-              "node": true,
-              "pod": true,
-              "pod_ip": true,
-              "service_instance_id": true,
-              "uid": true,
-              "endpoint": true,
-              "cpu": true,
-              "name": true,
-              "deployment": true,
-              "vcs_revision": true,
-              "vcs_time": true
-            },
-            "includeByName": {},
-            "indexByName": {
-              "service": 0,
-              "goversion": 1,
-              "vcs_modified": 2
-            },
-            "renameByName": {
-              "service": "Service",
-              "goversion": "Go",
-              "vcs_modified": "Dirty"
-            }
-          }
-        }
-      ]
-    },
-    {
-      "id": 12,
-      "title": "Panics",
-      "type": "stat",
-      "gridPos": {
-        "x": 16,
-        "y": 17,
-        "w": 8,
-        "h": 7
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "targets": [
-        {
-          "expr": "sum(increase(gochat_panic_recovered_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\",node=~\"$node\",component=~\"$component\"}[$__range])) or vector(0)",
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          }
+          "legendFormat": "{{service}} {{pod}}"
         }
       ],
       "fieldConfig": {
@@ -577,27 +574,184 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "area",
-        "justifyMode": "center",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
         },
-        "textMode": "auto",
-        "noValue": "0"
-      }
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "Goroutine count by service/pod."
+    },
+    {
+      "id": 14,
+      "title": "Go Memory",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 6,
+        "y": 27,
+        "w": 6,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by(service,go_memory_type) (go_memory_used_bytes{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\",node=~\"$node\",component=~\"$component\"})",
+          "refId": "A",
+          "legendFormat": "{{service}} {{go_memory_type}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "bytes",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "Go runtime memory by service and runtime memory type. Includes heap, stack, metadata, and other runtime classes."
+    },
+    {
+      "id": 15,
+      "title": "Go Allocations",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 27,
+        "w": 6,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "rate(go_memory_allocated_bytes_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\",node=~\"$node\",component=~\"$component\"}[$__rate_interval])",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "{{service}} {{pod}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "Bps",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "Go heap allocation rate."
+    },
+    {
+      "id": 16,
+      "title": "Go GC Goal",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 18,
+        "y": 27,
+        "w": 6,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "go_memory_gc_goal_bytes{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\",node=~\"$node\",component=~\"$component\"}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "{{service}} {{pod}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "bytes",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "Go GC target heap size."
     }
   ],
   "refresh": "15s",
   "schemaVersion": 39,
   "tags": [
     "gochat",
-    "infra"
+    "platform"
   ],
   "templating": {
     "list": [
@@ -609,17 +763,18 @@
           "uid": "prometheus"
         },
         "query": {
-          "query": "label_values(kube_pod_info, namespace)",
+          "query": "label_values(gochat_build_info, namespace)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
         "sort": 1,
-        "includeAll": false,
+        "includeAll": true,
         "current": {
           "selected": true,
-          "text": "go-chat-test",
-          "value": "go-chat-test"
-        }
+          "text": "All",
+          "value": "$__all"
+        },
+        "allValue": "go-chat-.*"
       },
       {
         "name": "service",
@@ -713,8 +868,8 @@
   },
   "timepicker": {},
   "timezone": "Asia/Seoul",
-  "title": "K8S INFRA",
+  "title": "Platform Runtime",
   "uid": "gochat-infra",
-  "version": 1,
+  "version": 6,
   "weekStart": ""
 }

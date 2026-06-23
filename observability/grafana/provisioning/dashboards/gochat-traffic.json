@@ -35,7 +35,7 @@
     {
       "collapsed": false,
       "id": 1,
-      "title": "HTTP",
+      "title": "HTTP Inbound",
       "type": "row",
       "gridPos": {
         "x": 0,
@@ -60,7 +60,7 @@
       },
       "targets": [
         {
-          "expr": "sum by(service,path,method) (rate(gochat_http_requests_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))",
+          "expr": "sum by(service,method,path) (rate(gochat_http_requests_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
@@ -83,11 +83,23 @@
         },
         "overrides": []
       },
-      "options": {}
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "HTTP throughput by service, method, and normalized path."
     },
     {
       "id": 3,
-      "title": "HTTP Error Rate",
+      "title": "HTTP 5xx Ratio",
       "type": "timeseries",
       "gridPos": {
         "x": 8,
@@ -101,7 +113,7 @@
       },
       "targets": [
         {
-          "expr": "(sum by(service) (rate(gochat_http_requests_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\",status_code=~\"5..\"}[$__rate_interval])) / sum by(service) (rate(gochat_http_requests_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) and on(service) (sum by(service) (rate(gochat_http_requests_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval])) > 0) or vector(0)",
+          "expr": "(sum by(service) (rate(gochat_http_requests_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\",status_code=~\"5..\"}[$__rate_interval])) / sum by(service) (rate(gochat_http_requests_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) and on(service) (sum by(service) (rate(gochat_http_requests_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval])) > 0)",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
@@ -120,18 +132,28 @@
             "showPoints": "never"
           },
           "unit": "percentunit",
-          "decimals": 2,
-          "min": 0,
-          "max": 1
+          "decimals": 4
         },
         "overrides": []
       },
-      "options": {}
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "HTTP 5xx error ratio by service. When there is no traffic, the panel stays No data."
     },
     {
       "id": 4,
-      "title": "Slow HTTP P99",
-      "type": "table",
+      "title": "HTTP Route P99",
+      "type": "timeseries",
       "gridPos": {
         "x": 16,
         "y": 1,
@@ -144,12 +166,65 @@
       },
       "targets": [
         {
+          "expr": "histogram_quantile(0.99, sum by(service,method,path,le) (rate(gochat_http_request_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "topk(8, sort_desc((histogram_quantile(0.99, sum by(service,path,method,le) (rate(gochat_http_request_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000) unless (histogram_quantile(0.99, sum by(service,path,method,le) (rate(gochat_http_request_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000) != (histogram_quantile(0.99, sum by(service,path,method,le) (rate(gochat_http_request_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000)))",
+          "legendFormat": "{{service}} {{method}} {{path}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "ms",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "HTTP P99 latency by normalized route."
+    },
+    {
+      "id": 5,
+      "title": "Slowest HTTP Routes",
+      "type": "table",
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "topk(12, sort_desc((histogram_quantile(0.99, sum by(service,method,path,le) (increase(gochat_http_request_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__range]))) * 1000) and on(service,method,path) (sum by(service,method,path) (increase(gochat_http_request_duration_seconds_count{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__range])) > 0)))",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
           "instant": true,
           "format": "table",
           "range": false
@@ -164,59 +239,10 @@
             },
             "inspect": false
           },
-          "unit": "short",
+          "unit": "ms",
           "decimals": 0
         },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "P99 ms"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "ms"
-              },
-              {
-                "id": "decimals",
-                "value": 0
-              },
-              {
-                "id": "custom.align",
-                "value": "right"
-              },
-              {
-                "id": "custom.width",
-                "value": 72
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Service"
-            },
-            "properties": [
-              {
-                "id": "custom.width",
-                "value": 118
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Method"
-            },
-            "properties": [
-              {
-                "id": "custom.width",
-                "value": 66
-              }
-            ]
-          }
-        ]
+        "overrides": []
       },
       "options": {
         "showHeader": true,
@@ -243,11 +269,19 @@
             "excludeByName": {
               "Time": true,
               "__name__": true,
-              "le": true,
               "job": true,
               "instance": true,
               "namespace": true,
-              "pod": true
+              "pod": true,
+              "node": true,
+              "container": true,
+              "endpoint": true,
+              "le": true,
+              "Value #A": true,
+              "Value #B": true,
+              "Value #C": true,
+              "Value #D": true,
+              "Value #E": true
             },
             "includeByName": {},
             "indexByName": {
@@ -264,27 +298,126 @@
             }
           }
         }
-      ]
+      ],
+      "description": "Highest HTTP P99 routes over the selected time range. Routes with no requests in the range are excluded."
+    },
+    {
+      "id": 6,
+      "title": "Busiest HTTP Routes",
+      "type": "table",
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "topk(12, sort_desc((sum by(service,method,path) (rate(gochat_http_requests_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__range]))) and on(service,method,path) (sum by(service,method,path) (increase(gochat_http_requests_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__range])) > 0)))",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "instant": true,
+          "format": "table",
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "unit": "reqps",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      },
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {
+            "mode": "columns"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "job": true,
+              "instance": true,
+              "namespace": true,
+              "pod": true,
+              "node": true,
+              "container": true,
+              "endpoint": true,
+              "le": true,
+              "Value #A": true,
+              "Value #B": true,
+              "Value #C": true,
+              "Value #D": true,
+              "Value #E": true
+            },
+            "includeByName": {},
+            "indexByName": {
+              "Value": 0,
+              "service": 1,
+              "method": 2,
+              "path": 3
+            },
+            "renameByName": {
+              "Value": "RPS",
+              "service": "Service",
+              "method": "Method",
+              "path": "Path"
+            }
+          }
+        }
+      ],
+      "description": "Highest average HTTP RPS routes over the selected time range. Routes with no requests in the range are excluded."
     },
     {
       "collapsed": false,
-      "id": 5,
-      "title": "gRPC",
+      "id": 7,
+      "title": "gRPC Inbound",
       "type": "row",
       "gridPos": {
         "x": 0,
-        "y": 8,
+        "y": 17,
         "w": 24,
         "h": 1
       }
     },
     {
-      "id": 6,
-      "title": "gRPC Server RPS",
+      "id": 8,
+      "title": "gRPC Inbound RPS",
       "type": "timeseries",
       "gridPos": {
         "x": 0,
-        "y": 9,
+        "y": 18,
         "w": 8,
         "h": 7
       },
@@ -317,15 +450,27 @@
         },
         "overrides": []
       },
-      "options": {}
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "Inbound gRPC throughput by service and method."
     },
     {
-      "id": 7,
-      "title": "gRPC Server Errors",
+      "id": 9,
+      "title": "gRPC Inbound Errors",
       "type": "timeseries",
       "gridPos": {
         "x": 8,
-        "y": 9,
+        "y": 18,
         "w": 8,
         "h": 7
       },
@@ -335,7 +480,60 @@
       },
       "targets": [
         {
-          "expr": "sum by(service,method) (rate(gochat_grpc_requests_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\",code=~\"Internal|Unknown|DataLoss|Unavailable\"}[$__rate_interval]))",
+          "expr": "sum by(service,method,code) (rate(gochat_grpc_requests_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\",code=~\"Internal|Unknown|DataLoss|Unavailable\"}[$__rate_interval])) or on() vector(0)",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "{{service}} {{method}} {{code}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "ops",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "Reliability-class gRPC errors by service and method."
+    },
+    {
+      "id": 10,
+      "title": "gRPC Inbound P99",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 16,
+        "y": 18,
+        "w": 8,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by(service,method,le) (rate(gochat_grpc_request_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
@@ -353,20 +551,44 @@
             "fillOpacity": 8,
             "showPoints": "never"
           },
-          "unit": "ops",
-          "decimals": 2
+          "unit": "ms",
+          "decimals": 0
         },
         "overrides": []
       },
-      "options": {}
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "Server-side gRPC P99 latency by method."
     },
     {
-      "id": 8,
-      "title": "Slow gRPC Client P99",
-      "type": "table",
+      "collapsed": false,
+      "id": 11,
+      "title": "gRPC Outbound",
+      "type": "row",
       "gridPos": {
-        "x": 16,
-        "y": 9,
+        "x": 0,
+        "y": 26,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": 12,
+      "title": "gRPC Outbound RPS",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 27,
         "w": 8,
         "h": 7
       },
@@ -376,12 +598,118 @@
       },
       "targets": [
         {
+          "expr": "sum by(service,method,code) (rate(gochat_grpc_client_requests_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "topk(8, sort_desc((histogram_quantile(0.99, sum by(service,method,le) (rate(gochat_grpc_client_request_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000) unless (histogram_quantile(0.99, sum by(service,method,le) (rate(gochat_grpc_client_request_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000) != (histogram_quantile(0.99, sum by(service,method,le) (rate(gochat_grpc_client_request_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000)))",
+          "legendFormat": "{{service}} {{method}} {{code}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "ops",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "Client-side gRPC calls from gateway/websocket services."
+    },
+    {
+      "id": 13,
+      "title": "gRPC Outbound Errors",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 8,
+        "y": 27,
+        "w": 8,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by(service,method,code) (rate(gochat_grpc_client_requests_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\",code!=\"OK\"}[$__rate_interval])) or on() vector(0)",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "{{service}} {{method}} {{code}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "ops",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "Non-OK client-side gRPC results."
+    },
+    {
+      "id": 14,
+      "title": "Slowest gRPC Outbound Calls",
+      "type": "table",
+      "gridPos": {
+        "x": 16,
+        "y": 27,
+        "w": 8,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "topk(12, sort_desc((histogram_quantile(0.99, sum by(service,method,le) (increase(gochat_grpc_client_request_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__range]))) * 1000) and on(service,method) (sum by(service,method) (increase(gochat_grpc_client_request_duration_seconds_count{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__range])) > 0)))",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
           "instant": true,
           "format": "table",
           "range": false
@@ -396,59 +724,10 @@
             },
             "inspect": false
           },
-          "unit": "short",
+          "unit": "ms",
           "decimals": 0
         },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "P99 ms"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "ms"
-              },
-              {
-                "id": "decimals",
-                "value": 0
-              },
-              {
-                "id": "custom.align",
-                "value": "right"
-              },
-              {
-                "id": "custom.width",
-                "value": 72
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Service"
-            },
-            "properties": [
-              {
-                "id": "custom.width",
-                "value": 118
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Method"
-            },
-            "properties": [
-              {
-                "id": "custom.width",
-                "value": 170
-              }
-            ]
-          }
-        ]
+        "overrides": []
       },
       "options": {
         "showHeader": true,
@@ -475,11 +754,19 @@
             "excludeByName": {
               "Time": true,
               "__name__": true,
-              "le": true,
               "job": true,
               "instance": true,
               "namespace": true,
-              "pod": true
+              "pod": true,
+              "node": true,
+              "container": true,
+              "endpoint": true,
+              "le": true,
+              "Value #A": true,
+              "Value #B": true,
+              "Value #C": true,
+              "Value #D": true,
+              "Value #E": true
             },
             "includeByName": {},
             "indexByName": {
@@ -494,28 +781,29 @@
             }
           }
         }
-      ]
+      ],
+      "description": "Slowest outbound gRPC calls over the selected time range. Calls with no requests in the range are excluded."
     },
     {
       "collapsed": false,
-      "id": 9,
-      "title": "Domain & Routing",
+      "id": 15,
+      "title": "Domain Activity",
       "type": "row",
       "gridPos": {
         "x": 0,
-        "y": 16,
+        "y": 35,
         "w": 24,
         "h": 1
       }
     },
     {
-      "id": 10,
-      "title": "User Activity",
+      "id": 16,
+      "title": "Domain Command RPS",
       "type": "timeseries",
       "gridPos": {
         "x": 0,
-        "y": 17,
-        "w": 6,
+        "y": 36,
+        "w": 8,
         "h": 7
       },
       "datasource": {
@@ -530,7 +818,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "legendFormat": "created {{status}}"
+          "legendFormat": "user created {{status}}"
         },
         {
           "expr": "sum by(status) (rate(gochat_auth_login_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))",
@@ -548,7 +836,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "legendFormat": "join {{status}}"
+          "legendFormat": "room join {{status}}"
         }
       ],
       "fieldConfig": {
@@ -565,16 +853,28 @@
         },
         "overrides": []
       },
-      "options": {}
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "Domain-level user/auth/room activity."
     },
     {
-      "id": 11,
-      "title": "Chat Save RPS",
+      "id": 17,
+      "title": "Chat Save Outcomes",
       "type": "timeseries",
       "gridPos": {
-        "x": 6,
-        "y": 17,
-        "w": 6,
+        "x": 8,
+        "y": 36,
+        "w": 8,
         "h": 7
       },
       "datasource": {
@@ -583,12 +883,12 @@
       },
       "targets": [
         {
+          "expr": "sum by(status) (rate(gochat_chat_messages_saved_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by(status) (rate(gochat_chat_messages_saved_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))",
           "legendFormat": "save {{status}}"
         }
       ],
@@ -606,16 +906,28 @@
         },
         "overrides": []
       },
-      "options": {}
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "Chat message save outcomes by status."
     },
     {
-      "id": 12,
-      "title": "WS Gateway Routing",
+      "id": 18,
+      "title": "Token Reuse Detections",
       "type": "timeseries",
       "gridPos": {
-        "x": 12,
-        "y": 17,
-        "w": 6,
+        "x": 16,
+        "y": 36,
+        "w": 8,
         "h": 7
       },
       "datasource": {
@@ -624,22 +936,13 @@
       },
       "targets": [
         {
-          "expr": "sum by(endpoint) (rate(gochat_wsgateway_routed_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))",
+          "expr": "sum(rate(gochat_auth_token_reuse_detected_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval])) or on() vector(0)",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "legendFormat": "{{endpoint}}"
-        },
-        {
-          "expr": "sum(rate(gochat_wsgateway_misdirected_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))",
-          "refId": "B",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "legendFormat": "misdirected"
+          "legendFormat": "token reuse"
         }
       ],
       "fieldConfig": {
@@ -656,16 +959,40 @@
         },
         "overrides": []
       },
-      "options": {}
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "Refresh token reuse detections. Any non-zero value is a security signal."
     },
     {
-      "id": 13,
-      "title": "Bcrypt Pressure",
+      "collapsed": false,
+      "id": 19,
+      "title": "Password Hashing",
+      "type": "row",
+      "gridPos": {
+        "x": 0,
+        "y": 44,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": 20,
+      "title": "Password Hash Queue",
       "type": "timeseries",
       "gridPos": {
-        "x": 18,
-        "y": 17,
-        "w": 6,
+        "x": 0,
+        "y": 45,
+        "w": 8,
         "h": 7
       },
       "datasource": {
@@ -674,22 +1001,13 @@
       },
       "targets": [
         {
-          "expr": "gochat_hasher_queue_depth{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}",
+          "expr": "sum(gochat_hasher_queue_depth{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"})",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "legendFormat": "queue"
-        },
-        {
-          "expr": "sum(rate(gochat_hasher_queue_full_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))",
-          "refId": "B",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "legendFormat": "queue full"
+          "legendFormat": "queue depth"
         }
       ],
       "fieldConfig": {
@@ -706,7 +1024,125 @@
         },
         "overrides": []
       },
-      "options": {}
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "Current bcrypt worker queue depth."
+    },
+    {
+      "id": 21,
+      "title": "Password Hash Rejections",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 8,
+        "y": 45,
+        "w": 8,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(gochat_hasher_queue_full_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval])) or on() vector(0)",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "queue full"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "ops",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "Bcrypt work rejected due to a full queue."
+    },
+    {
+      "id": 22,
+      "title": "Password Hash P99",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 16,
+        "y": 45,
+        "w": 8,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by(type,le) (rate(gochat_hasher_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval])))",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "p99 {{type}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "s",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "P99 bcrypt operation duration by type."
     }
   ],
   "refresh": "15s",
@@ -725,17 +1161,18 @@
           "uid": "prometheus"
         },
         "query": {
-          "query": "label_values(kube_pod_info, namespace)",
+          "query": "label_values(gochat_build_info, namespace)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
         "sort": 1,
-        "includeAll": false,
+        "includeAll": true,
         "current": {
           "selected": true,
-          "text": "go-chat-test",
-          "value": "go-chat-test"
-        }
+          "text": "All",
+          "value": "$__all"
+        },
+        "allValue": "go-chat-.*"
       },
       {
         "name": "service",
@@ -829,8 +1266,8 @@
   },
   "timepicker": {},
   "timezone": "Asia/Seoul",
-  "title": "TRAFFIC",
+  "title": "API Traffic",
   "uid": "gochat-traffic",
-  "version": 1,
+  "version": 5,
   "weekStart": ""
 }

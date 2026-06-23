@@ -35,7 +35,7 @@
     {
       "collapsed": false,
       "id": 1,
-      "title": "WebSocket Health",
+      "title": "Session Load",
       "type": "row",
       "gridPos": {
         "x": 0,
@@ -46,12 +46,12 @@
     },
     {
       "id": 2,
-      "title": "Connections",
+      "title": "WS Connections",
       "type": "stat",
       "gridPos": {
         "x": 0,
         "y": 1,
-        "w": 4,
+        "w": 6,
         "h": 4
       },
       "datasource": {
@@ -60,7 +60,7 @@
       },
       "targets": [
         {
-          "expr": "sum(gochat_ws_connections_active{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}) or vector(0)",
+          "expr": "sum(gochat_ws_connections_active{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"})",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
@@ -92,7 +92,7 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "none",
+        "colorMode": "value",
         "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
@@ -104,17 +104,18 @@
           "values": false
         },
         "textMode": "auto",
-        "noValue": "0"
-      }
+        "noValue": "No data"
+      },
+      "description": "Current WebSocket session count."
     },
     {
       "id": 3,
-      "title": "Hubs",
+      "title": "Room Hubs",
       "type": "stat",
       "gridPos": {
-        "x": 4,
+        "x": 6,
         "y": 1,
-        "w": 4,
+        "w": 6,
         "h": 4
       },
       "datasource": {
@@ -123,7 +124,7 @@
       },
       "targets": [
         {
-          "expr": "sum(gochat_ws_hubs_active{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}) or vector(0)",
+          "expr": "sum(gochat_ws_hubs_active{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"})",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
@@ -155,7 +156,7 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "none",
+        "colorMode": "value",
         "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
@@ -167,80 +168,18 @@
           "values": false
         },
         "textMode": "auto",
-        "noValue": "0"
-      }
+        "noValue": "No data"
+      },
+      "description": "Active in-memory room hubs."
     },
     {
       "id": 4,
-      "title": "Ingress RPS",
-      "type": "stat",
-      "gridPos": {
-        "x": 8,
-        "y": 1,
-        "w": 4,
-        "h": 4
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "targets": [
-        {
-          "expr": "sum(rate(gochat_ws_messages_received_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval])) or vector(0)",
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          }
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "drawStyle": "line",
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "fillOpacity": 8,
-            "showPoints": "never"
-          },
-          "unit": "ops",
-          "decimals": 2,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "blue",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "colorMode": "none",
-        "graphMode": "area",
-        "justifyMode": "center",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto",
-        "noValue": "0"
-      }
-    },
-    {
-      "id": 5,
-      "title": "Egress RPS",
+      "title": "Inbound Messages",
       "type": "stat",
       "gridPos": {
         "x": 12,
         "y": 1,
-        "w": 4,
+        "w": 6,
         "h": 4
       },
       "datasource": {
@@ -249,7 +188,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(gochat_ws_messages_sent_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval])) or vector(0)",
+          "expr": "sum(rate(gochat_ws_messages_received_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval]))",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
@@ -281,7 +220,7 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "none",
+        "colorMode": "value",
         "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
@@ -293,170 +232,81 @@
           "values": false
         },
         "textMode": "auto",
-        "noValue": "0"
-      }
+        "noValue": "No data"
+      },
+      "description": "Inbound messages from clients."
+    },
+    {
+      "id": 5,
+      "title": "Outbound Messages",
+      "type": "stat",
+      "gridPos": {
+        "x": 18,
+        "y": 1,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(gochat_ws_messages_sent_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval]))",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "ops",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "noValue": "No data"
+      },
+      "description": "Outbound messages after fanout."
     },
     {
       "id": 6,
-      "title": "Fanout P99",
-      "type": "stat",
-      "gridPos": {
-        "x": 16,
-        "y": 1,
-        "w": 4,
-        "h": 4
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "targets": [
-        {
-          "expr": "(histogram_quantile(0.99, sum by(le) (rate(gochat_ws_fanout_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000 unless histogram_quantile(0.99, sum by(le) (rate(gochat_ws_fanout_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000 != histogram_quantile(0.99, sum by(le) (rate(gochat_ws_fanout_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000) or vector(0)",
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          }
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "drawStyle": "line",
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "fillOpacity": 8,
-            "showPoints": "never"
-          },
-          "unit": "ms",
-          "decimals": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 20
-              },
-              {
-                "color": "red",
-                "value": 50
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "colorMode": "background",
-        "graphMode": "area",
-        "justifyMode": "center",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto",
-        "noValue": "0"
-      }
-    },
-    {
-      "id": 7,
-      "title": "Egress P99",
-      "type": "stat",
-      "gridPos": {
-        "x": 20,
-        "y": 1,
-        "w": 4,
-        "h": 4
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "targets": [
-        {
-          "expr": "(histogram_quantile(0.99, sum by(le) (rate(gochat_ws_egress_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000 unless histogram_quantile(0.99, sum by(le) (rate(gochat_ws_egress_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000 != histogram_quantile(0.99, sum by(le) (rate(gochat_ws_egress_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000) or vector(0)",
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          }
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "drawStyle": "line",
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "fillOpacity": 8,
-            "showPoints": "never"
-          },
-          "unit": "ms",
-          "decimals": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 50
-              },
-              {
-                "color": "red",
-                "value": 100
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "colorMode": "background",
-        "graphMode": "area",
-        "justifyMode": "center",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto",
-        "noValue": "0"
-      }
-    },
-    {
-      "collapsed": false,
-      "id": 8,
-      "title": "Consistency & Rebalance",
-      "type": "row",
-      "gridPos": {
-        "x": 0,
-        "y": 5,
-        "w": 24,
-        "h": 1
-      }
-    },
-    {
-      "id": 9,
-      "title": "Drops & Dedupe",
+      "title": "WS Connections by Pod",
       "type": "timeseries",
       "gridPos": {
         "x": 0,
-        "y": 6,
+        "y": 5,
         "w": 8,
         "h": 7
       },
@@ -466,35 +316,333 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(gochat_ws_send_queue_dropped_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval]))",
+          "expr": "gochat_ws_connections_active{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "legendFormat": "send queue"
+          "legendFormat": "{{pod}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "short",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "Connection distribution across websocket-service pods."
+    },
+    {
+      "id": 7,
+      "title": "Room Hubs by Pod",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 8,
+        "y": 5,
+        "w": 8,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "gochat_ws_hubs_active{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "{{pod}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "short",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "Hub ownership distribution across pods."
+    },
+    {
+      "id": 8,
+      "title": "Message RPS",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 16,
+        "y": 5,
+        "w": 8,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(gochat_ws_messages_received_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval]))",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "in"
         },
         {
-          "expr": "sum(rate(gochat_ws_persist_dropped_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval]))",
+          "expr": "sum(rate(gochat_ws_messages_sent_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval]))",
           "refId": "B",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "legendFormat": "persist"
+          "legendFormat": "out"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "ops",
+          "decimals": 2
         },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "Inbound and outbound message throughput."
+    },
+    {
+      "collapsed": false,
+      "id": 9,
+      "title": "Latency and Queues",
+      "type": "row",
+      "gridPos": {
+        "x": 0,
+        "y": 13,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": 12,
+      "title": "Fanout and Egress P99",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 14,
+        "w": 12,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
         {
-          "expr": "sum(rate(gochat_ws_duplicate_messages_dropped_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval]))",
-          "refId": "C",
+          "expr": "(histogram_quantile(0.99, sum by(le) (rate(gochat_ws_fanout_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000) and on() (sum(rate(gochat_ws_fanout_duration_seconds_count{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval])) > 0)",
+          "refId": "A",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "legendFormat": "duplicate"
+          "legendFormat": "fanout p99"
         },
         {
-          "expr": "sum(rate(gochat_ws_messages_rate_limited_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval]))",
-          "refId": "D",
+          "expr": "(histogram_quantile(0.99, sum by(le) (rate(gochat_ws_egress_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000) and on() (sum(rate(gochat_ws_egress_duration_seconds_count{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval])) > 0)",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "egress p99"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "ms",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "Realtime latency split. Fanout isolates in-memory routing; egress includes network writes."
+    },
+    {
+      "id": 13,
+      "title": "Broadcast Queue",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 14,
+        "w": 12,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by(le) (rate(gochat_ws_broadcast_channel_depth_bucket{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval])))",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "p99 depth"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "short",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "P99 broadcast channel depth. Rising depth points to fanout pressure."
+    },
+    {
+      "collapsed": false,
+      "id": 14,
+      "title": "Drops and Backpressure",
+      "type": "row",
+      "gridPos": {
+        "x": 0,
+        "y": 22,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": 15,
+      "title": "Drops and Rate Limits",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 23,
+        "w": 6,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(gochat_ws_send_queue_dropped_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval])) or on() vector(0)",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "send queue dropped"
+        },
+        {
+          "expr": "sum(rate(gochat_ws_persist_dropped_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval])) or on() vector(0)",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "persist dropped"
+        },
+        {
+          "expr": "sum(rate(gochat_ws_messages_rate_limited_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval])) or on() vector(0)",
+          "refId": "C",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -516,16 +664,28 @@
         },
         "overrides": []
       },
-      "options": {}
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "Backpressure and rate-limit protection signals."
     },
     {
-      "id": 10,
-      "title": "Ownership",
+      "id": 16,
+      "title": "Duplicate and Sequence Drops",
       "type": "timeseries",
       "gridPos": {
-        "x": 8,
-        "y": 6,
-        "w": 8,
+        "x": 6,
+        "y": 23,
+        "w": 6,
         "h": 7
       },
       "datasource": {
@@ -534,16 +694,78 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(gochat_ws_rebalance_evictions_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval]))",
+          "expr": "sum(rate(gochat_ws_duplicate_messages_dropped_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval])) or on() vector(0)",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "legendFormat": "rebalance evictions"
+          "legendFormat": "duplicate dropped"
         },
         {
-          "expr": "sum(rate(gochat_websocket_owner_rejected_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval]))",
+          "expr": "sum(rate(gochat_ws_sequence_conflict_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval])) or on() vector(0)",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "sequence conflict"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "ops",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "Message correctness protection signals."
+    },
+    {
+      "id": 17,
+      "title": "Routing Anomalies",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 23,
+        "w": 6,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(gochat_ws_rebalance_evictions_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval])) or on() vector(0)",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "rebalance eviction"
+        },
+        {
+          "expr": "sum(rate(gochat_websocket_owner_rejected_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval])) or on() vector(0)",
           "refId": "B",
           "datasource": {
             "type": "prometheus",
@@ -552,7 +774,7 @@
           "legendFormat": "owner rejected"
         },
         {
-          "expr": "sum(rate(gochat_wsgateway_misdirected_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))",
+          "expr": "sum(rate(gochat_wsgateway_misdirected_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval])) or on() vector(0)",
           "refId": "C",
           "datasource": {
             "type": "prometheus",
@@ -575,15 +797,207 @@
         },
         "overrides": []
       },
-      "options": {}
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "Room ownership and gateway routing anomalies."
     },
     {
-      "id": 11,
+      "id": 27,
+      "title": "Hub and Session Lifecycle",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Hub closure and duplicate session conflict rate.",
+      "gridPos": {
+        "x": 18,
+        "y": 23,
+        "w": 6,
+        "h": 7
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "ops",
+          "decimals": 3
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(gochat_ws_hubs_closed_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval])) or on() vector(0)",
+          "refId": "A",
+          "legendFormat": "hub closed"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(gochat_ws_session_conflicts_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval])) or on() vector(0)",
+          "refId": "B",
+          "legendFormat": "session conflicts"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "id": 18,
+      "title": "Ownership and Membership",
+      "type": "row",
+      "gridPos": {
+        "x": 0,
+        "y": 31,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": 19,
+      "title": "Lease Acquire",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 8,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by(status) (rate(gochat_ws_room_lease_acquire_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval]))",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "{{status}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "ops",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "Room lease acquisition outcomes."
+    },
+    {
+      "id": 20,
+      "title": "Lease Renew",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 8,
+        "y": 32,
+        "w": 8,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by(status) (rate(gochat_ws_room_lease_renew_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval]))",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "{{status}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "ops",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "Lease renewal outcomes. lost/error indicate ownership instability."
+    },
+    {
+      "id": 21,
       "title": "Membership Reconcile",
       "type": "timeseries",
       "gridPos": {
         "x": 16,
-        "y": 6,
+        "y": 32,
         "w": 8,
         "h": 7
       },
@@ -616,28 +1030,40 @@
         },
         "overrides": []
       },
-      "options": {}
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "Membership reconciliation outcomes from gateway/websocket components."
     },
     {
       "collapsed": false,
-      "id": 12,
-      "title": "Persistence",
+      "id": 22,
+      "title": "Room Handoff",
       "type": "row",
       "gridPos": {
         "x": 0,
-        "y": 13,
+        "y": 40,
         "w": 24,
         "h": 1
       }
     },
     {
-      "id": 13,
-      "title": "Persist Backlog",
+      "id": 23,
+      "title": "Handoff RPS",
       "type": "timeseries",
       "gridPos": {
         "x": 0,
-        "y": 14,
-        "w": 8,
+        "y": 41,
+        "w": 12,
         "h": 7
       },
       "datasource": {
@@ -646,81 +1072,13 @@
       },
       "targets": [
         {
-          "expr": "sum(gochat_ws_persist_channel_depth{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"})",
+          "expr": "sum by(status) (rate(gochat_ws_room_handoff_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval]))",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "legendFormat": "persist channel"
-        },
-        {
-          "expr": "sum(gochat_persistence_retry_queue_depth{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"})",
-          "refId": "B",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "legendFormat": "retry queue"
-        },
-        {
-          "expr": "max(gochat_persistence_retry_oldest_age_seconds{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"})",
-          "refId": "C",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "legendFormat": "oldest retry age"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "drawStyle": "line",
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "fillOpacity": 8,
-            "showPoints": "never"
-          },
-          "unit": "short",
-          "decimals": 2
-        },
-        "overrides": []
-      },
-      "options": {}
-    },
-    {
-      "id": 14,
-      "title": "Persist Saves",
-      "type": "timeseries",
-      "gridPos": {
-        "x": 8,
-        "y": 14,
-        "w": 8,
-        "h": 7
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "targets": [
-        {
-          "expr": "sum by(status) (rate(gochat_persistence_batch_save_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval]))",
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "legendFormat": "batch {{status}}"
-        },
-        {
-          "expr": "sum by(status) (rate(gochat_persistence_retry_save_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval]))",
-          "refId": "B",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "legendFormat": "retry {{status}}"
+          "legendFormat": "{{status}}"
         }
       ],
       "fieldConfig": {
@@ -737,16 +1095,28 @@
         },
         "overrides": []
       },
-      "options": {}
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "Room handoff events by status."
     },
     {
-      "id": 15,
-      "title": "Hub Persist Drain",
+      "id": 24,
+      "title": "Handoff P99",
       "type": "timeseries",
       "gridPos": {
-        "x": 16,
-        "y": 14,
-        "w": 8,
+        "x": 12,
+        "y": 41,
+        "w": 12,
         "h": 7
       },
       "datasource": {
@@ -755,17 +1125,8 @@
       },
       "targets": [
         {
-          "expr": "sum by(status) (rate(gochat_ws_persist_drain_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval]))",
+          "expr": "histogram_quantile(0.99, sum by(status,le) (rate(gochat_ws_room_handoff_duration_seconds_bucket{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval]))) * 1000",
           "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "legendFormat": "{{status}}"
-        },
-        {
-          "expr": "histogram_quantile(0.99, sum by(status,le) (rate(gochat_ws_persist_drain_duration_seconds_bucket{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval])))",
-          "refId": "B",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -782,19 +1143,32 @@
             "fillOpacity": 8,
             "showPoints": "never"
           },
-          "unit": "s",
-          "decimals": 2
+          "unit": "ms",
+          "decimals": 0
         },
         "overrides": []
       },
-      "options": {}
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "Room handoff duration by final status."
     }
   ],
   "refresh": "15s",
   "schemaVersion": 39,
   "tags": [
     "gochat",
-    "message"
+    "realtime",
+    "websocket"
   ],
   "templating": {
     "list": [
@@ -806,17 +1180,18 @@
           "uid": "prometheus"
         },
         "query": {
-          "query": "label_values(kube_pod_info, namespace)",
+          "query": "label_values(gochat_build_info, namespace)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
         "sort": 1,
-        "includeAll": false,
+        "includeAll": true,
         "current": {
           "selected": true,
-          "text": "go-chat-test",
-          "value": "go-chat-test"
-        }
+          "text": "All",
+          "value": "$__all"
+        },
+        "allValue": "go-chat-.*"
       },
       {
         "name": "service",
@@ -910,8 +1285,8 @@
   },
   "timepicker": {},
   "timezone": "Asia/Seoul",
-  "title": "MESSAGE",
+  "title": "Realtime Messaging",
   "uid": "gochat-message",
-  "version": 1,
+  "version": 6,
   "weekStart": ""
 }

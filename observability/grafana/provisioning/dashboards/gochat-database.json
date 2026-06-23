@@ -35,7 +35,7 @@
     {
       "collapsed": false,
       "id": 1,
-      "title": "PostgreSQL",
+      "title": "Message Persistence",
       "type": "row",
       "gridPos": {
         "x": 0,
@@ -46,12 +46,481 @@
     },
     {
       "id": 2,
-      "title": "PG Ops",
-      "type": "timeseries",
+      "title": "Retry Queue",
+      "type": "stat",
       "gridPos": {
         "x": 0,
         "y": 1,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(gochat_persistence_retry_queue_depth{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}) or on() vector(0)",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 200
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "noValue": "No data"
+      },
+      "description": "Current persistence retry queue depth. Yellow means any backlog; red means the queue is materially backed up near the per-pod 250 item buffer."
+    },
+    {
+      "id": 3,
+      "title": "Oldest Retry",
+      "type": "stat",
+      "gridPos": {
+        "x": 6,
+        "y": 1,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "max(gochat_persistence_retry_oldest_age_seconds{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}) or on() vector(0)",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "s",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 30
+              },
+              {
+                "color": "red",
+                "value": 60
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "noValue": "No data"
+      },
+      "description": "Oldest queued retry age. Growth means failed persistence is not draining."
+    },
+    {
+      "id": 4,
+      "title": "Retry Queue Full",
+      "type": "stat",
+      "gridPos": {
+        "x": 12,
+        "y": 1,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(gochat_persistence_retry_queue_full_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval])) or on() vector(0)",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "ops",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.001
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "noValue": "No data"
+      },
+      "description": "Retry queue full events. Any sustained non-zero value means message loss risk."
+    },
+    {
+      "id": 5,
+      "title": "Persistence Drain Errors",
+      "type": "stat",
+      "gridPos": {
+        "x": 18,
+        "y": 1,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(gochat_ws_persist_drain_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\",status=~\"error|timeout\"}[$__rate_interval])) or on() vector(0)",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "ops",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.001
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "noValue": "No data"
+      },
+      "description": "Persistence drain failures/timeouts."
+    },
+    {
+      "id": 6,
+      "title": "Persistence Backlog",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 5,
         "w": 8,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(gochat_ws_persist_channel_depth{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}) or on() vector(0)",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "persist channel"
+        },
+        {
+          "expr": "sum(gochat_persistence_retry_queue_depth{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}) or on() vector(0)",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "retry queue"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "short",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "Persistence queue depths."
+    },
+    {
+      "id": 7,
+      "title": "Save Outcomes RPS",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 8,
+        "y": 5,
+        "w": 8,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by(status) (rate(gochat_persistence_batch_save_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval]))",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "batch {{status}}"
+        },
+        {
+          "expr": "sum by(status) (rate(gochat_persistence_retry_save_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval]))",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "retry {{status}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "ops",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "Batch and retry save outcomes by status."
+    },
+    {
+      "id": 8,
+      "title": "Persistence Drain P99",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 16,
+        "y": 5,
+        "w": 8,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by(status,le) (rate(gochat_ws_persist_drain_duration_seconds_bucket{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval]))) * 1000",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "p99 {{status}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "ms",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "P99 duration of one persistence drain attempt after messages are dequeued, split by status. Excludes queue wait and retry backoff."
+    },
+    {
+      "collapsed": false,
+      "id": 9,
+      "title": "PostgreSQL",
+      "type": "row",
+      "gridPos": {
+        "x": 0,
+        "y": 13,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": 10,
+      "title": "PostgreSQL Queries",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 14,
+        "w": 6,
         "h": 7
       },
       "datasource": {
@@ -83,16 +552,28 @@
         },
         "overrides": []
       },
-      "options": {}
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "PostgreSQL query throughput by operation and status."
     },
     {
-      "id": 3,
-      "title": "PG Latency",
+      "id": 11,
+      "title": "PostgreSQL Query P99",
       "type": "timeseries",
       "gridPos": {
-        "x": 8,
-        "y": 1,
-        "w": 8,
+        "x": 6,
+        "y": 14,
+        "w": 6,
         "h": 7
       },
       "datasource": {
@@ -108,15 +589,6 @@
             "uid": "prometheus"
           },
           "legendFormat": "p99 {{operation}}"
-        },
-        {
-          "expr": "histogram_quantile(0.50, sum by(operation,le) (rate(gochat_pg_query_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000",
-          "refId": "B",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "legendFormat": "p50 {{operation}}"
         }
       ],
       "fieldConfig": {
@@ -133,16 +605,28 @@
         },
         "overrides": []
       },
-      "options": {}
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "PostgreSQL P99 query latency by operation."
     },
     {
-      "id": 4,
-      "title": "PG Pool",
+      "id": 12,
+      "title": "PostgreSQL Connections",
       "type": "timeseries",
       "gridPos": {
-        "x": 16,
-        "y": 1,
-        "w": 8,
+        "x": 12,
+        "y": 14,
+        "w": 6,
         "h": 7
       },
       "datasource": {
@@ -151,7 +635,7 @@
       },
       "targets": [
         {
-          "expr": "gochat_pgxpool_acquired_conns{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}",
+          "expr": "sum(gochat_pgxpool_acquired_conns{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"})",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
@@ -160,7 +644,7 @@
           "legendFormat": "acquired"
         },
         {
-          "expr": "gochat_pgxpool_idle_conns{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}",
+          "expr": "sum(gochat_pgxpool_idle_conns{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"})",
           "refId": "B",
           "datasource": {
             "type": "prometheus",
@@ -169,7 +653,7 @@
           "legendFormat": "idle"
         },
         {
-          "expr": "gochat_pgxpool_total_conns{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}",
+          "expr": "sum(gochat_pgxpool_total_conns{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"})",
           "refId": "C",
           "datasource": {
             "type": "prometheus",
@@ -178,7 +662,7 @@
           "legendFormat": "total"
         },
         {
-          "expr": "gochat_pgxpool_max_conns{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}",
+          "expr": "sum(gochat_pgxpool_max_conns{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"})",
           "refId": "D",
           "datasource": {
             "type": "prometheus",
@@ -197,32 +681,159 @@
             "showPoints": "never"
           },
           "unit": "short",
-          "decimals": 0
+          "decimals": 2
         },
         "overrides": []
       },
-      "options": {}
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "pgxpool acquired, idle, total, and max connections."
+    },
+    {
+      "id": 22,
+      "title": "PostgreSQL Pool Waits",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "pgxpool acquire attempts that had to wait for an empty pool or were canceled.",
+      "gridPos": {
+        "x": 18,
+        "y": 14,
+        "w": 6,
+        "h": 7
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "ops",
+          "decimals": 3
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(gochat_pgxpool_empty_acquire_count_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval])) or on() vector(0)",
+          "refId": "A",
+          "legendFormat": "empty acquire"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(gochat_pgxpool_canceled_acquire_count_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval])) or on() vector(0)",
+          "refId": "B",
+          "legendFormat": "canceled acquire"
+        }
+      ]
+    },
+    {
+      "id": 23,
+      "title": "PostgreSQL Acquire Time",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Average pgxpool acquire duration. Rising values indicate connection pool pressure before query latency moves.",
+      "gridPos": {
+        "x": 0,
+        "y": 22,
+        "w": 24,
+        "h": 6
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "s",
+          "decimals": 4
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "(sum(rate(gochat_pgxpool_acquire_duration_seconds_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval])) / sum(rate(gochat_pgxpool_acquire_count_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval])))",
+          "refId": "A",
+          "legendFormat": "avg acquire"
+        }
+      ]
     },
     {
       "collapsed": false,
-      "id": 5,
+      "id": 13,
       "title": "MongoDB",
       "type": "row",
       "gridPos": {
         "x": 0,
-        "y": 8,
+        "y": 29,
         "w": 24,
         "h": 1
       }
     },
     {
-      "id": 6,
-      "title": "Mongo Ops",
+      "id": 14,
+      "title": "MongoDB Operations",
       "type": "timeseries",
       "gridPos": {
         "x": 0,
-        "y": 9,
-        "w": 8,
+        "y": 30,
+        "w": 6,
         "h": 7
       },
       "datasource": {
@@ -254,16 +865,28 @@
         },
         "overrides": []
       },
-      "options": {}
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "MongoDB operation throughput by operation and status."
     },
     {
-      "id": 7,
-      "title": "Mongo Latency",
+      "id": 15,
+      "title": "MongoDB Operation P99",
       "type": "timeseries",
       "gridPos": {
-        "x": 8,
-        "y": 9,
-        "w": 8,
+        "x": 6,
+        "y": 30,
+        "w": 6,
         "h": 7
       },
       "datasource": {
@@ -279,15 +902,6 @@
             "uid": "prometheus"
           },
           "legendFormat": "p99 {{operation}}"
-        },
-        {
-          "expr": "histogram_quantile(0.50, sum by(operation,le) (rate(gochat_mongo_query_duration_seconds_bucket{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))) * 1000",
-          "refId": "B",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "legendFormat": "p50 {{operation}}"
         }
       ],
       "fieldConfig": {
@@ -304,16 +918,28 @@
         },
         "overrides": []
       },
-      "options": {}
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "MongoDB P99 operation latency by operation."
     },
     {
-      "id": 8,
-      "title": "Mongo Pool",
+      "id": 16,
+      "title": "MongoDB Connections",
       "type": "timeseries",
       "gridPos": {
-        "x": 16,
-        "y": 9,
-        "w": 8,
+        "x": 12,
+        "y": 30,
+        "w": 6,
         "h": 7
       },
       "datasource": {
@@ -322,7 +948,7 @@
       },
       "targets": [
         {
-          "expr": "gochat_mongo_pool_checked_out_conns{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}",
+          "expr": "sum(gochat_mongo_pool_checked_out_conns{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"})",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
@@ -331,31 +957,13 @@
           "legendFormat": "checked out"
         },
         {
-          "expr": "gochat_mongo_pool_open_conns{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}",
+          "expr": "sum(gochat_mongo_pool_open_conns{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"})",
           "refId": "B",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
           "legendFormat": "open"
-        },
-        {
-          "expr": "rate(gochat_mongo_pool_created_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval])",
-          "refId": "C",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "legendFormat": "created/s"
-        },
-        {
-          "expr": "rate(gochat_mongo_pool_closed_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval])",
-          "refId": "D",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "legendFormat": "closed/s"
         }
       ],
       "fieldConfig": {
@@ -372,27 +980,101 @@
         },
         "overrides": []
       },
-      "options": {}
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "MongoDB pool connection counts only."
+    },
+    {
+      "id": 21,
+      "title": "MongoDB Connection Churn",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 18,
+        "y": 30,
+        "w": 6,
+        "h": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(gochat_mongo_pool_created_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "created/s"
+        },
+        {
+          "expr": "sum(rate(gochat_mongo_pool_closed_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval]))",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": "closed/s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "ops",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "MongoDB connection create/close rate. Churn belongs separate from connection counts."
     },
     {
       "collapsed": false,
-      "id": 9,
+      "id": 17,
       "title": "Redis",
       "type": "row",
       "gridPos": {
         "x": 0,
-        "y": 16,
+        "y": 38,
         "w": 24,
         "h": 1
       }
     },
     {
-      "id": 10,
+      "id": 18,
       "title": "Redis Connections",
       "type": "timeseries",
       "gridPos": {
         "x": 0,
-        "y": 17,
+        "y": 39,
         "w": 8,
         "h": 7
       },
@@ -402,7 +1084,7 @@
       },
       "targets": [
         {
-          "expr": "db_client_connections_usage{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\",db_system=\"redis\"}",
+          "expr": "sum by(service,state) (db_client_connections_usage{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\",db_system=\"redis\"})",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
@@ -411,7 +1093,7 @@
           "legendFormat": "{{service}} {{state}}"
         },
         {
-          "expr": "db_client_connections_max{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\",db_system=\"redis\"}",
+          "expr": "sum by(service) (db_client_connections_max{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\",db_system=\"redis\"})",
           "refId": "B",
           "datasource": {
             "type": "prometheus",
@@ -430,19 +1112,31 @@
             "showPoints": "never"
           },
           "unit": "short",
-          "decimals": 0
+          "decimals": 2
         },
         "overrides": []
       },
-      "options": {}
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "Redis client pool usage and max connections."
     },
     {
-      "id": 11,
-      "title": "Redis Waits",
+      "id": 19,
+      "title": "Redis Waits and Timeouts",
       "type": "timeseries",
       "gridPos": {
         "x": 8,
-        "y": 17,
+        "y": 39,
         "w": 8,
         "h": 7
       },
@@ -452,22 +1146,22 @@
       },
       "targets": [
         {
-          "expr": "db_client_connections_waits{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\",db_system=\"redis\"}",
+          "expr": "sum by(service) (rate(db_client_connections_waits{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\",db_system=\"redis\"}[$__rate_interval])) or on() vector(0)",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "legendFormat": "waits"
+          "legendFormat": "{{service}} waits/s"
         },
         {
-          "expr": "db_client_connections_timeouts{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\",db_system=\"redis\"}",
+          "expr": "sum by(service) (rate(db_client_connections_timeouts{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\",db_system=\"redis\"}[$__rate_interval])) or on() vector(0)",
           "refId": "B",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "legendFormat": "timeouts"
+          "legendFormat": "{{service}} timeouts/s"
         }
       ],
       "fieldConfig": {
@@ -479,20 +1173,32 @@
             "fillOpacity": 8,
             "showPoints": "never"
           },
-          "unit": "short",
+          "unit": "ops",
           "decimals": 2
         },
         "overrides": []
       },
-      "options": {}
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "Redis pool waits and timeouts. Timeouts are a direct saturation symptom."
     },
     {
-      "id": 12,
-      "title": "Redis Pool Use Time",
+      "id": 20,
+      "title": "Redis Use Time P99",
       "type": "timeseries",
       "gridPos": {
         "x": 16,
-        "y": 17,
+        "y": 39,
         "w": 8,
         "h": 7
       },
@@ -525,14 +1231,26 @@
         },
         "overrides": []
       },
-      "options": {}
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      },
+      "description": "P99 Redis connection use time by service and command/pipeline type."
     }
   ],
   "refresh": "15s",
   "schemaVersion": 39,
   "tags": [
     "gochat",
-    "database"
+    "storage"
   ],
   "templating": {
     "list": [
@@ -544,17 +1262,18 @@
           "uid": "prometheus"
         },
         "query": {
-          "query": "label_values(kube_pod_info, namespace)",
+          "query": "label_values(gochat_build_info, namespace)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
         "sort": 1,
-        "includeAll": false,
+        "includeAll": true,
         "current": {
           "selected": true,
-          "text": "go-chat-test",
-          "value": "go-chat-test"
-        }
+          "text": "All",
+          "value": "$__all"
+        },
+        "allValue": "go-chat-.*"
       },
       {
         "name": "service",
@@ -648,8 +1367,8 @@
   },
   "timepicker": {},
   "timezone": "Asia/Seoul",
-  "title": "DATABASE",
+  "title": "Data Persistence",
   "uid": "gochat-database",
-  "version": 1,
+  "version": 6,
   "weekStart": ""
 }
