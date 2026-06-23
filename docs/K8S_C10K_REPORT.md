@@ -1,6 +1,6 @@
 # Kubernetes C10K 부하 테스트 보고서
 
-> 이 문서는 로컬 kind Kubernetes `dev` 환경에서 확보한 C10K 성능 baseline입니다.
+> 이 문서는 로컬 kind `dev` 환경에서 확보한 C10K 성능 기준입니다.
 
 ## 테스트 환경
 

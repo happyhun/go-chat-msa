@@ -817,7 +817,7 @@ Grafana 대시보드는 장애 분석 흐름에 맞춥니다. 전체 상태에�
 
 검증 범위는 로컬 kind 기반 K8s `dev`/`test`/`qa` 실행과 WebSocket HPA 정합성 검증까지입니다.
 
-부하 검증 결과는 [Kubernetes C10K 부하 테스트 보고서](K8S_C10K_REPORT.md)에 정리합니다. HPA 확장 중 담당 Pod 이전 정합성 결과는 [README의 WebSocket HPA Consistency](../README.md#websocket-hpa-consistency)에 요약되어 있습니다.
+부하 검증 결과는 [Kubernetes C10K 부하 테스트 보고서](K8S_C10K_REPORT.md)에 정리합니다. HPA 확장 중 담당 Pod 이전 정합성 결과는 [README의 WebSocket HPA 정합성](../README.md#websocket-hpa-정합성)에 요약되어 있습니다.
 
 ### 7.1 검증 범위
 
