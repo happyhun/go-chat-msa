@@ -100,6 +100,7 @@ create_alloy_configmap() {
 create_observability_configmaps() {
   create_alloy_configmap
   create_configmap_from_file prometheus-config config.yaml "${REPO_ROOT}/observability/prometheus/config.yaml"
+  create_configmap_from_dir prometheus-rules "${REPO_ROOT}/observability/prometheus/rules"
   create_configmap_from_file loki-config config.yaml "${REPO_ROOT}/observability/loki/config.yaml"
   create_configmap_from_file tempo-config config.yaml "${REPO_ROOT}/observability/tempo/config.yaml"
   create_configmap_from_file pyroscope-config config.yaml "${REPO_ROOT}/observability/pyroscope/config.yaml"

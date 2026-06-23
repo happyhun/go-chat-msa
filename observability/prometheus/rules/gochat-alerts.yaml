@@ -1,0 +1,216 @@
+groups:
+  - name: gochat-recording-rules
+    interval: 30s
+    rules:
+      - record: gochat:http_availability:ratio5m
+        expr: |
+          (
+            1 - (
+              (
+                sum by(namespace, service) (rate(gochat_http_requests_total{status_code=~"5.."}[5m]))
+                or on(namespace, service)
+                0 * sum by(namespace, service) (rate(gochat_http_requests_total[5m]))
+              )
+              /
+              sum by(namespace, service) (rate(gochat_http_requests_total[5m]))
+            )
+          )
+          and on(namespace, service)
+          sum by(namespace, service) (rate(gochat_http_requests_total[5m])) > 0
+
+      - record: gochat:grpc_availability:ratio5m
+        expr: |
+          (
+            1 - (
+              (
+                sum by(namespace, service) (rate(gochat_grpc_requests_total{code=~"Internal|Unknown|DataLoss|Unavailable"}[5m]))
+                or on(namespace, service)
+                0 * sum by(namespace, service) (rate(gochat_grpc_requests_total[5m]))
+              )
+              /
+              sum by(namespace, service) (rate(gochat_grpc_requests_total[5m]))
+            )
+          )
+          and on(namespace, service)
+          sum by(namespace, service) (rate(gochat_grpc_requests_total[5m])) > 0
+
+      - record: gochat:http_p99_latency_seconds:5m
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by(namespace, service, le) (rate(gochat_http_request_duration_seconds_bucket[5m]))
+          )
+
+      - record: gochat:grpc_p99_latency_seconds:5m
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by(namespace, service, le) (rate(gochat_grpc_request_duration_seconds_bucket[5m]))
+          )
+
+      - record: gochat:ws_egress_p99_latency_seconds:5m
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by(namespace, service, le) (rate(gochat_ws_egress_duration_seconds_bucket[5m]))
+          )
+
+  - name: gochat-service-health
+    interval: 30s
+    rules:
+      - alert: GoChatHTTPAvailabilityLow
+        expr: |
+          gochat:http_availability:ratio5m < 0.99
+        for: 5m
+        labels:
+          severity: warning
+          signal: availability
+        annotations:
+          summary: "HTTP availability below 99% for {{ $labels.service }}"
+          description: "HTTP availability is {{ printf \"%.2f\" $value }} for namespace {{ $labels.namespace }} service {{ $labels.service }}."
+
+      - alert: GoChatGRPCAvailabilityLow
+        expr: |
+          gochat:grpc_availability:ratio5m < 0.99
+        for: 5m
+        labels:
+          severity: warning
+          signal: availability
+        annotations:
+          summary: "gRPC availability below 99% for {{ $labels.service }}"
+          description: "gRPC availability is {{ printf \"%.2f\" $value }} for namespace {{ $labels.namespace }} service {{ $labels.service }}."
+
+      - alert: GoChatHTTPP99High
+        expr: |
+          gochat:http_p99_latency_seconds:5m > 0.25
+        for: 5m
+        labels:
+          severity: warning
+          signal: latency
+        annotations:
+          summary: "HTTP P99 latency above 250ms for {{ $labels.service }}"
+          description: "HTTP P99 latency is {{ printf \"%.3f\" $value }}s for namespace {{ $labels.namespace }} service {{ $labels.service }}."
+
+      - alert: GoChatGRPCP99High
+        expr: |
+          gochat:grpc_p99_latency_seconds:5m > 0.25
+        for: 5m
+        labels:
+          severity: warning
+          signal: latency
+        annotations:
+          summary: "gRPC P99 latency above 250ms for {{ $labels.service }}"
+          description: "gRPC P99 latency is {{ printf \"%.3f\" $value }}s for namespace {{ $labels.namespace }} service {{ $labels.service }}."
+
+      - alert: GoChatWSEgressP99High
+        expr: |
+          gochat:ws_egress_p99_latency_seconds:5m > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          signal: latency
+        annotations:
+          summary: "WebSocket egress P99 latency above 100ms for {{ $labels.service }}"
+          description: "WebSocket egress P99 latency is {{ printf \"%.3f\" $value }}s for namespace {{ $labels.namespace }} service {{ $labels.service }}."
+
+  - name: gochat-realtime-persistence
+    interval: 30s
+    rules:
+      - alert: GoChatPersistenceRetryQueueBackedUp
+        expr: |
+          sum by(namespace) (gochat_persistence_retry_queue_depth) > 0
+        for: 5m
+        labels:
+          severity: warning
+          signal: persistence
+        annotations:
+          summary: "Persistence retry queue is backed up"
+          description: "Retry queue depth is {{ printf \"%.0f\" $value }} in namespace {{ $labels.namespace }}."
+
+      - alert: GoChatPersistenceOldestRetryAgeHigh
+        expr: |
+          max by(namespace) (gochat_persistence_retry_oldest_age_seconds) > 60
+        for: 2m
+        labels:
+          severity: warning
+          signal: persistence
+        annotations:
+          summary: "Persistence retry age above 60s"
+          description: "Oldest persistence retry age is {{ printf \"%.0f\" $value }}s in namespace {{ $labels.namespace }}."
+
+      - alert: GoChatPersistenceRetryQueueFull
+        expr: |
+          sum by(namespace) (rate(gochat_persistence_retry_queue_full_total[5m])) > 0
+        for: 1m
+        labels:
+          severity: critical
+          signal: persistence
+        annotations:
+          summary: "Persistence retry queue is full"
+          description: "Retry queue full events are occurring in namespace {{ $labels.namespace }}."
+
+      - alert: GoChatWSSessionConflicts
+        expr: |
+          sum by(namespace) (rate(gochat_ws_session_conflicts_total[5m])) > 0
+        for: 2m
+        labels:
+          severity: warning
+          signal: realtime
+        annotations:
+          summary: "WebSocket session conflicts detected"
+          description: "Session conflict events are occurring in namespace {{ $labels.namespace }}."
+
+      - alert: GoChatWSRoutingRejected
+        expr: |
+          sum by(namespace) (rate(gochat_websocket_owner_rejected_total[5m])) > 0
+          or
+          sum by(namespace) (rate(gochat_wsgateway_misdirected_total[5m])) > 0
+        for: 2m
+        labels:
+          severity: warning
+          signal: realtime
+        annotations:
+          summary: "WebSocket routing rejects detected"
+          description: "Owner reject or misdirected gateway events are occurring in namespace {{ $labels.namespace }}."
+
+  - name: gochat-platform-runtime
+    interval: 30s
+    rules:
+      - alert: GoChatDeploymentReplicasUnavailable
+        expr: |
+          (
+            kube_deployment_spec_replicas{namespace=~"go-chat-.+"}
+            -
+            kube_deployment_status_replicas_available{namespace=~"go-chat-.+"}
+          ) > 0
+        for: 5m
+        labels:
+          severity: warning
+          signal: platform
+        annotations:
+          summary: "Deployment has unavailable replicas for {{ $labels.deployment }}"
+          description: "Unavailable replica count is {{ printf \"%.0f\" $value }} in namespace {{ $labels.namespace }}."
+
+      - alert: GoChatPodRestarts
+        expr: |
+          sum by(namespace, pod, container) (
+            increase(kube_pod_container_status_restarts_total{namespace=~"go-chat-.+", container!="", container!="POD"}[10m])
+          ) > 0
+        for: 1m
+        labels:
+          severity: warning
+          signal: platform
+        annotations:
+          summary: "Pod container restarted: {{ $labels.pod }}"
+          description: "{{ $labels.container }} restarted {{ printf \"%.0f\" $value }} times in namespace {{ $labels.namespace }}."
+
+      - alert: GoChatRecoveredPanics
+        expr: |
+          sum by(namespace, service) (increase(gochat_panic_recovered_total[10m])) > 0
+        for: 1m
+        labels:
+          severity: critical
+          signal: reliability
+        annotations:
+          summary: "Recovered panic detected for {{ $labels.service }}"
+          description: "Recovered panic count increased by {{ printf \"%.0f\" $value }} in namespace {{ $labels.namespace }}."
