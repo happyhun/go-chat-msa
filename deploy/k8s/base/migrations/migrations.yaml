@@ -1,0 +1,75 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: postgres-migrate
+  labels:
+    app.kubernetes.io/name: postgres-migrate
+    app.kubernetes.io/component: migration
+spec:
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres-migrate
+        app.kubernetes.io/component: migration
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: postgres-migrate
+          image: migrate/migrate:v4.19.1
+          imagePullPolicy: IfNotPresent
+          args:
+            - -path
+            - /migrations
+            - -database
+            - $(APP_DB_POSTGRES_URL)
+            - up
+          envFrom:
+            - secretRef:
+                name: gochat-secret
+          volumeMounts:
+            - name: migrations
+              mountPath: /migrations
+              readOnly: true
+      volumes:
+        - name: migrations
+          configMap:
+            name: postgres-migrations
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mongo-migrate
+  labels:
+    app.kubernetes.io/name: mongo-migrate
+    app.kubernetes.io/component: migration
+spec:
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mongo-migrate
+        app.kubernetes.io/component: migration
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: mongo-migrate
+          image: migrate/migrate:v4.19.1
+          imagePullPolicy: IfNotPresent
+          args:
+            - -path
+            - /migrations
+            - -database
+            - $(APP_DB_MONGO_URI)/chat_service
+            - up
+          envFrom:
+            - secretRef:
+                name: gochat-secret
+          volumeMounts:
+            - name: migrations
+              mountPath: /migrations
+              readOnly: true
+      volumes:
+        - name: migrations
+          configMap:
+            name: mongo-migrations

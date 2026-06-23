@@ -1,0 +1,85 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: go-chat-test
+
+resources:
+  - ../../../base/apps
+
+configMapGenerator:
+  - name: gochat-app-config
+    behavior: merge
+    files:
+      - override.yaml=config/app/override.yaml
+
+generatorOptions:
+  disableNameSuffixHash: true
+
+patches:
+  - target:
+      kind: Deployment
+      labelSelector: "app.kubernetes.io/component in (gateway,service)"
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+  - target:
+      kind: Deployment
+      labelSelector: "app.kubernetes.io/component in (gateway,service)"
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            memory: 128Mi
+          limits:
+            memory: 512Mi
+  - target:
+      kind: Deployment
+      name: frontend
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            memory: 64Mi
+          limits:
+            memory: 128Mi
+  - target:
+      kind: Deployment
+      name: swagger-ui
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            memory: 64Mi
+          limits:
+            memory: 256Mi
+  - target:
+      kind: Ingress
+    patch: |-
+      - op: add
+        path: /spec/rules/0/host
+        value: test.gochat.localhost
+
+images:
+  - name: go-chat-msa/api-gateway
+    newTag: test
+  - name: go-chat-msa/ws-gateway
+    newTag: test
+  - name: go-chat-msa/websocket-service
+    newTag: test
+  - name: go-chat-msa/user-service
+    newTag: test
+  - name: go-chat-msa/chat-service
+    newTag: test
+  - name: go-chat-msa/frontend
+    newTag: test
+
+labels:
+  - includeSelectors: true
+    includeTemplates: true
+    pairs:
+      app.kubernetes.io/part-of: go-chat-msa
+      app.kubernetes.io/instance: go-chat-test

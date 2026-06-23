@@ -23,6 +23,7 @@ import (
 	"go-chat-msa/internal/apigateway/mocks"
 	"go-chat-msa/internal/shared/config"
 	ws "go-chat-msa/internal/websocket"
+	"go-chat-msa/internal/wsgateway/loadbalance"
 )
 
 type RouterIntegrationSuite struct {
@@ -40,7 +41,9 @@ func (s *RouterIntegrationSuite) SetupTest() {
 	s.mockUserClient = mocks.NewMockUserServiceClient(s.T())
 	s.mockChatClient = mocks.NewMockChatServiceClient(s.T())
 
+	const selfAddr = "self:8081"
 	cfg := ws.WebSocketConfig{
+		AdvertisedAddr: selfAddr,
 		Manager: config.ManagerConfig{
 			WriteWait:   10 * time.Second,
 			PongWait:    60 * time.Second,
@@ -48,8 +51,9 @@ func (s *RouterIntegrationSuite) SetupTest() {
 			IdleTimeout: 100 * time.Millisecond,
 		},
 	}
+	hashRing := loadbalance.New([]string{selfAddr})
 
-	s.router = ws.NewRouter(s.mockChatClient, s.mockUserClient, cfg)
+	s.router = ws.NewRouter(s.mockChatClient, s.mockUserClient, cfg, hashRing)
 	s.server = httptest.NewServer(s.router)
 	s.wsURL = strings.Replace(s.server.URL, "http", "ws", 1)
 

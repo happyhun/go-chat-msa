@@ -1,0 +1,67 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k6-c10k
+  labels:
+    app.kubernetes.io/name: k6-c10k
+    app.kubernetes.io/component: load-test
+spec:
+  completions: 4
+  parallelism: 4
+  completionMode: Indexed
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: k6-c10k
+        app.kubernetes.io/component: load-test
+    spec:
+      restartPolicy: Never
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: k6-c10k
+              app.kubernetes.io/component: load-test
+      securityContext:
+        sysctls:
+          - name: net.ipv4.ip_local_port_range
+            value: "10240 65535"
+      containers:
+        - name: k6
+          image: grafana/k6:1.5.0
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -lc
+          args:
+            - |
+              worker_index="${JOB_COMPLETION_INDEX:-0}"
+              worker_vus=2500
+              export K6_TARGET_VUS="${worker_vus}"
+              export K6_VU_OFFSET="$((worker_index * worker_vus))"
+              printf 'k6 ip_local_port_range='
+              cat /proc/sys/net/ipv4/ip_local_port_range
+              printf 'k6 nofile='
+              ulimit -n
+              printf 'k6 worker_index=%s vus=%s offset=%s\n' "${worker_index}" "${K6_TARGET_VUS}" "${K6_VU_OFFSET}"
+              exec k6 run /scripts/c10k-test.js
+          envFrom:
+            - configMapRef:
+                name: k6-load-env
+          env:
+            - name: JOB_COMPLETION_INDEX
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.annotations['batch.kubernetes.io/job-completion-index']
+          volumeMounts:
+            - name: k6-load-scripts
+              mountPath: /scripts
+              readOnly: true
+      volumes:
+        - name: k6-load-scripts
+          configMap:
+            name: k6-load-scripts

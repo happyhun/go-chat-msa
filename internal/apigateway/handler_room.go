@@ -64,7 +64,7 @@ type SearchedRoom struct {
 
 type SearchRoomsResponse struct {
 	Rooms      []SearchedRoom `json:"rooms"`
-	TotalCount int64              `json:"total_count"`
+	TotalCount int64          `json:"total_count"`
 }
 
 type Message struct {
@@ -72,9 +72,10 @@ type Message struct {
 	RoomID         string `json:"room_id"`
 	SenderID       string `json:"sender_id"`
 	Content        string `json:"content"`
+	ClientMsgID    string `json:"client_msg_id,omitempty"`
 	Type           string `json:"type"`
-	Timestamp      int64  `json:"timestamp"`
 	SequenceNumber int64  `json:"sequence_number"`
+	Timestamp      int64  `json:"timestamp"`
 }
 
 type ListMessagesResponse struct {
@@ -422,9 +423,10 @@ func messagesFromProto(msgs []*chatpb.Message) []Message {
 			RoomID:         m.RoomId,
 			SenderID:       m.SenderId,
 			Content:        m.Content,
-			Type:            m.Type,
-			Timestamp:      ts,
+			ClientMsgID:    m.ClientMsgId,
+			Type:           m.Type,
 			SequenceNumber: m.SequenceNumber,
+			Timestamp:      ts,
 		}
 	}
 	return items

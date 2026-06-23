@@ -6,12 +6,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"runtime"
 	"syscall"
 	"time"
 
 	"go-chat-msa/internal/apigateway"
 	"go-chat-msa/internal/shared/config"
+	"go-chat-msa/internal/shared/database"
 	"go-chat-msa/internal/shared/logger"
 	"go-chat-msa/internal/shared/middleware"
 	"go-chat-msa/internal/shared/telemetry"
@@ -21,6 +21,7 @@ import (
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/keepalive"
 
 	chatpb "go-chat-msa/api/proto/chat/v1"
@@ -42,6 +43,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	logger.InitLogger(cfg.Env)
 
 	if cfg.Telemetry.OTelEndpoint != "" {
 		shutdown, err := telemetry.InitOTel(ctx, "api-gateway", cfg.Telemetry.OTelEndpoint)
@@ -57,9 +59,6 @@ func run(ctx context.Context) error {
 	}
 
 	if cfg.Telemetry.PyroscopeEndpoint != "" {
-		runtime.SetMutexProfileFraction(10)
-		runtime.SetBlockProfileRate(10000)
-
 		stopProfiler, err := telemetry.InitProfiling("api-gateway", cfg.Telemetry.PyroscopeEndpoint)
 		if err != nil {
 			slog.WarnContext(ctx, "failed to initialize pyroscope profiler", "error", err)
@@ -68,29 +67,43 @@ func run(ctx context.Context) error {
 		}
 	}
 
-	userClient, chatClient, cleanupClients, err := initClients(cfg)
+	userClient, chatClient, userHealth, chatHealth, cleanupClients, err := initClients(cfg)
 	if err != nil {
 		return err
 	}
 	defer cleanupClients()
 
-	router := apigateway.NewRouter(cfg, userClient, chatClient)
+	redisClient, err := database.NewRedis(cfg.Redis.Addr)
+	if err != nil {
+		return err
+	}
+	defer redisClient.Close()
+
+	router := apigateway.NewRouter(cfg, userClient, chatClient, redisClient,
+		apigateway.WithHealthClients(userHealth, chatHealth))
 
 	return runServer(ctx, cfg, router)
 }
 
 func loadConfig() (*apigateway.Config, error) {
-	env := config.GetEnv()
-	logger.InitLogger(env)
-
-	return config.Load[apigateway.Config]("configs", "base", env)
+	return config.LoadRuntime[apigateway.Config]()
 }
 
-func initClients(cfg *apigateway.Config) (userpb.UserServiceClient, chatpb.ChatServiceClient, func(), error) {
+const grpcRoundRobinServiceConfig = `{"loadBalancingConfig":[{"round_robin":{}}]}`
+
+func initClients(cfg *apigateway.Config) (
+	userpb.UserServiceClient,
+	chatpb.ChatServiceClient,
+	grpc_health_v1.HealthClient,
+	grpc_health_v1.HealthClient,
+	func(),
+	error,
+) {
 	grpcTimeout := cfg.APIGateway.GRPCClient.Timeout
 	opts := []grpc.DialOption{
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultServiceConfig(grpcRoundRobinServiceConfig),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                cfg.APIGateway.GRPCClient.Keepalive.Time,
 			Timeout:             cfg.APIGateway.GRPCClient.Keepalive.Timeout,
@@ -104,13 +117,13 @@ func initClients(cfg *apigateway.Config) (userpb.UserServiceClient, chatpb.ChatS
 
 	userConn, err := grpc.NewClient(cfg.UserAddr(), opts...)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 
 	chatConn, err := grpc.NewClient(cfg.ChatAddr(), opts...)
 	if err != nil {
 		userConn.Close()
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 
 	cleanupClients := func() {
@@ -118,7 +131,12 @@ func initClients(cfg *apigateway.Config) (userpb.UserServiceClient, chatpb.ChatS
 		chatConn.Close()
 	}
 
-	return userpb.NewUserServiceClient(userConn), chatpb.NewChatServiceClient(chatConn), cleanupClients, nil
+	return userpb.NewUserServiceClient(userConn),
+		chatpb.NewChatServiceClient(chatConn),
+		grpc_health_v1.NewHealthClient(userConn),
+		grpc_health_v1.NewHealthClient(chatConn),
+		cleanupClients,
+		nil
 }
 
 func runServer(ctx context.Context, cfg *apigateway.Config, router *apigateway.Router) error {

@@ -1,0 +1,47 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k6-hpa
+  labels:
+    app.kubernetes.io/name: k6-hpa
+    app.kubernetes.io/component: load-test
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: k6-hpa
+        app.kubernetes.io/component: load-test
+    spec:
+      restartPolicy: Never
+      securityContext:
+        sysctls:
+          - name: net.ipv4.ip_local_port_range
+            value: "10240 65535"
+      containers:
+        - name: k6
+          image: grafana/k6:1.5.0
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -lc
+          args:
+            - |
+              printf 'k6 ip_local_port_range='
+              cat /proc/sys/net/ipv4/ip_local_port_range
+              printf 'k6 nofile='
+              ulimit -n
+              exec k6 run /scripts/hpa-test.js
+          envFrom:
+            - configMapRef:
+                name: k6-load-env
+          volumeMounts:
+            - name: k6-load-scripts
+              mountPath: /scripts
+              readOnly: true
+      volumes:
+        - name: k6-load-scripts
+          configMap:
+            name: k6-load-scripts
+

@@ -1,0 +1,5 @@
+ENV: "qa"
+
+TELEMETRY:
+  OTEL_ENDPOINT: "alloy:4318"
+  PYROSCOPE_ENDPOINT: "http://pyroscope:4040"

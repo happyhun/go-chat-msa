@@ -72,7 +72,8 @@ export default function DeleteUserModal({ onConfirm, onCancel }: Props) {
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl"
+        aria-describedby={error ? errorId : undefined}
+        className="bg-white rounded-lg p-6 w-full max-w-sm shadow-xl"
         onClick={(e) => e.stopPropagation()}
         onKeyDown={handleFocusTrap}
       >
@@ -80,7 +81,7 @@ export default function DeleteUserModal({ onConfirm, onCancel }: Props) {
           정말 탈퇴하시겠어요?
         </h3>
         <ul className="mt-3 text-sm text-gray-600 space-y-1.5 list-disc pl-5">
-          <li>30일 동안 동일 사용자 이름으로 재가입할 수 없습니다.</li>
+          <li>계정과 참여 정보는 즉시 삭제되며 복구할 수 없습니다.</li>
           <li>회원님이 만든 채팅방의 권한은 가장 오래된 멤버에게 위임됩니다.</li>
         </ul>
 

@@ -126,7 +126,7 @@ export function setup() {
 // VU별 세션 상태
 let session = {
     token: null, roomId: null, username: null,
-    msgCount: 0, lastSeq: null, iteration: 0,
+    fakeIp: null, msgCount: 0, lastSeq: null, iteration: 0,
 };
 
 // 메인 시나리오
@@ -137,9 +137,10 @@ export default function (data) {
 
     // 1. 인증
     const fakeIp = `10.0.${Math.floor(globalVu / 256)}.${globalVu % 256}`;
+    session.fakeIp = fakeIp;
     if (!authenticate(globalVu, fakeIp)) { sleep(5); return; }
 
-    const authHeader = { 'Authorization': `Bearer ${session.token}` };
+    const authHeader = authHeaders();
 
     // 2. 방 배정 (Churner는 매 iteration마다 다른 방)
     if (!session.roomId) {
@@ -214,11 +215,19 @@ function resolveRole(globalVu) {
     };
 }
 
+function withForwardedFor(headers, fakeIp) {
+    return fakeIp ? { ...headers, 'X-Forwarded-For': fakeIp } : headers;
+}
+
+function authHeaders(extra = {}) {
+    return withForwardedFor({ ...extra, 'Authorization': `Bearer ${session.token}` }, session.fakeIp);
+}
+
 function authenticate(globalVu, fakeIp) {
     if (session.token) return true;
     session.username = `u${RUN_ID}${globalVu}`;
     const body = JSON.stringify({ username: session.username, password: 'Password123!' });
-    const headers = { 'Content-Type': 'application/json', 'X-Forwarded-For': fakeIp };
+    const headers = withForwardedFor({ 'Content-Type': 'application/json' }, fakeIp);
     try {
         retryWithBackoff(() => {
             const res = http.post(`${BASE_URL}${PATHS.SIGNUP}`, body, { headers });
@@ -245,7 +254,7 @@ function fetchMessages() {
     try {
         const res = http.get(
             `${BASE_URL}${PATHS.MESSAGES(session.roomId)}${query}`,
-            { headers: { 'Authorization': `Bearer ${session.token}` } },
+            { headers: authHeaders() },
         );
         if (res.status === 200) {
             metric.add(res.timings.duration);
@@ -264,7 +273,7 @@ function acquireTicket() {
     try {
         const ticketRes = retryWithBackoff(() => {
             const res = http.post(`http://${WS_HOST}:${WS_PORT}/ws/ticket`, null, {
-                headers: { 'Authorization': `Bearer ${session.token}` },
+                headers: authHeaders(),
             });
             return { success: res.status === 200, res };
         }, 'WSTicket');

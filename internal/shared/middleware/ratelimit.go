@@ -10,7 +10,7 @@ import (
 	"go-chat-msa/internal/shared/ratelimit"
 )
 
-func RateLimitMiddleware(limiter *ratelimit.Limiter, keyFunc func(*http.Request) string) func(http.Handler) http.Handler {
+func RateLimitMiddleware(limiter *ratelimit.RedisLimiter, keyFunc func(*http.Request) string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			key := keyFunc(r)
@@ -21,7 +21,14 @@ func RateLimitMiddleware(limiter *ratelimit.Limiter, keyFunc func(*http.Request)
 				return
 			}
 
-			if !limiter.Allow(key) {
+			allowed, err := limiter.Allow(r.Context(), key)
+			if err != nil {
+				slog.WarnContext(r.Context(), "rate limit backend error, allowing request",
+					"method", r.Method, "path", r.URL.Path, "error", err)
+				next.ServeHTTP(w, r)
+				return
+			}
+			if !allowed {
 				w.Header().Set("Retry-After", "1")
 				httpio.WriteProblem(r.Context(), w, http.StatusTooManyRequests, "rate limit exceeded")
 				return

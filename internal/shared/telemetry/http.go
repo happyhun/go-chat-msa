@@ -82,7 +82,7 @@ func (rw *responseWriter) Unwrap() http.ResponseWriter {
 func MetricsMiddleware(service string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
-		if r.URL.Path == "/health" {
+		if isProbePath(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -115,4 +115,8 @@ func MetricsMiddleware(service string, next http.Handler) http.Handler {
 		httpRequestsTotal.Add(r.Context(), 1, attrs)
 		httpRequestDuration.Record(r.Context(), time.Since(start).Seconds(), attrs)
 	})
+}
+
+func isProbePath(path string) bool {
+	return path == "/health" || path == "/ready"
 }

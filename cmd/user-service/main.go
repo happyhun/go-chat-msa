@@ -6,7 +6,6 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"runtime"
 	"syscall"
 	"time"
 
@@ -44,6 +43,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	logger.InitLogger(cfg.Env)
 
 	if cfg.Telemetry.OTelEndpoint != "" {
 		shutdown, err := telemetry.InitOTel(ctx, "user-service", cfg.Telemetry.OTelEndpoint)
@@ -59,9 +59,6 @@ func run(ctx context.Context) error {
 	}
 
 	if cfg.Telemetry.PyroscopeEndpoint != "" {
-		runtime.SetMutexProfileFraction(10)
-		runtime.SetBlockProfileRate(10000)
-
 		stopProfiler, err := telemetry.InitProfiling("user-service", cfg.Telemetry.PyroscopeEndpoint)
 		if err != nil {
 			slog.WarnContext(ctx, "failed to initialize pyroscope profiler", "error", err)
@@ -79,10 +76,17 @@ func run(ctx context.Context) error {
 	}
 	defer pgPool.Close()
 
+	redisClient, err := database.NewRedis(cfg.Redis.Addr)
+	if err != nil {
+		return err
+	}
+	defer redisClient.Close()
+
 	telemetry.RegisterPgxpoolMetrics(pgPool)
 
 	dbQueries := db.New(telemetry.InstrumentedDBTX(pgPool))
 	userService := user.NewService(dbQueries, cfg.UserService, cfg.JWT.Secret, hasherPool).
+		WithRefreshTokenStore(user.NewRedisRefreshTokenStore(redisClient)).
 		WithRunInTx(func(ctx context.Context, fn func(db.Querier) error) error {
 			tx, err := pgPool.Begin(ctx)
 			if err != nil {
@@ -117,21 +121,19 @@ func run(ctx context.Context) error {
 
 	healthServer := health.NewServer()
 	grpc_health_v1.RegisterHealthServer(grpcServer, healthServer)
-	healthServer.SetServingStatus("user.v1.UserService", grpc_health_v1.HealthCheckResponse_SERVING)
+	setUserServingStatus(healthServer, grpc_health_v1.HealthCheckResponse_SERVING)
+	go reportPostgresHealth(ctx, healthServer, pgPool)
 
 	reflection.Register(grpcServer)
 
-	return runServer(ctx, cfg, grpcServer, userService)
+	return runServer(ctx, cfg, grpcServer, userService, healthServer)
 }
 
 func loadConfig() (*user.Config, error) {
-	env := config.GetEnv()
-	logger.InitLogger(env)
-
-	return config.Load[user.Config]("configs", "base", env)
+	return config.LoadRuntime[user.Config]()
 }
 
-func runServer(ctx context.Context, cfg *user.Config, grpcServer *grpc.Server, userService *user.Service) error {
+func runServer(ctx context.Context, cfg *user.Config, grpcServer *grpc.Server, userService *user.Service, healthServer *health.Server) error {
 	lis, err := net.Listen("tcp", ":"+cfg.Port.UserGRPC)
 	if err != nil {
 		return err
@@ -145,17 +147,48 @@ func runServer(ctx context.Context, cfg *user.Config, grpcServer *grpc.Server, u
 	})
 
 	eg.Go(func() error {
-		userService.PurgeExpiredTokens(ctx)
-		return nil
-	})
-
-	eg.Go(func() error {
 		<-ctx.Done()
 		slog.InfoContext(ctx, "Shutting down User Service...")
+		setUserServingStatus(healthServer, grpc_health_v1.HealthCheckResponse_NOT_SERVING)
 		grpcServer.GracefulStop()
 		slog.InfoContext(ctx, "User Service stopped gracefully")
 		return nil
 	})
 
 	return eg.Wait()
+}
+
+func reportPostgresHealth(ctx context.Context, healthServer *health.Server, pgPool interface {
+	Ping(context.Context) error
+}) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	update := func() {
+		pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+
+		status := grpc_health_v1.HealthCheckResponse_SERVING
+		if err := pgPool.Ping(pingCtx); err != nil {
+			status = grpc_health_v1.HealthCheckResponse_NOT_SERVING
+			slog.WarnContext(ctx, "postgres health ping failed", "error", err)
+		}
+		setUserServingStatus(healthServer, status)
+	}
+
+	update()
+	for {
+		select {
+		case <-ctx.Done():
+			setUserServingStatus(healthServer, grpc_health_v1.HealthCheckResponse_NOT_SERVING)
+			return
+		case <-ticker.C:
+			update()
+		}
+	}
+}
+
+func setUserServingStatus(healthServer *health.Server, status grpc_health_v1.HealthCheckResponse_ServingStatus) {
+	healthServer.SetServingStatus("", status)
+	healthServer.SetServingStatus("user.v1.UserService", status)
 }

@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
-import { AuthProvider, useAuth } from './context/AuthContext'
+import { AuthProvider } from './context/AuthContext'
+import { useAuth } from './context/auth'
 import Layout from './components/Layout'
 import LoginPage from './pages/LoginPage'
 import SignupPage from './pages/SignupPage'
@@ -9,15 +10,27 @@ import ChatPage from './pages/ChatPage'
 import type { ReactNode } from 'react'
 
 function RequireAuth({ children }: { children: ReactNode }) {
-  const { isLoggedIn } = useAuth()
+  const { isLoggedIn, initializing } = useAuth()
+  if (initializing) return <AuthLoading />
   if (!isLoggedIn) return <Navigate to="/login" replace />
   return <>{children}</>
 }
 
 function RedirectIfAuth({ children }: { children: ReactNode }) {
-  const { isLoggedIn } = useAuth()
+  const { isLoggedIn, initializing } = useAuth()
+  if (initializing) return <AuthLoading />
   if (isLoggedIn) return <Navigate to="/lobby" replace />
   return <>{children}</>
+}
+
+function AuthLoading() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
+      <div role="status" aria-live="polite" className="text-sm text-gray-500">
+        세션을 확인하는 중...
+      </div>
+    </div>
+  )
 }
 
 export default function App() {

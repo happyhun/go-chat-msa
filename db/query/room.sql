@@ -10,7 +10,7 @@ SELECT r.id, r.name, r.manager_id, r.capacity, rm.joined_at,
        (SELECT COUNT(*) FROM room_members WHERE room_id = r.id) AS member_count
 FROM rooms r
 JOIN room_members rm ON r.id = rm.room_id
-WHERE rm.user_id = $1 AND r.deleted_at IS NULL
+WHERE rm.user_id = $1
 ORDER BY rm.joined_at DESC;
 
 -- name: SearchRooms :many
@@ -18,20 +18,19 @@ SELECT id, name, manager_id, capacity, created_at,
        COUNT(*) OVER() AS total_count,
        (SELECT COUNT(*) FROM room_members WHERE room_id = rooms.id) AS member_count
 FROM rooms
-WHERE name ILIKE '%' || $1 || '%' AND deleted_at IS NULL
+WHERE name ILIKE '%' || $1 || '%'
 ORDER BY created_at DESC
 LIMIT $2 OFFSET $3;
 
 -- name: UpdateRoom :one
 UPDATE rooms
 SET name = $2, capacity = $3
-WHERE id = $1 AND manager_id = $4 AND deleted_at IS NULL
+WHERE id = $1 AND manager_id = $4
 RETURNING id;
 
--- name: SoftDeleteRoom :one
-UPDATE rooms
-SET deleted_at = $3
-WHERE id = $1 AND manager_id = $2 AND deleted_at IS NULL
+-- name: DeleteRoom :one
+DELETE FROM rooms
+WHERE id = $1 AND manager_id = $2
 RETURNING id;
 
 -- name: DeleteRoomMember :exec
@@ -47,7 +46,7 @@ LIMIT 1;
 -- name: UpdateRoomManager :exec
 UPDATE rooms
 SET manager_id = $2
-WHERE id = $1 AND deleted_at IS NULL;
+WHERE id = $1;
 
 -- name: CreateRoomMember :exec
 INSERT INTO room_members (
@@ -64,14 +63,14 @@ WHERE room_id = $1;
 SELECT rm.joined_at
 FROM room_members rm
 JOIN rooms r ON r.id = rm.room_id
-WHERE rm.room_id = $1 AND rm.user_id = $2 AND r.deleted_at IS NULL
+WHERE rm.room_id = $1 AND rm.user_id = $2
 LIMIT 1;
 
 -- name: ExistsRoomMember :one
 SELECT EXISTS (
   SELECT 1 FROM room_members rm
   JOIN rooms r ON r.id = rm.room_id
-  WHERE rm.room_id = $1 AND rm.user_id = $2 AND r.deleted_at IS NULL
+  WHERE rm.room_id = $1 AND rm.user_id = $2
 ) AS exists;
 
 -- name: ListRoomMembers :many
@@ -79,22 +78,17 @@ SELECT u.id, u.username, rm.joined_at
 FROM room_members rm
 JOIN users u ON u.id = rm.user_id
 JOIN rooms r ON r.id = rm.room_id
-WHERE rm.room_id = $1 AND r.deleted_at IS NULL
+WHERE rm.room_id = $1
 ORDER BY rm.joined_at ASC;
 
 -- name: GetRoomForUpdate :one
 SELECT id, name, manager_id, capacity FROM rooms
-WHERE id = $1 AND deleted_at IS NULL
+WHERE id = $1
 FOR UPDATE;
 
 -- name: ListJoinedRoomIDsForUpdate :many
 SELECT rm.room_id
 FROM room_members rm
 JOIN rooms r ON r.id = rm.room_id
-WHERE rm.user_id = $1 AND r.deleted_at IS NULL
+WHERE rm.user_id = $1
 FOR UPDATE OF r;
-
--- name: PurgeDeletedRooms :execrows
-DELETE FROM rooms
-WHERE deleted_at IS NOT NULL
-  AND deleted_at < $1;

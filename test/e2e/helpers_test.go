@@ -14,9 +14,6 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/jackc/pgx/v5"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 const (
@@ -34,46 +31,7 @@ func (e *HTTPError) Error() string {
 }
 
 func (s *E2ESuite) cleanupDatabases(ctx context.Context) {
-	s.cleanupPostgres(ctx)
-	s.cleanupMongo(ctx)
-}
-
-func (s *E2ESuite) cleanupPostgres(ctx context.Context) {
-	connStr, err := s.postgres.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		s.T().Logf("cleanup: postgres connection string error: %v", err)
-		return
-	}
-
-	conn, err := pgx.Connect(ctx, connStr)
-	if err != nil {
-		s.T().Logf("cleanup: postgres connect error: %v", err)
-		return
-	}
-	defer conn.Close(ctx)
-
-	if _, err = conn.Exec(ctx, "TRUNCATE TABLE users, rooms, room_members RESTART IDENTITY CASCADE;"); err != nil {
-		s.T().Logf("cleanup: postgres truncate error: %v", err)
-	}
-}
-
-func (s *E2ESuite) cleanupMongo(ctx context.Context) {
-	endpoint, err := s.mongo.ConnectionString(ctx)
-	if err != nil {
-		s.T().Logf("cleanup: mongo connection string error: %v", err)
-		return
-	}
-
-	client, err := mongo.Connect(ctx, options.Client().ApplyURI(endpoint))
-	if err != nil {
-		s.T().Logf("cleanup: mongo connect error: %v", err)
-		return
-	}
-	defer client.Disconnect(ctx)
-
-	if err = client.Database("chat_service").Drop(ctx); err != nil {
-		s.T().Logf("cleanup: mongo drop error: %v", err)
-	}
+	s.cleanupKubernetesDatabases(ctx)
 }
 
 func (s *E2ESuite) signUp(ctx context.Context, username, password string) error {
@@ -105,7 +63,10 @@ func (s *E2ESuite) login(ctx context.Context, username, password string) (string
 
 func (s *E2ESuite) loginWithCookie(ctx context.Context, username, password string) (string, *http.Cookie, error) {
 	reqBody := fmt.Sprintf(`{"username":"%s","password":"%s"}`, username, password)
-	req, _ := http.NewRequestWithContext(ctx, "POST", s.gatewayBaseURL+"/auth/token", strings.NewReader(reqBody))
+	req, err := http.NewRequestWithContext(ctx, "POST", s.gatewayBaseURL+"/auth/token", strings.NewReader(reqBody))
+	if err != nil {
+		return "", nil, err
+	}
 	req.Header.Set("Content-Type", "application/json")
 	client := &http.Client{Timeout: httpClientTimeout}
 	resp, err := client.Do(req)
@@ -216,7 +177,10 @@ func (s *E2ESuite) getWSTicket(ctx context.Context, token string) (string, error
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return "", fmt.Errorf("응답 바디 읽기 실패: %w", err)
+		}
 		return "", &HTTPError{StatusCode: resp.StatusCode, Body: string(bodyBytes)}
 	}
 

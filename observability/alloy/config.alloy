@@ -41,7 +41,7 @@ loki.process "json_logs" {
 
 	// 헬스체크 노이즈 제거
 	stage.drop {
-		expression = ".*(pg_isready|adminCommand: ping|/health|HealthCheck|grpc\\.health\\.v1\\.Health/Check).*"
+		expression = ".*(pg_isready|adminCommand: ping|/health|/ready|HealthCheck|grpc\\.health\\.v1\\.Health/Check).*"
 	}
 
 	// MongoDB 로그 처리
@@ -187,6 +187,9 @@ otelcol.processor.filter "drop_healthcheck" {
 			`attributes["http.route"] == "/health"`,
 			`attributes["http.target"] == "/health"`,
 			`attributes["url.path"] == "/health"`,
+			`attributes["http.route"] == "/ready"`,
+			`attributes["http.target"] == "/ready"`,
+			`attributes["url.path"] == "/ready"`,
 			`IsMatch(name, "grpc\\.health\\..*")`,
 			`IsMatch(name, ".*HealthCheck.*")`,
 		]

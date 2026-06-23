@@ -6,25 +6,39 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"runtime"
 	"syscall"
 	"time"
 
 	"go-chat-msa/internal/shared/config"
+	"go-chat-msa/internal/shared/database"
 	"go-chat-msa/internal/shared/logger"
+	"go-chat-msa/internal/shared/membership"
 	"go-chat-msa/internal/shared/middleware"
 	"go-chat-msa/internal/shared/telemetry"
 	"go-chat-msa/internal/websocket"
+	"go-chat-msa/internal/websocket/roomlease"
+	"go-chat-msa/internal/websocket/roomseq"
+	"go-chat-msa/internal/wsgateway/loadbalance"
 
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/keepalive"
 
 	chatpb "go-chat-msa/api/proto/chat/v1"
 	userpb "go-chat-msa/api/proto/user/v1"
+)
+
+const (
+	membershipKeyPrefix = "wss:member:"
+	membershipTTL       = 30 * time.Second
+	membershipHeartbeat = 10 * time.Second
+	roomLeaseKeyPrefix  = "wss:room:lease:"
+	sequenceFloorPrefix = "wss:room:seqfloor:"
+	roomLeaseTTL        = 30 * time.Second
 )
 
 func main() {
@@ -42,6 +56,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	logger.InitLogger(cfg.Env)
 
 	if cfg.Telemetry.OTelEndpoint != "" {
 		shutdown, err := telemetry.InitOTel(ctx, "websocket-service", cfg.Telemetry.OTelEndpoint)
@@ -57,9 +72,6 @@ func run(ctx context.Context) error {
 	}
 
 	if cfg.Telemetry.PyroscopeEndpoint != "" {
-		runtime.SetMutexProfileFraction(10)
-		runtime.SetBlockProfileRate(10000)
-
 		stopProfiler, err := telemetry.InitProfiling("websocket-service", cfg.Telemetry.PyroscopeEndpoint)
 		if err != nil {
 			slog.WarnContext(ctx, "failed to initialize pyroscope profiler", "error", err)
@@ -68,29 +80,53 @@ func run(ctx context.Context) error {
 		}
 	}
 
-	chatClient, userClient, cleanupClients, err := initClients(cfg)
+	chatClient, userClient, chatHealth, userHealth, cleanupClients, err := initClients(cfg)
 	if err != nil {
 		return err
 	}
 	defer cleanupClients()
 
-	router := websocket.NewRouter(chatClient, userClient, cfg.WS)
+	redisClient, err := database.NewRedis(cfg.Redis.Addr)
+	if err != nil {
+		return err
+	}
+	defer redisClient.Close()
 
-	return runServer(ctx, cfg, router)
+	hashRing := loadbalance.New(nil)
+	registry := membership.NewRegistry(redisClient, membershipKeyPrefix, cfg.WS.AdvertisedAddr, membershipTTL, membershipHeartbeat)
+	watcher := membership.NewWatcher(redisClient, membershipKeyPrefix, hashRing)
+	leaseStore := roomlease.NewStore(redisClient, roomLeaseKeyPrefix, cfg.WS.AdvertisedAddr, roomLeaseTTL)
+	sequenceFloorStore := roomseq.NewStore(redisClient, sequenceFloorPrefix)
+
+	router := websocket.NewRouter(chatClient, userClient, cfg.WS, hashRing,
+		websocket.WithShutdownTimeout(cfg.ShutdownTimeout),
+		websocket.WithRedisClient(redisClient),
+		websocket.WithRoomLeaseStore(leaseStore),
+		websocket.WithSequenceFloorStore(sequenceFloorStore),
+		websocket.WithHealthClients(chatHealth, userHealth))
+
+	return runServer(ctx, cfg, router, registry, watcher)
 }
 
 func loadConfig() (*websocket.Config, error) {
-	env := config.GetEnv()
-	logger.InitLogger(env)
-
-	return config.Load[websocket.Config]("configs", "base", env)
+	return config.LoadRuntime[websocket.Config]()
 }
 
-func initClients(cfg *websocket.Config) (chatpb.ChatServiceClient, userpb.UserServiceClient, func(), error) {
+const grpcRoundRobinServiceConfig = `{"loadBalancingConfig":[{"round_robin":{}}]}`
+
+func initClients(cfg *websocket.Config) (
+	chatpb.ChatServiceClient,
+	userpb.UserServiceClient,
+	grpc_health_v1.HealthClient,
+	grpc_health_v1.HealthClient,
+	func(),
+	error,
+) {
 	grpcTimeout := cfg.WS.GRPCClient.Timeout
 	opts := []grpc.DialOption{
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultServiceConfig(grpcRoundRobinServiceConfig),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                cfg.WS.GRPCClient.Keepalive.Time,
 			Timeout:             cfg.WS.GRPCClient.Keepalive.Timeout,
@@ -104,13 +140,13 @@ func initClients(cfg *websocket.Config) (chatpb.ChatServiceClient, userpb.UserSe
 
 	chatConn, err := grpc.NewClient(cfg.ChatAddr(), opts...)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 
 	userConn, err := grpc.NewClient(cfg.UserAddr(), opts...)
 	if err != nil {
 		chatConn.Close()
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 
 	cleanupClients := func() {
@@ -118,10 +154,21 @@ func initClients(cfg *websocket.Config) (chatpb.ChatServiceClient, userpb.UserSe
 		userConn.Close()
 	}
 
-	return chatpb.NewChatServiceClient(chatConn), userpb.NewUserServiceClient(userConn), cleanupClients, nil
+	return chatpb.NewChatServiceClient(chatConn),
+		userpb.NewUserServiceClient(userConn),
+		grpc_health_v1.NewHealthClient(chatConn),
+		grpc_health_v1.NewHealthClient(userConn),
+		cleanupClients,
+		nil
 }
 
-func runServer(ctx context.Context, cfg *websocket.Config, router *websocket.Router) error {
+func runServer(
+	ctx context.Context,
+	cfg *websocket.Config,
+	router *websocket.Router,
+	registry *membership.Registry,
+	watcher *membership.Watcher,
+) error {
 	mux := http.NewServeMux()
 
 	mux.Handle("/", otelhttp.NewMiddleware("websocket-service",
@@ -145,7 +192,20 @@ func runServer(ctx context.Context, cfg *websocket.Config, router *websocket.Rou
 	eg, ctx := errgroup.WithContext(ctx)
 
 	eg.Go(func() error {
+		return registry.Run(ctx)
+	})
+
+	eg.Go(func() error {
+		return watcher.Run(ctx)
+	})
+
+	eg.Go(func() error {
 		router.RunManager(ctx)
+		return nil
+	})
+
+	eg.Go(func() error {
+		router.WatchOwnership(ctx, watcher.Events())
 		return nil
 	})
 
@@ -174,4 +234,3 @@ func runServer(ctx context.Context, cfg *websocket.Config, router *websocket.Rou
 
 	return eg.Wait()
 }
-

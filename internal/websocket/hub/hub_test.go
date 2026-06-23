@@ -31,8 +31,9 @@ func (m *mockStore) GetLastSequenceNumber(_ context.Context, _ string) (int64, e
 	return m.lastSeq, nil
 }
 
-func (m *mockStore) SaveMany(_ context.Context, msgs []*Message) {
+func (m *mockStore) SaveMany(_ context.Context, msgs []*Message) error {
 	m.persisted = append(m.persisted, msgs...)
+	return nil
 }
 
 func createTestWSPair(t *testing.T) (serverConn, clientConn *websocket.Conn) {
@@ -68,9 +69,10 @@ func TestHub_SequenceManagement(t *testing.T) {
 		t.Parallel()
 		roomID := "test-room"
 		store := &mockStore{lastSeq: 100}
-		h := newHub(roomID, testSessionConfig(), 5*time.Minute, store, nil, nil)
+		h := newHub(roomID, testSessionConfig(), 5*time.Minute, store, nil, time.Second, nil)
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
+		require.NoError(t, h.initializeSequence(ctx))
 		go h.run(ctx)
 
 		clientConn := registerTestSession(t, h, "user1")
@@ -101,9 +103,10 @@ func TestHub_InitializeSequence(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		store    MessageStore
-		expected int64
+		name      string
+		store     MessageStore
+		expected  int64
+		wantError bool
 	}{
 		{
 			name:     "Success: DB에서 마지막 시퀀스 번호 정상 로드",
@@ -111,17 +114,23 @@ func TestHub_InitializeSequence(t *testing.T) {
 			expected: 50,
 		},
 		{
-			name:     "Failure: DB 에러 발생 시 시퀀스 번호 0으로 초기화",
-			store:    &errStore{},
-			expected: 0,
+			name:      "Failure: DB 에러 발생 시 초기화 실패",
+			store:     &errStore{},
+			wantError: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			h := newHub("room1", testSessionConfig(), time.Minute, tt.store, nil, nil)
-			h.initializeSequence(t.Context())
+			h := newHub("room1", testSessionConfig(), time.Minute, tt.store, nil, time.Second, nil)
+			err := h.initializeSequence(t.Context())
+			if tt.wantError {
+				require.ErrorIs(t, err, ErrRoomSequenceUnavailable)
+				assert.Equal(t, int64(0), h.lastSequence.Load())
+				return
+			}
+			require.NoError(t, err)
 			assert.Equal(t, tt.expected, h.lastSequence.Load())
 		})
 	}
@@ -132,7 +141,7 @@ func TestHub_Lifecycle(t *testing.T) {
 
 	t.Run("Failure: 종료된 Hub에 세션 등록 시도 시 에러 반환", func(t *testing.T) {
 		t.Parallel()
-		h := newHub("stop-room", testSessionConfig(), time.Minute, nil, nil, nil)
+		h := newHub("stop-room", testSessionConfig(), time.Minute, nil, nil, time.Second, nil)
 		close(h.doneCh)
 		err := h.register(t.Context(), nil, "user1")
 		require.Error(t, err)
@@ -141,14 +150,14 @@ func TestHub_Lifecycle(t *testing.T) {
 
 	t.Run("Success: 종료된 Hub에 브로드캐스트 시 패닉 방지", func(t *testing.T) {
 		t.Parallel()
-		h := newHub("stop-room", testSessionConfig(), time.Minute, nil, nil, nil)
+		h := newHub("stop-room", testSessionConfig(), time.Minute, nil, nil, time.Second, nil)
 		close(h.doneCh)
 		h.broadcast(t.Context(), &Message{RoomID: "stop-room"})
 	})
 
 	t.Run("Success: Shutdown 호출 시 모든 세션 정리", func(t *testing.T) {
 		t.Parallel()
-		h := newHub("shutdown-room", testSessionConfig(), time.Minute, nil, nil, nil)
+		h := newHub("shutdown-room", testSessionConfig(), time.Minute, nil, nil, time.Second, nil)
 		go func() {
 			serverConn, _ := createTestWSPair(t)
 			_ = h.register(t.Context(), serverConn, "user1")
@@ -158,6 +167,156 @@ func TestHub_Lifecycle(t *testing.T) {
 		h.shutdown()
 		assert.Empty(t, h.sessions)
 	})
+
+	t.Run("Success: Handoff 종료 시 1012 close frame 전송", func(t *testing.T) {
+		t.Parallel()
+		h := newHub("handoff-room", testSessionConfig(), time.Minute, nil, nil, time.Second, nil)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		go h.run(ctx)
+
+		clientConn := registerTestSession(t, h, "user1")
+		defer clientConn.Close()
+
+		h.forceClose(handoffCloseReason)
+
+		clientConn.SetReadDeadline(time.Now().Add(time.Second))
+		_, _, err := clientConn.ReadMessage()
+		var closeErr *websocket.CloseError
+		require.ErrorAs(t, err, &closeErr)
+		assert.Equal(t, handoffCloseCode, closeErr.Code)
+		assert.Equal(t, handoffCloseReason, closeErr.Text)
+	})
+}
+
+func TestHub_DrainWaitsForPersistenceAck(t *testing.T) {
+	t.Parallel()
+
+	persistCh := make(chan *persistTask, 1)
+	h := newHub("drain-room", testSessionConfig(), time.Minute, &mockStore{}, persistCh, time.Second, nil)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go h.run(ctx)
+
+	h.broadcast(t.Context(), &Message{
+		RoomID:   "drain-room",
+		SenderID: "user-1",
+		Content:  "hello",
+		Type:     "chat",
+	})
+
+	var task *persistTask
+	select {
+	case task = <-persistCh:
+	case <-time.After(time.Second):
+		t.Fatal("persist task was not enqueued")
+	}
+
+	h.forceClose()
+
+	select {
+	case <-h.done():
+		t.Fatal("hub stopped before persistence ack")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	task.ack(nil)
+
+	select {
+	case <-h.done():
+	case <-time.After(time.Second):
+		t.Fatal("hub did not stop after persistence ack")
+	}
+}
+
+func TestHub_DrainTimeoutLeavesPendingPersist(t *testing.T) {
+	t.Parallel()
+
+	persistCh := make(chan *persistTask, 1)
+	h := newHub("drain-timeout-room", testSessionConfig(), time.Minute, &mockStore{}, persistCh, 20*time.Millisecond, nil)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go h.run(ctx)
+
+	h.broadcast(t.Context(), &Message{
+		RoomID:   "drain-timeout-room",
+		SenderID: "user-1",
+		Content:  "hello",
+		Type:     "chat",
+	})
+
+	var task *persistTask
+	select {
+	case task = <-persistCh:
+	case <-time.After(time.Second):
+		t.Fatal("persist task was not enqueued")
+	}
+
+	h.forceClose()
+
+	select {
+	case <-h.done():
+	case <-time.After(time.Second):
+		t.Fatal("hub did not stop after drain timeout")
+	}
+
+	assert.Equal(t, int64(1), h.pendingPersist.Load())
+	task.ack(nil)
+}
+
+func TestHub_PersistAckErrorMarksPersistFailed(t *testing.T) {
+	t.Parallel()
+
+	persistCh := make(chan *persistTask, 1)
+	h := newHub("persist-error-room", testSessionConfig(), time.Minute, &mockStore{}, persistCh, time.Second, nil)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go h.run(ctx)
+
+	h.broadcast(t.Context(), &Message{
+		RoomID:   "persist-error-room",
+		SenderID: "user-1",
+		Content:  "hello",
+		Type:     "chat",
+	})
+
+	var task *persistTask
+	select {
+	case task = <-persistCh:
+	case <-time.After(time.Second):
+		t.Fatal("persist task was not enqueued")
+	}
+
+	task.ack(assert.AnError)
+
+	require.Eventually(t, func() bool {
+		return h.persistFailed.Load() && h.pendingPersist.Load() == 0
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestHub_BroadcastUnblocksWhenDrainBeginsWithFullQueue(t *testing.T) {
+	t.Parallel()
+
+	h := newHub("drain-room", testSessionConfig(), time.Minute, nil, nil, time.Second, nil)
+	for range cap(h.broadcastCh) {
+		h.broadcastCh <- &Message{RoomID: "drain-room"}
+	}
+
+	done := make(chan struct{})
+	go func() {
+		h.broadcast(t.Context(), &Message{RoomID: "drain-room", Content: "after-drain"})
+		close(done)
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	h.beginDrain()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("broadcast should unblock once drain begins")
+	}
+	assert.Len(t, h.broadcastCh, cap(h.broadcastCh))
 }
 
 type errStore struct {

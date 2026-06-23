@@ -1,0 +1,102 @@
+flowchart TB
+    subgraph External ["외부"]
+        direction LR
+        Client["브라우저"]
+    end
+
+    subgraph K8s ["Kubernetes 환경"]
+        direction TB
+
+        Ingress["Ingress"]
+
+        subgraph PublicUI ["화면 · 문서"]
+            direction LR
+            FE["Frontend"]
+            Docs["Swagger UI"]
+        end
+
+        subgraph Runtime ["서비스 런타임"]
+            direction TB
+
+            subgraph Services ["애플리케이션 서비스"]
+                direction TB
+
+                subgraph Gateway ["진입 계층"]
+                    direction LR
+                    AGW["API Gateway"]
+                    WSGW["WS Gateway"]
+                end
+
+                subgraph Domain ["도메인 계층"]
+                    direction LR
+                    US["User Service"]
+                    CS["Chat Service"]
+                    WSS["WebSocket Service"]
+                end
+            end
+
+            subgraph State ["상태 저장소"]
+                direction LR
+
+                subgraph Data ["영속 저장소"]
+                    direction LR
+                    PG[("PostgreSQL")]
+                    MG[("MongoDB")]
+                end
+
+                subgraph Control ["제어 상태 저장소"]
+                    direction LR
+                    RD[("Redis")]
+                end
+            end
+        end
+
+        subgraph Observability ["관측성"]
+            direction LR
+            Alloy["Alloy"]
+            Prometheus[("Prometheus")]
+            Loki[("Loki")]
+            Tempo[("Tempo")]
+            Pyroscope[("Pyroscope")]
+            Grafana["Grafana"]
+        end
+
+        subgraph Verification ["검증 리소스"]
+            direction LR
+            Load["C10K k6 Job"]
+            HPAProbe["HPA k6 Job"]
+        end
+    end
+
+    Client == "HTTP / WebSocket" ==> Ingress
+    Ingress -- "화면" --> FE
+    Ingress -- "REST" --> AGW
+    Ingress -- "WebSocket" --> WSGW
+    Ingress -- "API 문서" --> Docs
+    Ingress -- "대시보드" --> Grafana
+
+    AGW -- "사용자 · 방" --> US
+    AGW -- "메시지 조회" --> CS
+    WSGW -- "방 기준 라우팅" --> WSS
+    WSS -- "멤버십 확인" --> US
+    WSS -- "메시지 저장 · 순번 조회" --> CS
+
+    US --> PG
+    US --> RD
+    CS --> MG
+    AGW --> RD
+    WSGW --> RD
+    WSS --> RD
+    %% 상태 저장소 내부의 영속 저장소와 Redis를 좌우로 유지하기 위한 Mermaid 레이아웃 힌트
+    MG ~~~ RD
+
+    PublicUI -. "Pod 로그" .-> Alloy
+    Services -. "로그 · 메트릭 · 트레이스" .-> Alloy
+    Services -. "프로파일" .-> Pyroscope
+    Alloy --> Prometheus
+    Alloy --> Loki
+    Alloy --> Tempo
+    Prometheus --> Grafana
+    Loki --> Grafana
+    Tempo --> Grafana
+    Pyroscope --> Grafana

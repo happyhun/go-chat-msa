@@ -1,0 +1,333 @@
+discovery.kubernetes "pods" {
+	role = "pod"
+
+	namespaces {
+		names = ["__GOCHAT_NAMESPACE__"]
+	}
+}
+
+discovery.kubernetes "nodes" {
+	role = "node"
+}
+
+discovery.relabel "pod_logs" {
+	targets = discovery.kubernetes.pods.targets
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+		target_label  = "service"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_component"]
+		target_label  = "component"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_namespace"]
+		target_label  = "namespace"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_name"]
+		target_label  = "pod"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_container_name"]
+		target_label  = "container"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_node_name"]
+		target_label  = "node"
+	}
+
+	rule {
+		source_labels = ["service"]
+		regex         = "($|alloy|loki|grafana|prometheus|tempo|pyroscope|postgres-migrate|mongo-migrate)"
+		action        = "drop"
+	}
+}
+
+loki.source.kubernetes "pods" {
+	targets    = discovery.relabel.pod_logs.output
+	forward_to = [loki.process.pods.receiver]
+}
+
+loki.process "pods" {
+	forward_to = [loki.write.default.receiver]
+
+	stage.drop {
+		expression = ".*(pg_isready|adminCommand: ping|/health|/ready|HealthCheck|grpc\\.health\\.v1\\.Health/Check).*"
+	}
+
+	stage.match {
+		selector = "{service=\"mongo\"}"
+		stage.json {
+			expressions = { s = "s", t = "t.\"$date\"" }
+		}
+		stage.template {
+			source   = "level"
+			template = `{{ if eq .s "I" }}info{{ else if eq .s "W" }}warn{{ else if eq .s "E" }}error{{ else if eq .s "F" }}fatal{{ else if eq .s "D" }}debug{{ else }}{{ .s }}{{ end }}`
+		}
+		stage.labels { values = { level = "" } }
+		stage.timestamp {
+			source = "t"
+			format = "RFC3339Nano"
+		}
+	}
+
+	stage.match {
+		selector = "{service=\"postgres\"}"
+		stage.regex {
+			expression = "^(?P<time>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}.\\d{3} \\w+) \\[(?P<pid>\\d+)\\]\\s+(?:\\S+\\s+)?(?P<pg_level>\\w+):"
+		}
+		stage.template {
+			source   = "level"
+			template = `{{ if or (eq .pg_level "LOG") (eq .pg_level "INFO") (eq .pg_level "NOTICE") }}info{{ else if eq .pg_level "WARNING" }}warn{{ else if or (eq .pg_level "ERROR") (eq .pg_level "FATAL") (eq .pg_level "PANIC") }}error{{ else }}{{ lower .pg_level }}{{ end }}`
+		}
+		stage.labels { values = { level = "" } }
+	}
+
+	stage.match {
+		selector = "{component!~\"(data|observability|migration)\"}"
+		stage.json {
+			expressions = {
+				level     = "level",
+				timestamp = "time",
+				trace_id  = "trace_id",
+			}
+		}
+		stage.template {
+			source   = "level"
+			template = `{{ lower .level }}`
+		}
+		stage.labels {
+			values = { level = "" }
+		}
+		stage.timestamp {
+			source = "timestamp"
+			format = "RFC3339Nano"
+		}
+	}
+}
+
+loki.write "default" {
+	endpoint {
+		url = "http://loki:3100/loki/api/v1/push"
+	}
+}
+
+discovery.relabel "cadvisor" {
+	targets = discovery.kubernetes.nodes.targets
+
+	rule {
+		source_labels = ["__meta_kubernetes_node_name"]
+		target_label  = "node"
+	}
+
+	rule {
+		target_label = "__address__"
+		replacement  = "kubernetes.default.svc:443"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_node_name"]
+		target_label  = "__metrics_path__"
+		replacement   = "/api/v1/nodes/$1/proxy/metrics/cadvisor"
+	}
+}
+
+prometheus.scrape "cadvisor" {
+	targets         = discovery.relabel.cadvisor.output
+	forward_to      = [prometheus.relabel.cadvisor.receiver]
+	scrape_interval = "15s"
+	scheme          = "https"
+	bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+
+	tls_config {
+		insecure_skip_verify = true
+	}
+}
+
+prometheus.relabel "cadvisor" {
+	forward_to = [prometheus.remote_write.default.receiver]
+
+	rule {
+		source_labels = ["namespace"]
+		regex         = "__GOCHAT_NAMESPACE__"
+		action        = "keep"
+	}
+
+	rule {
+		source_labels = ["pod"]
+		regex         = ".+"
+		action        = "keep"
+	}
+
+	rule {
+		source_labels = ["container"]
+		regex         = "($|POD)"
+		action        = "drop"
+	}
+
+	rule {
+		source_labels = ["__name__"]
+		regex         = "container_cpu_usage_seconds_total|container_memory_working_set_bytes|container_memory_rss"
+		action        = "keep"
+	}
+}
+
+prometheus.scrape "kube_state_metrics" {
+	targets         = [{__address__ = "kube-state-metrics:8080", job = "kube-state-metrics"}]
+	forward_to      = [prometheus.relabel.kube_state_metrics.receiver]
+	scrape_interval = "15s"
+}
+
+prometheus.relabel "kube_state_metrics" {
+	forward_to = [prometheus.remote_write.default.receiver]
+
+	rule {
+		source_labels = ["namespace"]
+		regex         = "__GOCHAT_NAMESPACE__"
+		action        = "keep"
+	}
+
+	rule {
+		source_labels = ["__name__"]
+		regex         = "kube_pod_info|kube_pod_status_phase|kube_pod_container_status_restarts_total|kube_deployment_spec_replicas|kube_deployment_status_replicas|kube_deployment_status_replicas_available|kube_deployment_status_replicas_ready|kube_horizontalpodautoscaler_spec_min_replicas|kube_horizontalpodautoscaler_spec_max_replicas|kube_horizontalpodautoscaler_status_current_replicas|kube_horizontalpodautoscaler_status_desired_replicas"
+		action        = "keep"
+	}
+}
+
+otelcol.receiver.otlp "default" {
+	grpc {
+		endpoint = "0.0.0.0:4317"
+	}
+	http {
+		endpoint = "0.0.0.0:4318"
+	}
+
+	output {
+		traces  = [otelcol.processor.k8sattributes.default.input]
+		metrics = [otelcol.processor.k8sattributes.default.input]
+	}
+}
+
+otelcol.processor.k8sattributes "default" {
+	auth_type = "serviceAccount"
+
+	extract {
+		deployment_name_from_replicaset = true
+		metadata = [
+			"k8s.namespace.name",
+			"k8s.deployment.name",
+			"k8s.node.name",
+			"k8s.pod.name",
+			"k8s.container.name",
+			"k8s.pod.uid",
+			"k8s.pod.start_time",
+		]
+
+		label {
+			from     = "pod"
+			key      = "app.kubernetes.io/name"
+			tag_name = "service"
+		}
+
+		label {
+			from     = "pod"
+			key      = "app.kubernetes.io/component"
+			tag_name = "component"
+		}
+	}
+
+	filter {
+		namespace = "__GOCHAT_NAMESPACE__"
+	}
+
+	pod_association {
+		source {
+			from = "connection"
+		}
+	}
+
+	output {
+		traces  = [otelcol.processor.filter.drop_healthcheck.input]
+		metrics = [otelcol.processor.transform.k8s_metric_labels.input]
+	}
+}
+
+otelcol.processor.transform "k8s_metric_labels" {
+	error_mode = "ignore"
+
+	metric_statements {
+		context = "datapoint"
+		statements = [
+			`set(attributes["namespace"], resource.attributes["k8s.namespace.name"]) where resource.attributes["k8s.namespace.name"] != nil`,
+			`set(attributes["deployment"], resource.attributes["k8s.deployment.name"]) where resource.attributes["k8s.deployment.name"] != nil`,
+			`set(attributes["pod"], resource.attributes["k8s.pod.name"]) where resource.attributes["k8s.pod.name"] != nil`,
+			`set(attributes["container"], resource.attributes["k8s.container.name"]) where resource.attributes["k8s.container.name"] != nil`,
+			`set(attributes["node"], resource.attributes["k8s.node.name"]) where resource.attributes["k8s.node.name"] != nil`,
+			`set(attributes["service"], resource.attributes["service"]) where attributes["service"] == nil and resource.attributes["service"] != nil`,
+			`set(attributes["service"], resource.attributes["service.name"]) where attributes["service"] == nil and resource.attributes["service.name"] != nil`,
+			`set(attributes["service_instance_id"], resource.attributes["service.instance.id"]) where resource.attributes["service.instance.id"] != nil`,
+			`set(attributes["component"], resource.attributes["component"]) where resource.attributes["component"] != nil`,
+		]
+	}
+
+	output {
+		metrics = [otelcol.processor.batch.metrics.input]
+	}
+}
+
+otelcol.processor.batch "metrics" {
+	output {
+		metrics = [otelcol.exporter.prometheus.default.input]
+	}
+}
+
+otelcol.exporter.prometheus "default" {
+	forward_to = [prometheus.remote_write.default.receiver]
+}
+
+prometheus.remote_write "default" {
+	endpoint {
+		url = "http://prometheus:9090/api/v1/write"
+	}
+}
+
+otelcol.processor.filter "drop_healthcheck" {
+	error_mode = "ignore"
+	traces {
+		span = [
+			`attributes["http.route"] == "/health"`,
+			`attributes["http.target"] == "/health"`,
+			`attributes["url.path"] == "/health"`,
+			`attributes["http.route"] == "/ready"`,
+			`attributes["http.target"] == "/ready"`,
+			`attributes["url.path"] == "/ready"`,
+			`IsMatch(name, "grpc\\.health\\..*")`,
+			`IsMatch(name, ".*HealthCheck.*")`,
+		]
+	}
+	output {
+		traces = [otelcol.processor.batch.traces.input]
+	}
+}
+
+otelcol.processor.batch "traces" {
+	output {
+		traces = [otelcol.exporter.otlphttp.tempo.input]
+	}
+}
+
+otelcol.exporter.otlphttp "tempo" {
+	client {
+		endpoint = "http://tempo:4318"
+		tls {
+			insecure = true
+		}
+	}
+}

@@ -244,7 +244,8 @@ func TestService_VerifyUser(t *testing.T) {
 	username := "loginUser"
 	password := "loginPass123"
 
-	hashedBytes, _ := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	hashedBytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	require.NoError(t, err)
 	validHash := string(hashedBytes)
 
 	uid := uuid.New()
@@ -278,9 +279,6 @@ func TestService_VerifyUser(t *testing.T) {
 							PasswordHash: validHash,
 							CreatedAt:    fixedTime,
 						}, nil)
-					m.EXPECT().
-						CreateRefreshToken(mock.Anything, mock.Anything).
-						Return(nil)
 				},
 			},
 			args: args{
@@ -338,7 +336,7 @@ func TestService_VerifyUser(t *testing.T) {
 
 			tt.fields.mockBehavior(mockQueries)
 
-			s := createTestService(mockQueries)
+			s := createTestService(t, mockQueries)
 
 			got, err := s.VerifyUser(t.Context(), tt.args.req)
 
@@ -383,7 +381,7 @@ func TestService_CreateRoom(t *testing.T) {
 			name: "Success: 채팅방 생성 및 멤버 추가 (방장 포함)",
 			mockBehavior: func(m *dbmocks.MockQuerier) {
 				m.EXPECT().CreateRoom(mock.Anything, mock.Anything).
-					Return(db.CreateRoomRow{
+					Return(db.Room{
 						ID:        fixedRoomID,
 						Name:      roomName,
 						ManagerID: pgtype.UUID{Bytes: uid, Valid: true},
@@ -441,7 +439,7 @@ func TestService_CreateRoom(t *testing.T) {
 
 			tt.mockBehavior(mockQueries)
 
-			s := createTestService(mockQueries)
+			s := createTestService(t, mockQueries)
 			targetReq := req
 			if tt.req != nil {
 				targetReq = tt.req
@@ -497,7 +495,7 @@ func TestService_ListJoinedRooms(t *testing.T) {
 
 			tt.mockBehavior(mockQueries)
 
-			s := createTestService(mockQueries)
+			s := createTestService(t, mockQueries)
 			got, err := s.ListJoinedRooms(t.Context(), req)
 
 			if tt.wantErr {
@@ -532,6 +530,8 @@ func TestService_JoinRoom(t *testing.T) {
 			mockBehavior: func(m *dbmocks.MockQuerier) {
 				m.EXPECT().GetRoomForUpdate(mock.Anything, mock.Anything).
 					Return(db.GetRoomForUpdateRow{Capacity: 10}, nil)
+				m.EXPECT().ExistsRoomMember(mock.Anything, mock.Anything).
+					Return(false, nil)
 				m.EXPECT().GetRoomMemberCount(mock.Anything, mock.Anything).
 					Return(int64(0), nil)
 				m.EXPECT().CreateRoomMember(mock.Anything, mock.Anything).
@@ -553,11 +553,23 @@ func TestService_JoinRoom(t *testing.T) {
 			mockBehavior: func(m *dbmocks.MockQuerier) {
 				m.EXPECT().GetRoomForUpdate(mock.Anything, mock.Anything).
 					Return(db.GetRoomForUpdateRow{Capacity: 10}, nil)
+				m.EXPECT().ExistsRoomMember(mock.Anything, mock.Anything).
+					Return(false, nil)
 				m.EXPECT().GetRoomMemberCount(mock.Anything, mock.Anything).
 					Return(int64(10), nil)
 			},
 			wantErr: true,
 			errCode: codes.FailedPrecondition,
+		},
+		{
+			name: "Success: 이미 멤버이면 정원이 차 있어도 멱등 성공",
+			mockBehavior: func(m *dbmocks.MockQuerier) {
+				m.EXPECT().GetRoomForUpdate(mock.Anything, mock.Anything).
+					Return(db.GetRoomForUpdateRow{Capacity: 1}, nil)
+				m.EXPECT().ExistsRoomMember(mock.Anything, mock.Anything).
+					Return(true, nil)
+			},
+			wantErr: false,
 		},
 		{
 			name: "Failure: DB 에러 (Internal)",
@@ -577,7 +589,7 @@ func TestService_JoinRoom(t *testing.T) {
 
 			tt.mockBehavior(mockQueries)
 
-			s := createTestService(mockQueries)
+			s := createTestService(t, mockQueries)
 			got, err := s.JoinRoom(t.Context(), req)
 
 			if tt.wantErr {
@@ -648,7 +660,7 @@ func TestService_SearchRooms(t *testing.T) {
 
 			tt.mockBehavior(mockQueries)
 
-			s := createTestService(mockQueries)
+			s := createTestService(t, mockQueries)
 			got, err := s.SearchRooms(t.Context(), tt.req)
 
 			if tt.wantErr {
@@ -707,7 +719,7 @@ func TestService_GetMemberJoinedAt(t *testing.T) {
 
 			tt.mockBehavior(mockQueries)
 
-			s := createTestService(mockQueries)
+			s := createTestService(t, mockQueries)
 			got, err := s.GetMemberJoinedAt(t.Context(), tt.req)
 
 			if tt.wantErr {
@@ -765,7 +777,7 @@ func TestService_VerifyRoomMember(t *testing.T) {
 
 			tt.mockBehavior(mockQueries)
 
-			s := createTestService(mockQueries)
+			s := createTestService(t, mockQueries)
 			got, err := s.VerifyRoomMember(t.Context(), tt.req)
 
 			if tt.wantErr {
@@ -933,7 +945,7 @@ func TestService_UpdateRoom(t *testing.T) {
 
 			tt.mockBehavior(mockQueries)
 
-			s := createTestService(mockQueries)
+			s := createTestService(t, mockQueries)
 			got, err := s.UpdateRoom(t.Context(), tt.req)
 
 			if tt.wantErr {
@@ -985,7 +997,7 @@ func TestService_LeaveRoom(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "Success: 마지막 멤버(방장)가 나갈 때 방 soft delete",
+			name: "Success: 마지막 멤버(방장)가 나갈 때 방 hard delete",
 			req: &pb.LeaveRoomRequest{
 				RoomId: roomID.String(),
 				UserId: managerID.String(),
@@ -1000,10 +1012,9 @@ func TestService_LeaveRoom(t *testing.T) {
 					UserID: pgtype.UUID{Bytes: managerID, Valid: true},
 				}).Return(nil)
 				m.EXPECT().GetOldestRoomMember(mock.Anything, pgtype.UUID{Bytes: roomID, Valid: true}).Return(pgtype.UUID{}, pgx.ErrNoRows)
-				m.EXPECT().SoftDeleteRoom(mock.Anything, mock.MatchedBy(func(p db.SoftDeleteRoomParams) bool {
+				m.EXPECT().DeleteRoom(mock.Anything, mock.MatchedBy(func(p db.DeleteRoomParams) bool {
 					return p.ID == pgtype.UUID{Bytes: roomID, Valid: true} &&
-						p.ManagerID == pgtype.UUID{Bytes: managerID, Valid: true} &&
-						p.DeletedAt.Valid
+						p.ManagerID == pgtype.UUID{Bytes: managerID, Valid: true}
 				})).Return(pgtype.UUID{Bytes: roomID, Valid: true}, nil)
 			},
 			wantErr: false,
@@ -1017,7 +1028,7 @@ func TestService_LeaveRoom(t *testing.T) {
 
 			tt.mockBehavior(mockQueries)
 
-			s := createTestService(mockQueries)
+			s := createTestService(t, mockQueries)
 			got, err := s.LeaveRoom(t.Context(), tt.req)
 
 			if tt.wantErr {
@@ -1047,7 +1058,7 @@ func TestService_DeleteRoom(t *testing.T) {
 		errCode      codes.Code
 	}{
 		{
-			name: "Success: 방장이 채팅방 정상 삭제 (Soft Delete)",
+			name: "Success: 방장이 채팅방 정상 삭제",
 			req: &pb.DeleteRoomRequest{
 				RoomId:      roomID.String(),
 				RequesterId: managerID.String(),
@@ -1058,7 +1069,7 @@ func TestService_DeleteRoom(t *testing.T) {
 						ID:        roomPGUUID,
 						ManagerID: managerPGUUID,
 					}, nil)
-				m.EXPECT().SoftDeleteRoom(mock.Anything, mock.Anything).
+				m.EXPECT().DeleteRoom(mock.Anything, mock.Anything).
 					Return(roomPGUUID, nil)
 			},
 			wantErr: false,
@@ -1124,7 +1135,7 @@ func TestService_DeleteRoom(t *testing.T) {
 						ID:        roomPGUUID,
 						ManagerID: managerPGUUID,
 					}, nil)
-				m.EXPECT().SoftDeleteRoom(mock.Anything, mock.Anything).
+				m.EXPECT().DeleteRoom(mock.Anything, mock.Anything).
 					Return(pgtype.UUID{}, assert.AnError)
 			},
 			wantErr: true,
@@ -1139,7 +1150,7 @@ func TestService_DeleteRoom(t *testing.T) {
 
 			tt.mockBehavior(mockQueries)
 
-			s := createTestService(mockQueries)
+			s := createTestService(t, mockQueries)
 			got, err := s.DeleteRoom(t.Context(), tt.req)
 
 			if tt.wantErr {
@@ -1154,7 +1165,9 @@ func TestService_DeleteRoom(t *testing.T) {
 	}
 }
 
-func createTestService(mockQueries db.Querier) *Service {
+func createTestService(t testing.TB, mockQueries db.Querier) *Service {
+	t.Helper()
+
 	cfg := config.UserConfig{
 		Room: config.RoomConfig{
 			MaxCapacity:   1000,
@@ -1163,7 +1176,6 @@ func createTestService(mockQueries db.Querier) *Service {
 		Token: config.TokenConfig{
 			AccessTokenExpirationMinutes: 30,
 			RefreshTokenExpirationDays:   7,
-			TokenPurgeInterval:           time.Hour,
 		},
 		Search: config.SearchConfig{
 			DefaultLimit: 20,
@@ -1171,10 +1183,62 @@ func createTestService(mockQueries db.Querier) *Service {
 		},
 	}
 	h := hasher.NewPool(hasher.PoolConfig{Workers: 1, Buffer: 10})
+	t.Cleanup(h.Close)
 	return NewService(mockQueries, cfg, "test_secret", h).
+		WithRefreshTokenStore(&fakeRefreshTokenStore{}).
 		WithRunInTx(func(ctx context.Context, fn func(db.Querier) error) error {
 			return fn(mockQueries)
 		})
+}
+
+func createTestServiceWithTokens(t testing.TB, mockQueries db.Querier, tokens RefreshTokenStore) *Service {
+	t.Helper()
+
+	s := createTestService(t, mockQueries)
+	return s.WithRefreshTokenStore(tokens)
+}
+
+type fakeRefreshTokenStore struct {
+	issueFunc      func(ctx context.Context, userID, token string, ttl time.Duration) error
+	validateFunc   func(ctx context.Context, token string) (RefreshTokenValidation, error)
+	rotateFunc     func(ctx context.Context, oldToken, newToken string, ttl time.Duration) (RefreshTokenRotation, error)
+	revokeFunc     func(ctx context.Context, token string) error
+	revokeUserFunc func(ctx context.Context, userID string) error
+}
+
+func (f *fakeRefreshTokenStore) Issue(ctx context.Context, userID, token string, ttl time.Duration) error {
+	if f.issueFunc != nil {
+		return f.issueFunc(ctx, userID, token, ttl)
+	}
+	return nil
+}
+
+func (f *fakeRefreshTokenStore) Validate(ctx context.Context, token string) (RefreshTokenValidation, error) {
+	if f.validateFunc != nil {
+		return f.validateFunc(ctx, token)
+	}
+	return RefreshTokenValidation{Status: RefreshTokenValidationInvalid}, nil
+}
+
+func (f *fakeRefreshTokenStore) Rotate(ctx context.Context, oldToken, newToken string, ttl time.Duration) (RefreshTokenRotation, error) {
+	if f.rotateFunc != nil {
+		return f.rotateFunc(ctx, oldToken, newToken, ttl)
+	}
+	return RefreshTokenRotation{Status: RefreshTokenInvalid}, nil
+}
+
+func (f *fakeRefreshTokenStore) Revoke(ctx context.Context, token string) error {
+	if f.revokeFunc != nil {
+		return f.revokeFunc(ctx, token)
+	}
+	return nil
+}
+
+func (f *fakeRefreshTokenStore) RevokeUser(ctx context.Context, userID string) error {
+	if f.revokeUserFunc != nil {
+		return f.revokeUserFunc(ctx, userID)
+	}
+	return nil
 }
 
 func TestService_RefreshToken(t *testing.T) {
@@ -1187,6 +1251,7 @@ func TestService_RefreshToken(t *testing.T) {
 		name         string
 		req          *pb.RefreshTokenRequest
 		mockBehavior func(m *dbmocks.MockQuerier)
+		tokenStore   RefreshTokenStore
 		wantErr      bool
 		errCode      codes.Code
 	}{
@@ -1194,77 +1259,93 @@ func TestService_RefreshToken(t *testing.T) {
 			name: "Success: 리프레시 토큰으로 액세스 토큰 갱신 성공",
 			req:  &pb.RefreshTokenRequest{RefreshToken: tokenStr},
 			mockBehavior: func(m *dbmocks.MockQuerier) {
-				m.EXPECT().GetRefreshTokenByHashForUpdate(mock.Anything, mock.Anything).Return(db.RefreshToken{
-					ID:        pgtype.UUID{Bytes: uuid.New(), Valid: true},
-					UserID:    fixedID,
-					TokenHash: tokenStr,
-					ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
-					Used:      false,
-				}, nil)
-
-				m.EXPECT().MarkRefreshTokenUsed(mock.Anything, mock.Anything).Return(nil)
 				m.EXPECT().GetUserByID(mock.Anything, mock.Anything).Return(db.User{
 					ID:       fixedID,
 					Username: "refresh_user",
 				}, nil)
-				m.EXPECT().CreateRefreshToken(mock.Anything, mock.Anything).Return(nil)
+			},
+			tokenStore: &fakeRefreshTokenStore{
+				validateFunc: func(context.Context, string) (RefreshTokenValidation, error) {
+					return RefreshTokenValidation{Status: RefreshTokenValidationActive, UserID: fixedID.String()}, nil
+				},
+				rotateFunc: func(context.Context, string, string, time.Duration) (RefreshTokenRotation, error) {
+					return RefreshTokenRotation{Status: RefreshTokenRotated, UserID: fixedID.String()}, nil
+				},
 			},
 			wantErr: false,
 		},
 		{
-			name: "Failure: 존재하지 않는 리프레시 토큰 (Unauthenticated)",
-			req:  &pb.RefreshTokenRequest{RefreshToken: "invalid_token"},
-			mockBehavior: func(m *dbmocks.MockQuerier) {
-				m.EXPECT().GetRefreshTokenByHashForUpdate(mock.Anything, mock.Anything).Return(db.RefreshToken{}, pgx.ErrNoRows)
+			name:         "Failure: 존재하지 않는 리프레시 토큰 (Unauthenticated)",
+			req:          &pb.RefreshTokenRequest{RefreshToken: "invalid_token"},
+			mockBehavior: func(m *dbmocks.MockQuerier) {},
+			tokenStore: &fakeRefreshTokenStore{
+				validateFunc: func(context.Context, string) (RefreshTokenValidation, error) {
+					return RefreshTokenValidation{Status: RefreshTokenValidationInvalid}, nil
+				},
 			},
 			wantErr: true,
 			errCode: codes.Unauthenticated,
 		},
 		{
-			name: "Failure: 만료된 리프레시 토큰 (Unauthenticated)",
-			req:  &pb.RefreshTokenRequest{RefreshToken: "expired_token"},
-			mockBehavior: func(m *dbmocks.MockQuerier) {
-				m.EXPECT().GetRefreshTokenByHashForUpdate(mock.Anything, mock.Anything).Return(db.RefreshToken{
-					UserID:    fixedID,
-					TokenHash: "expired_token",
-					ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(-time.Hour), Valid: true},
-					Used:      false,
-				}, nil)
-			},
-			wantErr: true,
-			errCode: codes.Unauthenticated,
-		},
-		{
-			name: "Failure: 토큰 소유자가 탈퇴(soft-deleted)되어 조회 불가 (Unauthenticated)",
+			name: "Failure: 토큰 소유자가 탈퇴되어 조회 불가 (Unauthenticated)",
 			req:  &pb.RefreshTokenRequest{RefreshToken: tokenStr},
 			mockBehavior: func(m *dbmocks.MockQuerier) {
-				m.EXPECT().GetRefreshTokenByHashForUpdate(mock.Anything, mock.Anything).Return(db.RefreshToken{
-					ID:        pgtype.UUID{Bytes: uuid.New(), Valid: true},
-					UserID:    fixedID,
-					TokenHash: tokenStr,
-					ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
-					Used:      false,
-				}, nil)
-				m.EXPECT().MarkRefreshTokenUsed(mock.Anything, mock.Anything).Return(nil)
 				m.EXPECT().GetUserByID(mock.Anything, mock.Anything).Return(db.User{}, pgx.ErrNoRows)
+			},
+			tokenStore: &fakeRefreshTokenStore{
+				validateFunc: func(context.Context, string) (RefreshTokenValidation, error) {
+					return RefreshTokenValidation{Status: RefreshTokenValidationActive, UserID: fixedID.String()}, nil
+				},
+				rotateFunc: func(context.Context, string, string, time.Duration) (RefreshTokenRotation, error) {
+					return RefreshTokenRotation{Status: RefreshTokenRotated, UserID: fixedID.String()}, nil
+				},
 			},
 			wantErr: true,
 			errCode: codes.Unauthenticated,
 		},
 		{
-			name: "Failure: 이미 사용된 토큰 재사용 시도 차단 (Reuse Detection - Unauthenticated)",
-			req:  &pb.RefreshTokenRequest{RefreshToken: "revoked_token"},
-			mockBehavior: func(m *dbmocks.MockQuerier) {
-				m.EXPECT().GetRefreshTokenByHashForUpdate(mock.Anything, mock.Anything).Return(db.RefreshToken{
-					UserID:    fixedID,
-					TokenHash: "revoked_token",
-					ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
-					Used:      true,
-				}, nil)
-				m.EXPECT().DeleteRefreshTokensByUserID(mock.Anything, fixedID).Return(nil)
+			name:         "Failure: 이미 사용된 토큰 재사용 시도 차단 (Reuse Detection - Unauthenticated)",
+			req:          &pb.RefreshTokenRequest{RefreshToken: "revoked_token"},
+			mockBehavior: func(m *dbmocks.MockQuerier) {},
+			tokenStore: &fakeRefreshTokenStore{
+				validateFunc: func(context.Context, string) (RefreshTokenValidation, error) {
+					return RefreshTokenValidation{Status: RefreshTokenValidationReused, UserID: fixedID.String()}, nil
+				},
 			},
 			wantErr: true,
 			errCode: codes.Unauthenticated,
+		},
+		{
+			name:         "Failure: Redis 오류로 인한 갱신 실패",
+			req:          &pb.RefreshTokenRequest{RefreshToken: tokenStr},
+			mockBehavior: func(m *dbmocks.MockQuerier) {},
+			tokenStore: &fakeRefreshTokenStore{
+				validateFunc: func(context.Context, string) (RefreshTokenValidation, error) {
+					return RefreshTokenValidation{}, assert.AnError
+				},
+			},
+			wantErr: true,
+			errCode: codes.Internal,
+		},
+		{
+			name: "Failure: Redis 오류로 인한 회전 실패",
+			req:  &pb.RefreshTokenRequest{RefreshToken: tokenStr},
+			mockBehavior: func(m *dbmocks.MockQuerier) {
+				m.EXPECT().GetUserByID(mock.Anything, mock.Anything).Return(db.User{
+					ID:       fixedID,
+					Username: "refresh_user",
+				}, nil)
+			},
+			tokenStore: &fakeRefreshTokenStore{
+				validateFunc: func(context.Context, string) (RefreshTokenValidation, error) {
+					return RefreshTokenValidation{Status: RefreshTokenValidationActive, UserID: fixedID.String()}, nil
+				},
+				rotateFunc: func(context.Context, string, string, time.Duration) (RefreshTokenRotation, error) {
+					return RefreshTokenRotation{}, assert.AnError
+				},
+			},
+			wantErr: true,
+			errCode: codes.Internal,
 		},
 	}
 
@@ -1275,7 +1356,7 @@ func TestService_RefreshToken(t *testing.T) {
 
 			tt.mockBehavior(mockQueries)
 
-			s := createTestService(mockQueries)
+			s := createTestServiceWithTokens(t, mockQueries, tt.tokenStore)
 			got, err := s.RefreshToken(context.Background(), tt.req)
 
 			if tt.wantErr {
@@ -1291,26 +1372,54 @@ func TestService_RefreshToken(t *testing.T) {
 	}
 }
 
+func TestService_RefreshToken_DBErrorDoesNotRotate(t *testing.T) {
+	t.Parallel()
+
+	uid := uuid.New()
+	fixedID := pgtype.UUID{Bytes: uid, Valid: true}
+	mockQueries := dbmocks.NewMockQuerier(t)
+	mockQueries.EXPECT().GetUserByID(mock.Anything, fixedID).Return(db.User{}, assert.AnError)
+
+	rotated := false
+	tokenStore := &fakeRefreshTokenStore{
+		validateFunc: func(context.Context, string) (RefreshTokenValidation, error) {
+			return RefreshTokenValidation{Status: RefreshTokenValidationActive, UserID: fixedID.String()}, nil
+		},
+		rotateFunc: func(context.Context, string, string, time.Duration) (RefreshTokenRotation, error) {
+			rotated = true
+			return RefreshTokenRotation{Status: RefreshTokenRotated, UserID: fixedID.String()}, nil
+		},
+	}
+
+	s := createTestServiceWithTokens(t, mockQueries, tokenStore)
+	got, err := s.RefreshToken(context.Background(), &pb.RefreshTokenRequest{RefreshToken: "valid_refresh_token_string"})
+
+	require.Error(t, err)
+	assert.Equal(t, codes.Internal, status.Code(err))
+	assert.Nil(t, got)
+	assert.False(t, rotated)
+}
+
 func TestService_RevokeToken(t *testing.T) {
 	t.Parallel()
 	req := &pb.RevokeTokenRequest{RefreshToken: "token_to_revoke"}
 
 	tests := []struct {
-		name         string
-		mockBehavior func(m *dbmocks.MockQuerier)
-		wantErr      bool
+		name       string
+		tokenStore RefreshTokenStore
+		wantErr    bool
 	}{
 		{
-			name: "Success: 리프레시 토큰 무효화(Revoke) 성공",
-			mockBehavior: func(m *dbmocks.MockQuerier) {
-				m.EXPECT().DeleteRefreshTokenByHash(mock.Anything, mock.Anything).Return(nil)
-			},
-			wantErr: false,
+			name:       "Success: 리프레시 토큰 무효화(Revoke) 성공",
+			tokenStore: &fakeRefreshTokenStore{},
+			wantErr:    false,
 		},
 		{
-			name: "Failure: 데이터베이스 오류로 인한 무효화 실패",
-			mockBehavior: func(m *dbmocks.MockQuerier) {
-				m.EXPECT().DeleteRefreshTokenByHash(mock.Anything, mock.Anything).Return(assert.AnError)
+			name: "Failure: Redis 오류로 인한 무효화 실패",
+			tokenStore: &fakeRefreshTokenStore{
+				revokeFunc: func(context.Context, string) error {
+					return assert.AnError
+				},
 			},
 			wantErr: true,
 		},
@@ -1321,9 +1430,7 @@ func TestService_RevokeToken(t *testing.T) {
 			t.Parallel()
 			mockQueries := dbmocks.NewMockQuerier(t)
 
-			tt.mockBehavior(mockQueries)
-
-			s := createTestService(mockQueries)
+			s := createTestServiceWithTokens(t, mockQueries, tt.tokenStore)
 			got, err := s.RevokeToken(context.Background(), req)
 
 			if tt.wantErr {
@@ -1343,7 +1450,8 @@ func TestService_DeleteUser(t *testing.T) {
 	userPGUUID := pgtype.UUID{Bytes: uid, Valid: true}
 	password := "validPass123"
 
-	hashedBytes, _ := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	hashedBytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	require.NoError(t, err)
 	validHash := string(hashedBytes)
 
 	managerRoom := uuid.New()
@@ -1359,7 +1467,7 @@ func TestService_DeleteUser(t *testing.T) {
 		wantRoomLen  int
 	}{
 		{
-			name: "Success: 매니저 방(위임) + 일반 방을 정리하고 토큰 폐기 후 soft delete",
+			name: "Success: 매니저 방(위임) + 일반 방을 정리하고 토큰 폐기 후 hard delete",
 			req:  &pb.DeleteUserRequest{UserId: uid.String(), Password: password},
 			mockBehavior: func(m *dbmocks.MockQuerier) {
 				m.EXPECT().GetUserByID(mock.Anything, userPGUUID).Return(db.User{
@@ -1371,7 +1479,6 @@ func TestService_DeleteUser(t *testing.T) {
 					{Bytes: managerRoom, Valid: true},
 					{Bytes: memberRoom, Valid: true},
 				}, nil)
-				// 매니저인 방 — 멤버 남음 → 위임
 				m.EXPECT().GetRoomForUpdate(mock.Anything, pgtype.UUID{Bytes: managerRoom, Valid: true}).Return(db.GetRoomForUpdateRow{
 					ID:        pgtype.UUID{Bytes: managerRoom, Valid: true},
 					ManagerID: userPGUUID,
@@ -1385,7 +1492,6 @@ func TestService_DeleteUser(t *testing.T) {
 					ID:        pgtype.UUID{Bytes: managerRoom, Valid: true},
 					ManagerID: pgtype.UUID{Bytes: otherUser, Valid: true},
 				}).Return(nil)
-				// 일반 멤버인 방 — 멤버만 빠짐
 				m.EXPECT().GetRoomForUpdate(mock.Anything, pgtype.UUID{Bytes: memberRoom, Valid: true}).Return(db.GetRoomForUpdateRow{
 					ID:        pgtype.UUID{Bytes: memberRoom, Valid: true},
 					ManagerID: pgtype.UUID{Bytes: otherUser, Valid: true},
@@ -1394,16 +1500,13 @@ func TestService_DeleteUser(t *testing.T) {
 					RoomID: pgtype.UUID{Bytes: memberRoom, Valid: true},
 					UserID: userPGUUID,
 				}).Return(nil)
-				m.EXPECT().DeleteRefreshTokensByUserID(mock.Anything, userPGUUID).Return(nil)
-				m.EXPECT().SoftDeleteUser(mock.Anything, mock.MatchedBy(func(p db.SoftDeleteUserParams) bool {
-					return p.ID == userPGUUID && p.DeletedAt.Valid
-				})).Return(userPGUUID, nil)
+				m.EXPECT().DeleteUser(mock.Anything, userPGUUID).Return(userPGUUID, nil)
 			},
 			wantErr:     false,
 			wantRoomLen: 2,
 		},
 		{
-			name: "Success: 마지막 멤버이자 매니저인 방은 soft-delete",
+			name: "Success: 마지막 멤버이자 매니저인 방은 hard-delete",
 			req:  &pb.DeleteUserRequest{UserId: uid.String(), Password: password},
 			mockBehavior: func(m *dbmocks.MockQuerier) {
 				m.EXPECT().GetUserByID(mock.Anything, userPGUUID).Return(db.User{
@@ -1420,11 +1523,11 @@ func TestService_DeleteUser(t *testing.T) {
 				}, nil)
 				m.EXPECT().DeleteRoomMember(mock.Anything, mock.Anything).Return(nil)
 				m.EXPECT().GetOldestRoomMember(mock.Anything, pgtype.UUID{Bytes: managerRoom, Valid: true}).Return(pgtype.UUID{}, pgx.ErrNoRows)
-				m.EXPECT().SoftDeleteRoom(mock.Anything, mock.MatchedBy(func(p db.SoftDeleteRoomParams) bool {
-					return p.ID == pgtype.UUID{Bytes: managerRoom, Valid: true} && p.DeletedAt.Valid
+				m.EXPECT().DeleteRoom(mock.Anything, mock.MatchedBy(func(p db.DeleteRoomParams) bool {
+					return p.ID == pgtype.UUID{Bytes: managerRoom, Valid: true} &&
+						p.ManagerID == userPGUUID
 				})).Return(pgtype.UUID{Bytes: managerRoom, Valid: true}, nil)
-				m.EXPECT().DeleteRefreshTokensByUserID(mock.Anything, userPGUUID).Return(nil)
-				m.EXPECT().SoftDeleteUser(mock.Anything, mock.Anything).Return(userPGUUID, nil)
+				m.EXPECT().DeleteUser(mock.Anything, userPGUUID).Return(userPGUUID, nil)
 			},
 			wantErr:     false,
 			wantRoomLen: 1,
@@ -1439,8 +1542,7 @@ func TestService_DeleteUser(t *testing.T) {
 					PasswordHash: validHash,
 				}, nil)
 				m.EXPECT().ListJoinedRoomIDsForUpdate(mock.Anything, userPGUUID).Return(nil, nil)
-				m.EXPECT().DeleteRefreshTokensByUserID(mock.Anything, userPGUUID).Return(nil)
-				m.EXPECT().SoftDeleteUser(mock.Anything, mock.Anything).Return(userPGUUID, nil)
+				m.EXPECT().DeleteUser(mock.Anything, userPGUUID).Return(userPGUUID, nil)
 			},
 			wantErr:     false,
 			wantRoomLen: 0,
@@ -1475,7 +1577,7 @@ func TestService_DeleteUser(t *testing.T) {
 			errCode: codes.Unauthenticated,
 		},
 		{
-			name: "Failure: 이중 탈퇴 (이미 soft-deleted) → NotFound",
+			name: "Failure: 삭제 대상 사용자가 사라진 경우 → NotFound",
 			req:  &pb.DeleteUserRequest{UserId: uid.String(), Password: password},
 			mockBehavior: func(m *dbmocks.MockQuerier) {
 				m.EXPECT().GetUserByID(mock.Anything, userPGUUID).Return(db.User{
@@ -1484,8 +1586,7 @@ func TestService_DeleteUser(t *testing.T) {
 					PasswordHash: validHash,
 				}, nil)
 				m.EXPECT().ListJoinedRoomIDsForUpdate(mock.Anything, userPGUUID).Return(nil, nil)
-				m.EXPECT().DeleteRefreshTokensByUserID(mock.Anything, userPGUUID).Return(nil)
-				m.EXPECT().SoftDeleteUser(mock.Anything, mock.Anything).Return(pgtype.UUID{}, pgx.ErrNoRows)
+				m.EXPECT().DeleteUser(mock.Anything, userPGUUID).Return(pgtype.UUID{}, pgx.ErrNoRows)
 			},
 			wantErr: true,
 			errCode: codes.NotFound,
@@ -1498,7 +1599,7 @@ func TestService_DeleteUser(t *testing.T) {
 			mockQueries := dbmocks.NewMockQuerier(t)
 			tt.mockBehavior(mockQueries)
 
-			s := createTestService(mockQueries)
+			s := createTestService(t, mockQueries)
 			got, err := s.DeleteUser(t.Context(), tt.req)
 
 			if tt.wantErr {
@@ -1512,6 +1613,39 @@ func TestService_DeleteUser(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestService_DeleteUser_RevokeFailurePreventsDelete(t *testing.T) {
+	t.Parallel()
+
+	uid := uuid.New()
+	userPGUUID := pgtype.UUID{Bytes: uid, Valid: true}
+	password := "validPass123"
+	hashedBytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	require.NoError(t, err)
+
+	mockQueries := dbmocks.NewMockQuerier(t)
+	mockQueries.EXPECT().GetUserByID(mock.Anything, userPGUUID).Return(db.User{
+		ID:           userPGUUID,
+		Username:     "deleter",
+		PasswordHash: string(hashedBytes),
+	}, nil)
+
+	tokenStore := &fakeRefreshTokenStore{
+		revokeUserFunc: func(context.Context, string) error {
+			return assert.AnError
+		},
+	}
+
+	s := createTestServiceWithTokens(t, mockQueries, tokenStore)
+	got, err := s.DeleteUser(t.Context(), &pb.DeleteUserRequest{
+		UserId:   uid.String(),
+		Password: password,
+	})
+
+	require.Error(t, err)
+	assert.Equal(t, codes.Internal, status.Code(err))
+	assert.Nil(t, got)
 }
 
 func TestService_BatchGetUsers(t *testing.T) {
@@ -1583,7 +1717,7 @@ func TestService_BatchGetUsers(t *testing.T) {
 			mockQueries := dbmocks.NewMockQuerier(t)
 			tt.mockBehavior(mockQueries)
 
-			s := createTestService(mockQueries)
+			s := createTestService(t, mockQueries)
 			got, err := s.BatchGetUsers(t.Context(), tt.req)
 
 			if tt.wantErr {
@@ -1597,30 +1731,4 @@ func TestService_BatchGetUsers(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestService_PurgeExpiredTokens(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Success: 백그라운드 리프레시 토큰 정리 루프 작동", func(t *testing.T) {
-		t.Parallel()
-		mockQueries := dbmocks.NewMockQuerier(t)
-		mockQueries.EXPECT().DeleteExpiredRefreshTokens(mock.Anything).Return(nil)
-
-		cfg := config.UserConfig{
-			Token: config.TokenConfig{
-				TokenPurgeInterval: 5 * time.Millisecond,
-			},
-		}
-		h := hasher.NewPool(hasher.PoolConfig{Workers: 1, Buffer: 10})
-		defer h.Close()
-		s := NewService(mockQueries, cfg, "test_secret", h)
-
-		ctx, cancel := context.WithCancel(t.Context())
-		go s.PurgeExpiredTokens(ctx)
-
-		time.Sleep(20 * time.Millisecond)
-		cancel()
-		time.Sleep(10 * time.Millisecond)
-	})
 }

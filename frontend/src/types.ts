@@ -25,9 +25,10 @@ export interface MessageInfo {
   room_id: string
   sender_id: string
   content: string
+  client_msg_id?: string
   type: 'chat' | 'system' | 'conflict'
-  timestamp: number
   sequence_number: number
+  timestamp: number
 }
 
 export interface WsOutgoing {
@@ -35,8 +36,8 @@ export interface WsOutgoing {
   room_id: string
   sender_id: string
   content: string
-  type: 'chat' | 'system' | 'conflict'
   client_msg_id?: string
+  type: 'chat' | 'system' | 'conflict'
   sequence_number: number
   timestamp: number
 }

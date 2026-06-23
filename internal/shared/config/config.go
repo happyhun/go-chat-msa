@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -21,9 +20,9 @@ type TelemetryConfig struct {
 }
 
 type PortConfig struct {
-	APIGateway  string `mapstructure:"API_GATEWAY"  validate:"required"`
-	WSGateway   string `mapstructure:"WS_GATEWAY"   validate:"required"`
-	WebSocket   string `mapstructure:"WEBSOCKET"    validate:"required"`
+	APIGateway string `mapstructure:"API_GATEWAY"  validate:"required"`
+	WSGateway  string `mapstructure:"WS_GATEWAY"   validate:"required"`
+	WebSocket  string `mapstructure:"WEBSOCKET"    validate:"required"`
 	UserGRPC   string `mapstructure:"USER_GRPC"   validate:"required"`
 	ChatGRPC   string `mapstructure:"CHAT_GRPC"   validate:"required"`
 }
@@ -73,10 +72,6 @@ type JWTConfig struct {
 	Secret string `mapstructure:"SECRET" validate:"required"`
 }
 
-type CORSConfig struct {
-	AllowedOrigins []string `mapstructure:"ALLOWED_ORIGINS" validate:"required,min=1"`
-}
-
 type InternalConfig struct {
 	Secret string `mapstructure:"SECRET" validate:"required"`
 }
@@ -84,6 +79,10 @@ type InternalConfig struct {
 type DBConfig struct {
 	PostgresURL string `mapstructure:"POSTGRES_URL" validate:"required"`
 	MongoURI    string `mapstructure:"MONGO_URI" validate:"required"`
+}
+
+type RedisConfig struct {
+	Addr string `mapstructure:"ADDR" validate:"required"`
 }
 
 type ManagerConfig struct {
@@ -110,9 +109,8 @@ type ValidationConfig struct {
 }
 
 type TokenConfig struct {
-	AccessTokenExpirationMinutes int           `mapstructure:"ACCESS_TOKEN_EXPIRATION_MINUTES" validate:"required"`
-	RefreshTokenExpirationDays   int           `mapstructure:"REFRESH_TOKEN_EXPIRATION_DAYS" validate:"required"`
-	TokenPurgeInterval           time.Duration `mapstructure:"TOKEN_PURGE_INTERVAL" validate:"required"`
+	AccessTokenExpirationMinutes int `mapstructure:"ACCESS_TOKEN_EXPIRATION_MINUTES" validate:"required"`
+	RefreshTokenExpirationDays   int `mapstructure:"REFRESH_TOKEN_EXPIRATION_DAYS" validate:"required"`
 }
 
 type RoomConfig struct {
@@ -146,24 +144,20 @@ type SyncConfig struct {
 	MaxLimit     int64 `mapstructure:"MAX_LIMIT" validate:"required"`
 }
 
-type RetentionWorkerConfig struct {
-	Schedule      string        `mapstructure:"SCHEDULE"       validate:"required"`
-	RetentionDays int           `mapstructure:"RETENTION_DAYS" validate:"required,min=1"`
-	JobTimeout    time.Duration `mapstructure:"JOB_TIMEOUT"    validate:"required"`
-}
-
 type RateLimitConfig struct {
 	RPS   float64       `mapstructure:"RPS"   validate:"required,gt=0"`
 	Burst int           `mapstructure:"BURST" validate:"required,min=1"`
 	TTL   time.Duration `mapstructure:"TTL"   validate:"required,gt=0"`
 }
 
-func GetEnv() string {
-	env := os.Getenv("APP_ENV")
-	if env == "" {
-		return "dev"
-	}
-	return env
+const (
+	RuntimeConfigPath  = "configs"
+	BaseConfigName     = "base"
+	OverrideConfigName = "override"
+)
+
+func LoadRuntime[T any]() (*T, error) {
+	return Load[T](RuntimeConfigPath, BaseConfigName, OverrideConfigName)
 }
 
 func Load[T any](configPath, baseName, overrideName string) (*T, error) {
@@ -183,8 +177,9 @@ func Load[T any](configPath, baseName, overrideName string) (*T, error) {
 		}
 	}
 
-	v.AutomaticEnv()
+	v.SetEnvPrefix("APP")
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.AutomaticEnv()
 
 	var cfg T
 	if err := v.Unmarshal(&cfg); err != nil {

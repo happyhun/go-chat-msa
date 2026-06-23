@@ -3,14 +3,18 @@
 package e2e_test
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/stretchr/testify/assert"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -71,7 +75,8 @@ func (s *E2ESuite) TestScenario_02_Auth_TokenRefresh() {
 	time.Sleep(1 * time.Second)
 
 	client := &http.Client{Timeout: httpClientTimeout}
-	req, _ := http.NewRequestWithContext(ctx, "POST", s.gatewayBaseURL+"/auth/token/refresh", nil)
+	req, err := http.NewRequestWithContext(ctx, "POST", s.gatewayBaseURL+"/auth/token/refresh", nil)
+	s.Require().NoError(err)
 	req.AddCookie(refreshCookie)
 	resp, err := client.Do(req)
 	s.Require().NoError(err)
@@ -80,7 +85,7 @@ func (s *E2ESuite) TestScenario_02_Auth_TokenRefresh() {
 	s.Require().Equal(http.StatusOK, resp.StatusCode, "Refresh token should successfully issue new access token")
 
 	var res map[string]any
-	json.NewDecoder(resp.Body).Decode(&res)
+	s.Require().NoError(json.NewDecoder(resp.Body).Decode(&res))
 	newToken := res["access_token"].(string)
 
 	s.NotEmpty(newToken)
@@ -101,7 +106,8 @@ func (s *E2ESuite) TestScenario_03_Auth_Logout() {
 	s.Require().NotNil(refreshCookie, "Refresh token cookie should be provided")
 
 	client := &http.Client{Timeout: httpClientTimeout}
-	logoutReq, _ := http.NewRequestWithContext(ctx, "DELETE", s.gatewayBaseURL+"/auth/token", nil)
+	logoutReq, err := http.NewRequestWithContext(ctx, "DELETE", s.gatewayBaseURL+"/auth/token", nil)
+	s.Require().NoError(err)
 	logoutReq.AddCookie(refreshCookie)
 	logoutResp, err := client.Do(logoutReq)
 	s.Require().NoError(err)
@@ -118,7 +124,8 @@ func (s *E2ESuite) TestScenario_03_Auth_Logout() {
 	}
 	s.Require().True(cookieCleared, "Refresh token cookie should be expired after logout")
 
-	refreshReq, _ := http.NewRequestWithContext(ctx, "POST", s.gatewayBaseURL+"/auth/token/refresh", nil)
+	refreshReq, err := http.NewRequestWithContext(ctx, "POST", s.gatewayBaseURL+"/auth/token/refresh", nil)
+	s.Require().NoError(err)
 	refreshReq.AddCookie(refreshCookie)
 	refreshResp, err := client.Do(refreshReq)
 	s.Require().NoError(err)
@@ -267,20 +274,19 @@ func (s *E2ESuite) TestScenario_06_Message_Pagination() {
 	conn, _, err := s.dialWS(ctx, t1, roomID)
 	s.Require().NoError(err)
 
-	s.waitForWSMessage(ctx, conn, "system", "", 5*time.Second)
-
 	totalMsgs := 15
 	for i := 1; i <= totalMsgs; i++ {
-		conn.WriteJSON(map[string]string{
+		s.Require().NoError(conn.WriteJSON(map[string]string{
 			"type":          "chat",
 			"content":       fmt.Sprintf("page-msg-%d", i),
 			"client_msg_id": fmt.Sprintf("cm-%d", i),
-		})
-		s.waitForWSMessage(ctx, conn, "chat", fmt.Sprintf("page-msg-%d", i), 5*time.Second)
+		}))
+		_, err = s.waitForWSMessage(ctx, conn, "chat", fmt.Sprintf("page-msg-%d", i), 5*time.Second)
+		s.Require().NoError(err)
 
 		time.Sleep(600 * time.Millisecond)
 	}
-	conn.Close()
+	s.Require().NoError(conn.Close())
 
 	time.Sleep(500 * time.Millisecond)
 
@@ -293,6 +299,9 @@ func (s *E2ESuite) TestScenario_06_Message_Pagination() {
 
 	firstSeqVal := res1.Messages[0]["sequence_number"]
 	s.Require().NotNil(firstSeqVal, "Messages must include valid sequence_number")
+	s.Equal("page-msg-15", res1.Messages[0]["content"])
+	s.Equal("page-msg-6", res1.Messages[9]["content"])
+	s.Greater(sequenceNumber(res1.Messages[0]), sequenceNumber(res1.Messages[9]))
 }
 
 func (s *E2ESuite) TestScenario_07_MessageRecovery_Recovery() {
@@ -316,8 +325,7 @@ func (s *E2ESuite) TestScenario_07_MessageRecovery_Recovery() {
 	bConn, _, err := s.dialWS(ctx, bTok, roomID)
 	s.Require().NoError(err)
 
-	s.waitForWSMessage(ctx, bConn, "system", "", 5*time.Second)
-	bConn.Close()
+	s.Require().NoError(bConn.Close())
 	time.Sleep(500 * time.Millisecond)
 
 	numMissed := 3
@@ -328,11 +336,13 @@ func (s *E2ESuite) TestScenario_07_MessageRecovery_Recovery() {
 
 	for i := 1; i <= numMissed; i++ {
 		content := fmt.Sprintf("missed-msg-%d", i)
-		aConn.WriteJSON(map[string]string{
+		s.Require().NoError(aConn.WriteJSON(map[string]string{
 			"type": "chat", "content": content, "client_msg_id": fmt.Sprintf("m-%d", i),
-		})
-		msg, _ := s.waitForWSMessage(ctx, aConn, "chat", content, 5*time.Second)
-		lastSeq = int64(msg["sequence_number"].(float64))
+		}))
+		msg, err := s.waitForWSMessage(ctx, aConn, "chat", content, 5*time.Second)
+		s.Require().NoError(err)
+		lastSeq = sequenceNumber(msg)
+		s.Require().NotZero(lastSeq)
 
 		time.Sleep(600 * time.Millisecond)
 	}
@@ -462,60 +472,43 @@ func (s *E2ESuite) TestScenario_10_RoomDeletion_ForceKick() {
 	s.Require().NoError(s.makeRequest(ctx, "PUT", "/rooms/"+roomID+"/members/me", nil, nil, u2Tok))
 
 	mgrConn, _, err := s.dialWS(ctx, mgrTok, roomID)
-	if err != nil {
-		s.T().Logf("dialWS mgrConn err: %v", err)
-	}
+	s.Require().NoError(err)
+	defer mgrConn.Close()
 	u1Conn, _, err := s.dialWS(ctx, u1Tok, roomID)
-	if err != nil {
-		s.T().Logf("dialWS u1Conn err: %v", err)
-	}
+	s.Require().NoError(err)
+	defer u1Conn.Close()
 	u2Conn, _, err := s.dialWS(ctx, u2Tok, roomID)
-	if err != nil {
-		s.T().Logf("dialWS u2Conn err: %v", err)
-	}
-
-	if mgrConn != nil {
-		defer mgrConn.Close()
-	}
-	if u1Conn != nil {
-		defer u1Conn.Close()
-	}
-	if u2Conn != nil {
-		defer u2Conn.Close()
-	}
+	s.Require().NoError(err)
+	defer u2Conn.Close()
 
 	time.Sleep(500 * time.Millisecond)
 
 	var wg sync.WaitGroup
 	wg.Add(3)
+	closeErrs := make(chan error, 3)
 
 	waitForClose := func(conn *websocket.Conn, name string) {
 		defer wg.Done()
-		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+			closeErrs <- fmt.Errorf("%s read deadline: %w", name, err)
+			return
+		}
 		for {
 			_, _, err := conn.ReadMessage()
 			if err != nil {
+				var netErr net.Error
+				if errors.As(err, &netErr) && netErr.Timeout() {
+					closeErrs <- fmt.Errorf("%s websocket close timeout: %w", name, err)
+				}
 				s.T().Logf("[%s] WebSocket closed as expected: %v", name, err)
 				return
 			}
 		}
 	}
 
-	if mgrConn != nil {
-		go waitForClose(mgrConn, "Manager")
-	} else {
-		wg.Done()
-	}
-	if u1Conn != nil {
-		go waitForClose(u1Conn, "User1")
-	} else {
-		wg.Done()
-	}
-	if u2Conn != nil {
-		go waitForClose(u2Conn, "User2")
-	} else {
-		wg.Done()
-	}
+	go waitForClose(mgrConn, "Manager")
+	go waitForClose(u1Conn, "User1")
+	go waitForClose(u2Conn, "User2")
 
 	s.T().Log("Manager deletes the room...")
 	err = s.makeRequest(ctx, "DELETE", "/rooms/"+roomID, nil, nil, mgrTok)
@@ -532,6 +525,10 @@ func (s *E2ESuite) TestScenario_10_RoomDeletion_ForceKick() {
 		s.T().Log("Room Deletion & Force Kick PASSED: All websockets properly closed")
 	case <-time.After(5 * time.Second):
 		s.T().Fatal("Time out waiting for websockets to be closed after room deletion")
+	}
+	close(closeErrs)
+	for closeErr := range closeErrs {
+		s.Require().NoError(closeErr)
 	}
 
 	_, _, err = s.dialWS(ctx, u1Tok, roomID)
@@ -689,7 +686,8 @@ func (s *E2ESuite) TestScenario_13_UserDeletion_FullLifecycle() {
 
 	client := &http.Client{Timeout: httpClientTimeout}
 	delBody := strings.NewReader(`{"password":"WrongPassword!"}`)
-	wrongReq, _ := http.NewRequestWithContext(ctx, "DELETE", s.gatewayBaseURL+"/me", delBody)
+	wrongReq, err := http.NewRequestWithContext(ctx, "DELETE", s.gatewayBaseURL+"/me", delBody)
+	s.Require().NoError(err)
 	wrongReq.Header.Set("Content-Type", "application/json")
 	wrongReq.Header.Set("Authorization", "Bearer "+aliceToken)
 	wrongResp, err := client.Do(wrongReq)
@@ -698,7 +696,8 @@ func (s *E2ESuite) TestScenario_13_UserDeletion_FullLifecycle() {
 	s.Equal(http.StatusUnauthorized, wrongResp.StatusCode, "wrong password → 401")
 
 	correctBody := strings.NewReader(fmt.Sprintf(`{"password":%q}`, password))
-	delReq, _ := http.NewRequestWithContext(ctx, "DELETE", s.gatewayBaseURL+"/me", correctBody)
+	delReq, err := http.NewRequestWithContext(ctx, "DELETE", s.gatewayBaseURL+"/me", correctBody)
+	s.Require().NoError(err)
 	delReq.Header.Set("Content-Type", "application/json")
 	delReq.Header.Set("Authorization", "Bearer "+aliceToken)
 	delResp, err := client.Do(delReq)
@@ -715,26 +714,185 @@ func (s *E2ESuite) TestScenario_13_UserDeletion_FullLifecycle() {
 	}
 	s.True(cookieCleared, "refresh_token 쿠키 만료")
 
-	refreshReq, _ := http.NewRequestWithContext(ctx, "POST", s.gatewayBaseURL+"/auth/token/refresh", nil)
+	refreshReq, err := http.NewRequestWithContext(ctx, "POST", s.gatewayBaseURL+"/auth/token/refresh", nil)
+	s.Require().NoError(err)
 	refreshReq.AddCookie(refreshCookie)
 	refreshResp, err := client.Do(refreshReq)
 	s.Require().NoError(err)
 	refreshResp.Body.Close()
 	s.Equal(http.StatusUnauthorized, refreshResp.StatusCode, "탈퇴 후 refresh → 401")
 
-	loginReq, _ := http.NewRequestWithContext(ctx, "POST", s.gatewayBaseURL+"/auth/token",
+	loginReq, err := http.NewRequestWithContext(ctx, "POST", s.gatewayBaseURL+"/auth/token",
 		strings.NewReader(fmt.Sprintf(`{"username":%q,"password":%q}`, alice, password)))
+	s.Require().NoError(err)
 	loginReq.Header.Set("Content-Type", "application/json")
 	loginResp, err := client.Do(loginReq)
 	s.Require().NoError(err)
 	loginResp.Body.Close()
 	s.Equal(http.StatusUnauthorized, loginResp.StatusCode, "탈퇴 후 동일 자격으로 로그인 → 401")
 
-	signupReq, _ := http.NewRequestWithContext(ctx, "POST", s.gatewayBaseURL+"/users",
+	signupReq, err := http.NewRequestWithContext(ctx, "POST", s.gatewayBaseURL+"/users",
 		strings.NewReader(fmt.Sprintf(`{"username":%q,"password":%q}`, alice, password)))
+	s.Require().NoError(err)
 	signupReq.Header.Set("Content-Type", "application/json")
 	signupResp, err := client.Do(signupReq)
 	s.Require().NoError(err)
 	signupResp.Body.Close()
-	s.Equal(http.StatusConflict, signupResp.StatusCode, "grace 기간 동안 동일 username 재가입 차단 → 409")
+	s.Equal(http.StatusCreated, signupResp.StatusCode, "하드 삭제 후 동일 username 재가입 가능 → 201")
+
+	_, _, err = s.loginWithCookie(ctx, alice, password)
+	s.Require().NoError(err, "재가입한 계정으로 로그인 가능")
+}
+
+func (s *E2ESuite) TestScenario_14_FixedReplicasReadinessAndMembership() {
+	ctx := s.T().Context()
+
+	for _, name := range []string{"api-gateway", "ws-gateway", "websocket-service", "user-service", "chat-service"} {
+		s.requireDeploymentReadyReplicas(ctx, name, 2)
+	}
+	s.requireDeploymentReadyReplicas(ctx, "frontend", 1)
+
+	keys := s.waitForRedisKeyCount(ctx, "wss:member:*", 2, 20*time.Second, 500*time.Millisecond)
+	s.Require().Len(keys, 2, "two websocket-service pods must be registered in Redis membership")
+}
+
+func (s *E2ESuite) TestScenario_15_RoomSequenceIsStrictlyIncreasing() {
+	ctx := s.T().Context()
+
+	alice := s.generateUniqueUsername("sa")
+	bob := s.generateUniqueUsername("sb")
+	password := "SecurePass123!"
+	s.Require().NoError(s.signUp(ctx, alice, password))
+	s.Require().NoError(s.signUp(ctx, bob, password))
+	aliceToken, _, err := s.login(ctx, alice, password)
+	s.Require().NoError(err)
+	bobToken, _, err := s.login(ctx, bob, password)
+	s.Require().NoError(err)
+
+	roomID, err := s.createRoom(ctx, aliceToken, "K8s Sequence Room")
+	s.Require().NoError(err)
+	s.Require().NoError(s.makeRequest(ctx, "PUT", "/rooms/"+roomID+"/members/me", nil, nil, bobToken))
+
+	aliceConn, _, err := s.dialWS(ctx, aliceToken, roomID)
+	s.Require().NoError(err)
+	defer aliceConn.Close()
+
+	bobConn, _, err := s.dialWS(ctx, bobToken, roomID)
+	s.Require().NoError(err)
+	defer bobConn.Close()
+
+	const totalMessages = 8
+	sequences := make([]int64, 0, totalMessages)
+	for i := 1; i <= totalMessages; i++ {
+		content := fmt.Sprintf("k8s-seq-msg-%02d", i)
+		s.Require().NoError(bobConn.WriteJSON(map[string]string{
+			"type":          "chat",
+			"content":       content,
+			"client_msg_id": fmt.Sprintf("k8s-seq-%02d", i),
+		}))
+
+		msg, err := s.waitForWSMessage(ctx, aliceConn, "chat", content, 10*time.Second)
+		s.Require().NoError(err)
+		sequences = append(sequences, sequenceNumber(msg))
+	}
+
+	for i := 1; i < len(sequences); i++ {
+		s.Require().Greater(sequences[i], sequences[i-1], "room sequence must strictly increase")
+	}
+}
+
+func (s *E2ESuite) TestScenario_16_ReconnectCatchUpFromDatabaseHistory() {
+	ctx := s.T().Context()
+
+	alice := s.generateUniqueUsername("ka")
+	bob := s.generateUniqueUsername("kb")
+	carol := s.generateUniqueUsername("kc")
+	password := "SecurePass123!"
+	s.Require().NoError(s.signUp(ctx, alice, password))
+	s.Require().NoError(s.signUp(ctx, bob, password))
+	s.Require().NoError(s.signUp(ctx, carol, password))
+	aliceToken, _, err := s.login(ctx, alice, password)
+	s.Require().NoError(err)
+	bobToken, _, err := s.login(ctx, bob, password)
+	s.Require().NoError(err)
+	carolToken, _, err := s.login(ctx, carol, password)
+	s.Require().NoError(err)
+
+	roomID, err := s.createRoom(ctx, aliceToken, "K8s CatchUp Room")
+	s.Require().NoError(err)
+	s.Require().NoError(s.makeRequest(ctx, "PUT", "/rooms/"+roomID+"/members/me", nil, nil, bobToken))
+	s.Require().NoError(s.makeRequest(ctx, "PUT", "/rooms/"+roomID+"/members/me", nil, nil, carolToken))
+
+	aliceConn, _, err := s.dialWS(ctx, aliceToken, roomID)
+	s.Require().NoError(err)
+	defer aliceConn.Close()
+	carolConn, _, err := s.dialWS(ctx, carolToken, roomID)
+	s.Require().NoError(err)
+	defer carolConn.Close()
+
+	const missedMessages = 4
+	for i := 1; i <= missedMessages; i++ {
+		content := fmt.Sprintf("k8s-missed-%02d", i)
+		s.Require().NoError(aliceConn.WriteJSON(map[string]string{
+			"type":          "chat",
+			"content":       content,
+			"client_msg_id": fmt.Sprintf("k8s-missed-%02d", i),
+		}))
+		_, err = s.waitForWSMessage(ctx, carolConn, "chat", content, 10*time.Second)
+		s.Require().NoError(err)
+	}
+
+	var syncRes struct {
+		Messages []map[string]any `json:"messages"`
+	}
+	s.Require().EventuallyWithT(func(c *assert.CollectT) {
+		err := s.makeRequest(ctx, "GET", fmt.Sprintf("/rooms/%s/messages?last_seq=0&limit=10", roomID), nil, &syncRes, bobToken)
+		if !assert.NoError(c, err) {
+			return
+		}
+		assert.GreaterOrEqual(c, len(messagesWithContentPrefix(syncRes.Messages, "k8s-missed-")), missedMessages)
+	}, 10*time.Second, 200*time.Millisecond)
+
+	missed := messagesWithContentPrefix(syncRes.Messages, "k8s-missed-")
+	s.Require().GreaterOrEqual(len(missed), missedMessages)
+	for i := 1; i <= missedMessages; i++ {
+		s.Require().Equal(fmt.Sprintf("k8s-missed-%02d", i), missed[i-1]["content"])
+	}
+}
+
+func (s *E2ESuite) waitForRedisKeyCount(ctx context.Context, pattern string, expected int, timeout, interval time.Duration) []string {
+	deadline := time.Now().Add(timeout)
+	var keys []string
+	for time.Now().Before(deadline) {
+		keys = s.redisKeys(ctx, pattern)
+		if len(keys) == expected {
+			return keys
+		}
+		time.Sleep(interval)
+	}
+	return keys
+}
+
+func sequenceNumber(msg map[string]any) int64 {
+	switch v := msg["sequence_number"].(type) {
+	case float64:
+		return int64(v)
+	case int64:
+		return v
+	case int:
+		return int64(v)
+	default:
+		return 0
+	}
+}
+
+func messagesWithContentPrefix(messages []map[string]any, prefix string) []map[string]any {
+	filtered := make([]map[string]any, 0, len(messages))
+	for _, msg := range messages {
+		content, ok := msg["content"].(string)
+		if ok && strings.HasPrefix(content, prefix) {
+			filtered = append(filtered, msg)
+		}
+	}
+	return filtered
 }

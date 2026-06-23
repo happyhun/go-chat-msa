@@ -10,7 +10,7 @@ datasources:
         datasourceUid: loki
         filterByTraceID: true
         customQuery: true
-        query: '{} | json | trace_id="${__trace.traceId}"'
+        query: '{} | json | trace_id="$${__trace.traceId}"'
       nodeGraph:
         enabled: true
       serviceMap:

@@ -1,59 +1,46 @@
 flowchart TB
-    Client["Client"]
+    Client["클라이언트"]
 
-    subgraph Manager ["Manager"]
+    subgraph WSS ["WebSocket Service"]
         direction TB
-        ManagerLoop(("Manager Actor Loop"))
-        PersistCh[/"Persist Channel"/]
+        Session["Session"]
+        Validate(["메시지 검증 · 도배 제한"])
+        Hub["Hub"]
+        Dedup{"중복 메시지?"}
+        Drop(["중복 메시지 폐기"])
+        Capacity{"저장 큐 등록 가능?"}
+        Reject(["일시 오류 반환"])
+        Sequence(["방 순번 발급"])
+        Persist(["저장 작업 등록"])
+        Fanout(["브로드캐스트"])
 
-        subgraph WorkerPool ["Batch Worker Pool"]
-            direction LR
-            W1("Worker 1")
-            W2("Worker 2")
-        end
-
-        subgraph StoreAdapter ["Chat Store Adapter"]
+        subgraph Persistence ["비동기 저장 파이프라인"]
             direction TB
-            RetryCh[/"Retry Channel"/]
-            RetryWorker("Retry Worker")
+            Worker["Persistence Worker"]
+            RetryWorker["Retry Worker"]
         end
     end
 
-    subgraph Hub ["Hub"]
-        direction TB
-        HubLoop(("Hub Actor Loop"))
-        Idempotency["Dedup LRU"]
+    subgraph ExternalServices ["외부 서비스"]
+        direction LR
+        ChatSvc["Chat Service"]
     end
 
-    subgraph Session ["Session"]
-        direction TB
-        Socket(("WebSocket"))
-        RP("Read Pump")
-        RateLimit{"Rate Limiter"}
+    Client == "메시지 송신" ==> Session
+    Session ==> Validate
+    Validate ==> Hub
+    Hub ==> Dedup
+    Dedup -- "예" --> Drop
+    Dedup == "아니오" ==> Capacity
+    Capacity -- "아니오" --> Reject
+    Reject --> Client
+    Capacity == "예" ==> Sequence
+    Sequence ==> Persist
+    Persist ==> Fanout
+    Fanout ==> Session
+    Session == "메시지 수신" ==> Client
+    Persist -.-> Worker
+    Worker --> ChatSvc
 
-        WP("Write Pump")
-        Buffer[/"Send Channel"/]
-    end
-
-    ChatService["Chat Service"]
-
-    Client == "메시지 전송" ==> Socket
-    Socket ==> RP
-    RP ==> RateLimit
-    RateLimit ==> HubLoop
-
-    ManagerLoop -- "시스템 메시지 주입" --> HubLoop
-
-    HubLoop -. "중복 검사" .-> Idempotency
-    HubLoop ==>|"브로드캐스트"| Buffer
-    Buffer ==> WP
-    WP ==> Socket
-    Socket ==> Client
-
-    HubLoop -- "메시지 저장" --> PersistCh
-    PersistCh --> WorkerPool
-    WorkerPool -- "배치 플러시" --> StoreAdapter
-    ChatService -. "실패" .-> RetryCh
-    RetryCh -. "재시도 대기" .-> RetryWorker
-    RetryWorker -. "지수 백오프 재시도" .-> ChatService
-    StoreAdapter -- "배치 저장" --> ChatService
+    Worker -- "일시 실패" --> RetryWorker
+    RetryWorker --> ChatSvc

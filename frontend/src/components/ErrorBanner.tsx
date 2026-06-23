@@ -5,9 +5,18 @@ interface ErrorBannerProps {
 
 export default function ErrorBanner({ message, onClose }: ErrorBannerProps) {
   return (
-    <div className="bg-red-50 text-red-600 px-4 py-2.5 rounded-lg text-sm flex items-center justify-between">
+    <div
+      role="alert"
+      aria-live="polite"
+      className="bg-red-50 text-red-600 px-4 py-2.5 rounded-lg text-sm flex items-center justify-between"
+    >
       <span>{message}</span>
-      <button onClick={onClose} className="font-medium ml-3 shrink-0 hover:text-red-700">
+      <button
+        type="button"
+        onClick={onClose}
+        className="font-medium ml-3 shrink-0 hover:text-red-700"
+        aria-label="오류 메시지 닫기"
+      >
         닫기
       </button>
     </div>

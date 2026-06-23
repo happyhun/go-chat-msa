@@ -1,0 +1,170 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus-adapter
+  labels:
+    app.kubernetes.io/name: prometheus-adapter
+    app.kubernetes.io/component: observability
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-adapter-config
+  labels:
+    app.kubernetes.io/name: prometheus-adapter
+    app.kubernetes.io/component: observability
+data:
+  config.yaml: |
+    rules:
+      - seriesQuery: 'gochat_ws_connections_active{namespace!="",pod!=""}'
+        resources:
+          overrides:
+            namespace:
+              resource: namespace
+            pod:
+              resource: pod
+        name:
+          matches: '^gochat_ws_connections_active$'
+          as: 'gochat_ws_connections_active'
+        metricsQuery: 'sum(<<.Series>>{<<.LabelMatchers>>}) by (<<.GroupBy>>)'
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gochat-prometheus-adapter
+  labels:
+    app.kubernetes.io/name: prometheus-adapter
+    app.kubernetes.io/component: observability
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces", "pods", "services", "endpoints"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gochat-prometheus-adapter
+  labels:
+    app.kubernetes.io/name: prometheus-adapter
+    app.kubernetes.io/component: observability
+subjects:
+  - kind: ServiceAccount
+    name: prometheus-adapter
+    namespace: go-chat-qa
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: gochat-prometheus-adapter
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gochat-prometheus-adapter-auth-delegator
+  labels:
+    app.kubernetes.io/name: prometheus-adapter
+    app.kubernetes.io/component: observability
+subjects:
+  - kind: ServiceAccount
+    name: prometheus-adapter
+    namespace: go-chat-qa
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus-adapter
+  labels:
+    app.kubernetes.io/name: prometheus-adapter
+    app.kubernetes.io/component: observability
+spec:
+  type: ClusterIP
+  ports:
+    - name: https
+      port: 443
+      targetPort: https
+  selector:
+    app.kubernetes.io/name: prometheus-adapter
+    app.kubernetes.io/component: observability
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus-adapter
+  labels:
+    app.kubernetes.io/name: prometheus-adapter
+    app.kubernetes.io/component: observability
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus-adapter
+      app.kubernetes.io/component: observability
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: prometheus-adapter
+        app.kubernetes.io/component: observability
+    spec:
+      serviceAccountName: prometheus-adapter
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: prometheus-adapter
+          image: registry.k8s.io/prometheus-adapter/prometheus-adapter:v0.12.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - --secure-port=6443
+            - --cert-dir=/tmp/cert
+            - --prometheus-url=http://prometheus:9090/
+            - --metrics-relist-interval=15s
+            - --metrics-max-age=2m
+            - --config=/etc/adapter/config.yaml
+          ports:
+            - name: https
+              containerPort: 6443
+          volumeMounts:
+            - name: config
+              mountPath: /etc/adapter
+              readOnly: true
+            - name: cert
+              mountPath: /tmp/cert
+          readinessProbe:
+            httpGet:
+              scheme: HTTPS
+              path: /healthz
+              port: https
+            periodSeconds: 5
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              scheme: HTTPS
+              path: /healthz
+              port: https
+            periodSeconds: 10
+            timeoutSeconds: 5
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-adapter-config
+        - name: cert
+          emptyDir: {}
+---
+apiVersion: apiregistration.k8s.io/v1
+kind: APIService
+metadata:
+  name: v1beta1.custom.metrics.k8s.io
+  labels:
+    app.kubernetes.io/name: prometheus-adapter
+    app.kubernetes.io/component: observability
+spec:
+  group: custom.metrics.k8s.io
+  version: v1beta1
+  groupPriorityMinimum: 100
+  versionPriority: 100
+  insecureSkipTLSVerify: true
+  service:
+    name: prometheus-adapter
+    namespace: go-chat-qa
+    port: 443

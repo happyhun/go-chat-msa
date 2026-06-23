@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { searchRooms, joinRoom, listJoinedRooms, ApiError } from '../api/client'
-import { useToast } from '../context/ToastContext'
+import { useToast } from '../context/toast'
 import type { RoomInfo } from '../types'
 import ErrorBanner from '../components/ErrorBanner'
 import EmptyState from '../components/EmptyState'
@@ -18,6 +18,7 @@ export default function LobbyPage() {
   const [activeQuery, setActiveQuery] = useState('')
   const [loading, setLoading] = useState(true)
   const [joinedIds, setJoinedIds] = useState<Set<string>>(new Set())
+  const [joinPendingId, setJoinPendingId] = useState<string | null>(null)
   const [showCreate, setShowCreate] = useState(false)
   const [error, setError] = useState('')
   const navigate = useNavigate()
@@ -25,12 +26,19 @@ export default function LobbyPage() {
 
   const fetchRooms = useCallback(async (q: string, p: number) => {
     setLoading(true)
+    setError('')
     try {
       const data = await searchRooms(q, PAGE_SIZE, p * PAGE_SIZE)
       setRooms(data.rooms ?? [])
       setTotalCount(data.total_count)
     } catch (err) {
-      if (err instanceof ApiError) setError(err.message)
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : '채팅방 목록을 불러오지 못했습니다. 네트워크 상태를 확인한 뒤 다시 시도해 주세요.',
+      )
+      setRooms([])
+      setTotalCount(0)
     } finally {
       setLoading(false)
     }
@@ -41,7 +49,7 @@ export default function LobbyPage() {
       const data = await listJoinedRooms()
       setJoinedIds(new Set((data.rooms ?? []).map((r) => r.id)))
     } catch {
-      // ignore
+      // 참여 여부 배지는 보조 정보라서 목록 표시를 막지 않는다.
     }
   }, [])
 
@@ -52,9 +60,11 @@ export default function LobbyPage() {
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault()
-    setActiveQuery(query)
+    const nextQuery = query.trim()
+    setQuery(nextQuery)
+    setActiveQuery(nextQuery)
     setPage(0)
-    fetchRooms(query, 0)
+    fetchRooms(nextQuery, 0)
   }
 
   const handleClearSearch = () => {
@@ -70,23 +80,31 @@ export default function LobbyPage() {
   }
 
   const handleJoin = async (room: RoomInfo) => {
+    if (joinPendingId) return
+    setJoinPendingId(room.id)
     try {
       await joinRoom(room.id)
       toast.success(`"${room.name}" 채팅방에 참여했습니다.`)
       navigate(`/chat/${room.id}`, { state: { roomName: room.name } })
     } catch (err) {
-      if (err instanceof ApiError) toast.error(err.message)
+      toast.error(
+        err instanceof ApiError
+          ? err.message
+          : '채팅방 참여에 실패했습니다. 잠시 후 다시 시도해 주세요.',
+      )
+    } finally {
+      setJoinPendingId(null)
     }
   }
 
   const totalPages = Math.ceil(totalCount / PAGE_SIZE)
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-5 space-y-4">
-      {error && <ErrorBanner message={error} onClose={() => setError('')} />}
+    <div className="max-w-5xl mx-auto px-4 py-5 space-y-4">
+      {error && rooms.length > 0 && <ErrorBanner message={error} onClose={() => setError('')} />}
 
       {/* Search + Create */}
-      <div className="flex gap-2">
+      <div className="flex flex-col sm:flex-row gap-2">
         <form onSubmit={handleSearch} className="flex-1 flex gap-2">
           <div className="relative flex-1">
             <input
@@ -142,6 +160,13 @@ export default function LobbyPage() {
       {/* Room List */}
       {loading && rooms.length === 0 ? (
         <div className="py-16 text-center text-sm text-gray-400">불러오는 중...</div>
+      ) : error && rooms.length === 0 ? (
+        <EmptyState
+          icon="room"
+          title="채팅방 목록을 불러오지 못했습니다."
+          description={error}
+          action={{ label: '다시 시도', onClick: () => fetchRooms(activeQuery, page) }}
+        />
       ) : rooms.length === 0 ? (
         activeQuery ? (
           <EmptyState icon="search" title="검색 결과가 없습니다." description="다른 키워드로 검색해 보세요." />
@@ -154,13 +179,13 @@ export default function LobbyPage() {
           />
         )
       ) : (
-        <div className="space-y-2">
+        <div className="grid gap-2 lg:grid-cols-2">
           {rooms.map((room) => {
             const joined = joinedIds.has(room.id)
             return (
               <div
                 key={room.id}
-                className={`bg-white rounded-xl p-4 border flex items-center justify-between ${
+                className={`bg-white rounded-lg p-4 border flex items-center justify-between ${
                   joined
                     ? 'border-indigo-100 cursor-pointer hover:border-indigo-200'
                     : 'border-gray-100'
@@ -185,9 +210,10 @@ export default function LobbyPage() {
                   ) : (
                     <button
                       onClick={() => handleJoin(room)}
-                      className="px-3.5 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-medium hover:bg-indigo-700 transition-colors"
+                      disabled={Boolean(joinPendingId)}
+                      className="px-3.5 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      참여
+                      {joinPendingId === room.id ? '참여 중...' : '참여'}
                     </button>
                   )}
                 </div>

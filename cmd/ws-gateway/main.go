@@ -6,12 +6,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"runtime"
 	"syscall"
 	"time"
 
 	"go-chat-msa/internal/shared/config"
+	"go-chat-msa/internal/shared/database"
 	"go-chat-msa/internal/shared/logger"
+	"go-chat-msa/internal/shared/membership"
 	"go-chat-msa/internal/shared/middleware"
 	"go-chat-msa/internal/shared/telemetry"
 	"go-chat-msa/internal/wsgateway"
@@ -20,6 +21,8 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"golang.org/x/sync/errgroup"
 )
+
+const membershipKeyPrefix = "wss:member:"
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -36,6 +39,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	logger.InitLogger(cfg.Env)
 
 	if cfg.Telemetry.OTelEndpoint != "" {
 		shutdown, err := telemetry.InitOTel(ctx, "ws-gateway", cfg.Telemetry.OTelEndpoint)
@@ -51,9 +55,6 @@ func run(ctx context.Context) error {
 	}
 
 	if cfg.Telemetry.PyroscopeEndpoint != "" {
-		runtime.SetMutexProfileFraction(10)
-		runtime.SetBlockProfileRate(10000)
-
 		stopProfiler, err := telemetry.InitProfiling("ws-gateway", cfg.Telemetry.PyroscopeEndpoint)
 		if err != nil {
 			slog.WarnContext(ctx, "failed to initialize pyroscope profiler", "error", err)
@@ -62,20 +63,24 @@ func run(ctx context.Context) error {
 		}
 	}
 
-	hashRing := loadbalance.New(cfg.Registry.WebSocketEndpoints)
-	router := wsgateway.NewRouter(cfg, hashRing)
+	redisClient, err := database.NewRedis(cfg.Redis.Addr)
+	if err != nil {
+		return err
+	}
+	defer redisClient.Close()
 
-	return runServer(ctx, cfg, router)
+	hashRing := loadbalance.New(nil)
+	watcher := membership.NewWatcher(redisClient, membershipKeyPrefix, hashRing)
+	router := wsgateway.NewRouter(cfg, hashRing, watcher, redisClient)
+
+	return runServer(ctx, cfg, router, watcher)
 }
 
 func loadConfig() (*wsgateway.Config, error) {
-	env := config.GetEnv()
-	logger.InitLogger(env)
-
-	return config.Load[wsgateway.Config]("configs", "base", env)
+	return config.LoadRuntime[wsgateway.Config]()
 }
 
-func runServer(ctx context.Context, cfg *wsgateway.Config, router *wsgateway.Router) error {
+func runServer(ctx context.Context, cfg *wsgateway.Config, router *wsgateway.Router, watcher *membership.Watcher) error {
 	mux := http.NewServeMux()
 
 	mux.Handle("/", otelhttp.NewMiddleware("ws-gateway",
@@ -97,6 +102,10 @@ func runServer(ctx context.Context, cfg *wsgateway.Config, router *wsgateway.Rou
 	}
 
 	eg, ctx := errgroup.WithContext(ctx)
+
+	eg.Go(func() error {
+		return watcher.Run(ctx)
+	})
 
 	eg.Go(func() error {
 		slog.InfoContext(ctx, "Starting WebSocket Gateway", "port", cfg.Port.WSGateway, "env", cfg.Env)

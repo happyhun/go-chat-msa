@@ -17,24 +17,29 @@ export default function Pagination({ page, totalPages, disabled, onChange }: Pag
     }, [])
 
   return (
-    <div className="flex items-center justify-center gap-1 pt-3 pb-1">
+    <nav className="flex items-center justify-center gap-1 pt-3 pb-1" aria-label="페이지 이동">
       <button
+        type="button"
         onClick={() => onChange(page - 1)}
         disabled={page === 0 || disabled}
+        aria-label="이전 페이지"
         className="px-2.5 py-1.5 text-xs text-gray-600 rounded-lg hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
       >
         이전
       </button>
       {pages.map((item, idx) =>
         item === 'ellipsis' ? (
-          <span key={`e-${idx}`} className="px-1.5 text-xs text-gray-400">
+          <span key={`e-${idx}`} aria-hidden="true" className="px-1.5 text-xs text-gray-400">
             ...
           </span>
         ) : (
           <button
+            type="button"
             key={item}
             onClick={() => onChange(item)}
             disabled={disabled}
+            aria-label={`${item + 1}페이지`}
+            aria-current={item === page ? 'page' : undefined}
             className={`w-8 h-8 text-xs rounded-lg transition-colors ${
               item === page
                 ? 'bg-indigo-600 text-white font-medium'
@@ -46,12 +51,14 @@ export default function Pagination({ page, totalPages, disabled, onChange }: Pag
         ),
       )}
       <button
+        type="button"
         onClick={() => onChange(page + 1)}
         disabled={page >= totalPages - 1 || disabled}
+        aria-label="다음 페이지"
         className="px-2.5 py-1.5 text-xs text-gray-600 rounded-lg hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
       >
         다음
       </button>
-    </div>
+    </nav>
   )
 }

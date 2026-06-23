@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { deleteUser, logout } from '../api/client'
-import { useAuth } from '../context/AuthContext'
-import { useToast } from '../context/ToastContext'
+import { useAuth } from '../context/auth'
+import { useToast } from '../context/toast'
 import DeleteUserModal from './DeleteUserModal'
 import UserMenu from './UserMenu'
 
@@ -34,7 +34,7 @@ export default function Layout() {
     <div className="h-screen flex flex-col bg-gray-50">
       {/* Header */}
       <header className="bg-white border-b border-gray-200 shrink-0">
-        <div className="max-w-2xl mx-auto px-4 h-14 flex items-center justify-between">
+        <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
           <h1 className="text-lg font-bold text-gray-900">Go Chat</h1>
           {username && (
             <UserMenu
@@ -48,7 +48,7 @@ export default function Layout() {
 
       {/* Tab Navigation */}
       <nav className="bg-white border-b border-gray-200 shrink-0">
-        <div className="max-w-2xl mx-auto px-4 flex">
+        <div className="max-w-5xl mx-auto px-4 flex">
           <NavLink
             to="/lobby"
             className={({ isActive }) =>

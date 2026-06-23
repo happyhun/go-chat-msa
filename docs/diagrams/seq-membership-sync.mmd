@@ -1,0 +1,37 @@
+sequenceDiagram
+    autonumber
+
+    participant WSS as WebSocket Service
+    participant Redis as Redis
+    participant Instance as WS Gateway / WebSocket Service
+
+    Note over WSS, Instance: 1. 라우팅 후보 등록
+    WSS->>WSS: 인스턴스 등록 토큰 생성
+    WSS->>Redis: 후보 등록<br/>TTL 설정
+
+    Redis-->>Instance: 후보 키 이벤트
+    Instance->>Redis: 후보 목록 재조회
+    Redis-->>Instance: 활성 후보 목록
+    Instance->>Instance: 후보 목록 반영
+
+    loop 주기 갱신
+        WSS->>Redis: 후보 TTL 갱신
+    end
+
+    loop 주기 재조회
+        Instance->>Redis: 후보 목록 재조회
+        Redis-->>Instance: 활성 후보 목록
+        Instance->>Instance: 후보 목록 반영
+    end
+
+    Note over WSS, Instance: 2. 라우팅 후보 제거
+    alt 정상 종료
+        WSS->>Redis: 등록 토큰 검증 후 후보 제거
+    else 비정상 종료
+        Redis-->>Redis: 후보 TTL 만료
+    end
+
+    Redis-->>Instance: 후보 키 이벤트
+    Instance->>Redis: 후보 목록 재조회
+    Redis-->>Instance: 활성 후보 목록
+    Instance->>Instance: 후보 목록 반영
