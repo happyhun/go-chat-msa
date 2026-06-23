@@ -33,12 +33,10 @@ MSA로 구성한 이유는 사용자/방 관리, 메시지 저장, 실시간 연
 | 서비스 | 책임 | 통신 | 상태/저장소 |
 | :--- | :--- | :--- | :--- |
 | api-gateway | REST API 진입점, JWT 검증 | HTTP | Redis (요청 제한) |
-| ws-gateway | WebSocket 티켓 발급, 방 기준 인스턴스 선택, WebSocket 프록시 | HTTP/WebSocket | Redis (티켓, 요청 제한, WebSocket Service 인스턴스 목록) |
+| ws-gateway | WebSocket 티켓 발급, 방 기준 인스턴스 선택, WebSocket 라우팅 | HTTP/WebSocket | Redis (티켓, 요청 제한, WebSocket Service 인스턴스 목록) |
 | websocket-service | 세션 관리, 방 단위 브로드캐스트, 메시지 순번과 방 소유권 관리 | WebSocket | Redis (방 소유권, 마지막 순번 기준) |
 | user-service | 사용자, 채팅방, 멤버십, refresh token 관리 | gRPC | PostgreSQL, Redis (refresh token 상태) |
 | chat-service | 메시지 저장, 이력 조회, 누락 메시지 조회 | gRPC | MongoDB |
-
-서비스 경계와 저장소 의존성은 [MSA 앱 아키텍처](diagrams/flow-msa.mmd)에 정리했습니다.
 
 ### 1.3 주요 기술 선택
 
@@ -122,7 +120,7 @@ refresh token이 탈취되더라도 같은 토큰을 계속 사용할 수 없도
 
 Redis 장애로 refresh token 상태를 확인하거나 갱신할 수 없으면 로그인, 토큰 재발급, 로그아웃 요청은 실패시킵니다. 유효성을 확인할 수 없는 토큰을 허용하지 않기 위해서입니다.
 
-로그인부터 WebSocket 티켓 발급까지의 흐름은 [로그인과 WebSocket 인증 시퀀스](diagrams/seq-auth-ticket.mmd)에 정리했습니다. refresh token 회전 흐름은 [refresh token rotation 시퀀스](diagrams/seq-refresh-token-rotation.mmd)에 따로 정리했습니다.
+로그인부터 WebSocket 티켓 발급까지의 흐름은 [로그인과 WebSocket 인증 시퀀스](diagrams/seq-auth-ticket.mmd)에 정리했습니다.
 
 #### WebSocket 티켓
 
@@ -249,7 +247,7 @@ WebSocket Service 후보 목록은 변경 감지와 목록 재구성을 분리�
 
 채팅방 소유권은 Hub가 아니라 Hub Manager가 관리합니다. Manager는 자신이 보유한 방 lease를 10초마다 모아 Redis pipeline으로 갱신합니다. 각 lease 갱신은 Lua 스크립트로 소유권 토큰을 확인한 뒤 TTL을 연장하므로, 다른 인스턴스가 획득한 lease를 덮어쓰지 않습니다.
 
-처리율 제한은 애플리케이션이 제한 기준만 정하고, Redis 키/값 구조는 `redis_rate` 라이브러리에 맡깁니다. 애플리케이션은 클라이언트 IP나 사용자 식별자를 제한 기준으로 넘길 뿐, `rate:` 내부 스키마에는 직접 의존하지 않습니다.
+처리율 제한은 애플리케이션이 제한 기준만 정하고, Redis 키/값 구조는 `redis_rate` 라이브러리에 맡깁니다. 애플리케이션은 클라이언트 IP나 사용자 ID를 제한 기준으로 넘길 뿐, `rate:` 내부 스키마에는 직접 의존하지 않습니다.
 
 #### 스키마 마이그레이션
 
@@ -293,7 +291,7 @@ WebSocket Service 후보 목록은 변경 감지와 목록 재구성을 분리�
 #### WebSocket 연결 수립
 
 1. 클라이언트가 WS Gateway에 티켓을 제시하여 WebSocket 연결을 요청합니다.
-2. WS Gateway가 티켓을 검증하고, consistent hashing으로 대상 WebSocket Service 인스턴스를 선택하여 프록시합니다.
+2. WS Gateway가 티켓을 검증하고, consistent hashing으로 대상 WebSocket Service 인스턴스를 선택해 방 기준 라우팅을 수행합니다.
 3. WebSocket Service의 Router가 User Service에 멤버십 검증을 요청하고, 자기 해시 링 기준 담당 인스턴스인지 확인합니다.
 4. Router가 upgrade 전에 `Manager.PrepareRegister`를 호출합니다. 이 단계에서 기존 Hub를 찾거나, 새 Hub를 만들기 위해 room lease를 먼저 획득합니다.
 5. 새 Hub가 필요하면 Manager는 room lease 획득 후 `max(DB 마지막 순번, Redis sequence floor)`로 시작 순번을 먼저 초기화합니다. 이 초기화가 실패하면 Hub를 시작하지 않고 가능한 범위에서 lease를 반납합니다.
@@ -322,15 +320,15 @@ WebSocket Service 후보 목록은 변경 감지와 목록 재구성을 분리�
 
 WebSocket은 실시간 전송만 담당합니다. 저장된 메시지 조회와 누락분 동기화는 REST API가 맡습니다. 그래서 실시간 연결이 잠시 끊겨도 클라이언트는 `sequence_number`를 기준으로 빠진 메시지를 다시 맞출 수 있습니다.
 
-메시지 수신부터 저장 완료 처리까지의 흐름은 [메시지 처리 흐름](diagrams/flow-message.mmd)에 정리했습니다.
+메시지 수신부터 브로드캐스트와 비동기 저장 파이프라인까지의 흐름은 [메시지 처리 흐름](diagrams/flow-message.mmd)에 정리했습니다.
 
 #### 전송 및 브로드캐스트
 
 1. 클라이언트가 `client_msg_id`를 담아 메시지를 보냅니다.
 2. Session의 `readPump`에서 처리율 제한과 필수 필드(`content`, `client_msg_id`)를 확인합니다.
 3. Hub의 LRU 캐시에서 `client_msg_id`를 검사해 중복이면 버립니다.
-4. Hub가 저장 큐 슬롯을 먼저 확보합니다. 슬롯을 확보하지 못하면 보낸 세션에 일시 오류를 보내고 순번을 증가시키지 않습니다.
-5. 슬롯 확보 후 Hub 메모리에서 `sequence_number`를 증가시키고, 방의 모든 참여자에게 브로드캐스트합니다. 전송 버퍼가 가득 찬 세션에는 해당 메시지를 쓰지 않고 다음 처리를 계속합니다. 이 세션은 이후 REST 동기화로 누락 구간을 보충합니다.
+4. Hub가 저장 큐 등록 가능 여부를 먼저 확인합니다. 등록할 수 없으면 보낸 세션에 일시 오류를 보내고 순번을 증가시키지 않습니다.
+5. 등록 가능하면 Hub 메모리에서 `sequence_number`를 증가시키고, 방의 모든 참여자에게 브로드캐스트합니다. 전송 버퍼가 가득 찬 세션에는 해당 메시지를 쓰지 않고 다음 처리를 계속합니다. 이 세션은 이후 REST 동기화로 누락 구간을 보충합니다.
 
 #### 멱등성과 저장
 
@@ -410,34 +408,30 @@ WS Gateway는 Redis의 후보 키 변화를 감지해 해시 링을 갱신합니
 
 정확한 키 이름, TTL, 책임 서비스는 2.4의 Redis 저장소 표에 정리되어 있습니다.
 
-멤버십 주소는 같은 값이 짧은 시간 안에 다시 등록될 수 있으므로, 값에는 프로세스별 토큰을 넣습니다. 종료 시에는 자기 토큰이 맞을 때만 Lua 스크립트로 삭제해 새 프로세스의 멤버십을 지우지 않게 합니다.
+멤버십 주소는 같은 값이 짧은 시간 안에 다시 등록될 수 있으므로, 값에는 인스턴스 등록 토큰을 넣습니다. 종료 시에는 등록 토큰이 맞을 때만 Lua 스크립트로 삭제해 새 인스턴스의 멤버십을 지우지 않게 합니다.
 
 방 소유권은 기존 Hub가 신규 수신을 막고, 이미 받은 메시지의 저장 대기 작업을 끝낸 뒤에만 반납됩니다. 저장 실패가 확정된 경우에는 마지막 발급 순번을 `wss:room:seqfloor:{roomID}`에 기록합니다. 새 담당 인스턴스는 이 값을 함께 보고 시작 순번을 정하므로, 이미 발급된 순번을 다시 쓰지 않습니다.
-
-전체 라우팅 구조와 정적 라우팅 대비 차이는 [WebSocket 라우팅 비교](diagrams/flow-ws-routing.mmd)에 정리했습니다.
 
 ### 3.2 분산 라우팅 정합성
 
 WS Gateway와 WebSocket Service의 각 인스턴스는 Redis 후보 목록을 관찰해 자기 로컬 해시 링을 갱신합니다. 하지만 모든 인스턴스가 같은 순간에 같은 목록을 보는 것은 아닙니다. 그래서 WS Gateway의 해시 링과 WebSocket Service의 해시 링이 일시적으로 다를 수 있다는 전제로 방어합니다.
 
-후보 목록이 각 인스턴스의 로컬 해시 링에 반영되는 과정은 [멤버십 동기화 시퀀스](diagrams/seq-membership-sync.mmd)에 정리했습니다.
+후보 목록이 각 인스턴스의 로컬 해시 링에 반영되는 과정은 [멤버십 싱크](diagrams/seq-membership-sync.mmd)에 정리했습니다.
 
 | 상황 | 처리 | 이유 |
 | :--- | :--- | :--- |
 | 잘못된 담당 인스턴스로 라우팅 | WebSocket Service가 421 응답, WS Gateway가 503으로 변환 | 오래된 라우팅 정보를 빠르게 드러내고 클라이언트가 새 담당 인스턴스로 다시 연결 |
 | 새 Hub 생성 | WebSocket upgrade 전에 방 소유권 획득 및 순번 초기화 | 소켓을 열기 전에 담당 인스턴스와 순번 기준을 확정 |
-| 스케일아웃 시 재배치 | 0~2초 무작위 지연 후 기존 연결 종료 | 재접속 트래픽 집중 완화 |
+| 소유권 이전 시작 지연 | 0~2초 무작위 지연 후 기존 연결 종료 | 재접속 트래픽 집중 완화 |
 | 담당 인스턴스 변경 | 저장 대기 작업 완료 후 방 소유권 반납 | 새 담당 인스턴스가 이전 저장 완료 전에 순번을 시작하지 않게 함 |
 | 방 소유권 갱신 실패 | 토큰 불일치나 키 없음은 즉시 Hub 종료, Redis 오류는 마지막 성공 갱신 후 20초 초과 시 Hub 종료 | 일시 오류는 흡수하되 소유권이 불확실해진 상태에서는 메시지 수신 차단 |
 | 빈 후보 목록 관측 | 기존 해시 링은 유지, readiness는 별도 판단 | Redis 일시 오류와 실제 후보 없음 구분 |
 
 담당 인스턴스 변경은 멤버십 변경 이벤트를 받으면 바로 검사하고, 기존 Hub는 0~2초 무작위 지연 후 종료 절차에 들어갑니다. 이벤트를 놓친 경우에도 Manager가 10초마다 자신이 가진 Hub의 담당 여부를 다시 확인하므로, 최대 약 12초 안에 종료 절차가 시작됩니다. 이후 Hub는 이미 브로드캐스트한 메시지의 저장 완료를 기다린 뒤 방 소유권을 반납합니다.
 
-스케일아웃 중 담당 인스턴스가 바뀌는 흐름은 [스케일아웃 시 재배치](diagrams/seq-rebalance.mmd)에 정리했습니다.
+스케일아웃 중 담당 인스턴스가 바뀌는 흐름은 [소유권 이전](diagrams/seq-ownership-transfer.mmd)에 정리했습니다.
 
 WebSocket 연결 라우팅 실패에 대해서는 WS Gateway나 WebSocket Service가 다른 인스턴스로 서버 측 재시도를 하지 않습니다. 연결 재시도는 클라이언트가 무작위 지연을 섞어 수행하게 해 재시도 트래픽이 한 번에 몰리지 않게 합니다.
-
-421/503 변환 흐름은 [담당 인스턴스 자가 확인](diagrams/seq-owner-self-check.mmd)에 정리했습니다.
 
 HashRing의 `Set`은 여러 후보 추가/삭제를 한 번에 반영하는 복합 작업입니다. 중간 상태에서 잘못된 담당 인스턴스가 나오지 않도록 HashRing 내부에서 `Set`은 Lock, `Locate`는 RLock으로 보호합니다.
 
@@ -505,7 +499,7 @@ Manager와 Hub는 액터 모델로 동시성을 처리합니다. Manager는 Hub 
 
 메시지를 브로드캐스트와 동시에 저장하면 저장 지연이 실시간 전송 경로에 직접 영향을 줍니다. 그래서 실시간 분배와 저장을 분리하고, 저장은 배치 워커에서 비동기로 처리합니다.
 
-분리하더라도 저장 경로가 꽉 찬 메시지를 클라이언트에 먼저 전달하지는 않습니다. Hub는 `persistCh`에 작업을 넣기 전에 같은 크기의 버퍼드 채널을 세마포어처럼 사용해 저장 경로에 들어갈 자리를 먼저 확보합니다. 자리를 확보한 뒤에만 순번을 부여하고, 저장 작업을 `persistCh`에 넣은 다음 브로드캐스트합니다. 저장 경로가 꽉 차 있거나 중간 단계에서 실패하면 순번과 예약을 되돌리고 메시지를 보낸 세션에 일시 오류를 반환합니다.
+분리하더라도 저장 경로가 꽉 찬 메시지를 클라이언트에 먼저 전달하지는 않습니다. Hub는 `persistCh`에 작업을 넣기 전에 같은 크기의 버퍼드 채널을 세마포어처럼 사용해 저장 큐에 등록할 수 있는지 먼저 확인합니다. 등록 가능할 때만 순번을 부여하고, 저장 작업을 `persistCh`에 넣은 다음 브로드캐스트합니다. 저장 경로가 꽉 차 있거나 중간 단계에서 실패하면 순번과 예약을 되돌리고 메시지를 보낸 세션에 일시 오류를 반환합니다.
 
 저장 워커는 채널에서 작업을 꺼내 일정 건수 또는 타이머 기준으로 배치 저장합니다. 메시지 순서는 Hub가 이미 부여하므로 DB 저장 순서는 정합성 기준이 아닙니다. 이미 저장된 메시지는 성공으로 보고, 재시도 가능한 오류만 재시도 큐로 보냅니다.
 
@@ -559,7 +553,7 @@ K8s 전환의 목표는 서비스 인스턴스 수가 동적으로 변해도 서
 | Job | 일회성 마이그레이션 | 성공/실패와 완료 상태가 명확함 |
 | Ingress | 외부 HTTP/WebSocket 진입점 | 외부 경로를 서비스로 라우팅 |
 
-K8s 안에서 각 워크로드와 데이터 계층이 배치되는 구조는 [K8s 런타임 배포 구조](diagrams/flow-k8s-runtime.mmd)에 정리했습니다.
+K8s 안에서 각 워크로드와 데이터 계층이 배치되는 구조는 [Kubernetes 실행 아키텍처](diagrams/flow-k8s-architecture.mmd)에 정리했습니다.
 
 ### 4.1 Manifest 구조
 
@@ -583,8 +577,6 @@ K8s manifest는 `base`와 overlay로 나눕니다. `base`에는 서비스 구조
 | `observability` | Grafana 스택 ConfigMap 생성 후 observability overlay 적용 | 관측성 Deployment rollout 완료 |
 | `migrations` | migration ConfigMap 생성, 기존 Job 삭제, migration overlay 적용 | `postgres-migrate`, `mongo-migrate` Job 완료 |
 | `apps` | OpenAPI ConfigMap 생성, apps overlay 적용, 핵심 백엔드 → WebSocket Service → 진입 계층 순서로 rollout restart | 앱 Deployment rollout 완료 |
-
-환경별 overlay 관계는 [K8s overlay 구조](diagrams/flow-k8s-overlays.mmd), 단계별 적용 순서는 [K8s bootstrap 흐름](diagrams/flow-k8s-bootstrap.mmd)에 정리했습니다.
 
 마이그레이션이 실패하면 앱 rollout을 진행하지 않습니다. 스키마가 불확실한 상태에서 앱을 띄우지 않기 위한 즉시 중단 전략입니다.
 

@@ -1,43 +1,37 @@
 sequenceDiagram
     autonumber
 
-    participant Registry as WebSocket Service 등록기
+    participant WSS as WebSocket Service
     participant Redis as Redis
-    participant Watcher as 멤버십 감시자
-    participant Ring as 라우팅 기준
+    participant Instance as WS Gateway / WebSocket Service
 
-    Note over Registry, Ring: 1. 부팅 시 라우팅 후보로 등록
-    Registry->>Registry: 인스턴스별 토큰 생성
-    Registry->>Redis: 라우팅 후보 등록
-    Watcher->>Redis: 현재 후보 목록 조회
-    Redis-->>Watcher: 활성 인스턴스 목록
-    Watcher->>Ring: 후보 목록 반영
+    Note over WSS, Instance: 1. 라우팅 후보 등록
+    WSS->>WSS: 인스턴스 등록 토큰 생성
+    WSS->>Redis: 후보 등록<br/>TTL 설정
 
-    Note over Registry, Ring: 2. 정상 운영 - 주기 갱신으로 후보 상태 유지
+    Redis-->>Instance: 후보 키 이벤트
+    Instance->>Redis: 후보 목록 재조회
+    Redis-->>Instance: 활성 후보 목록
+    Instance->>Instance: 후보 목록 반영
+
     loop 주기 갱신
-        Registry->>Redis: 후보 상태 갱신
+        WSS->>Redis: 후보 TTL 갱신
     end
 
-    Note over Registry, Ring: 3. 후보 변경 감지 - 알림과 주기 재조회 병행
-    Redis-->>Watcher: 후보 변경 알림
-    Watcher->>Redis: 현재 후보 목록 재조회
-    Redis-->>Watcher: 활성 인스턴스 목록
-    Watcher->>Ring: 후보 목록 반영
-
-    loop 안전망 주기
-        Watcher->>Redis: 후보 목록 재조회
-        Redis-->>Watcher: 활성 인스턴스 목록
-        Watcher->>Ring: 후보 목록 반영
+    loop 주기 재조회
+        Instance->>Redis: 후보 목록 재조회
+        Redis-->>Instance: 활성 후보 목록
+        Instance->>Instance: 후보 목록 반영
     end
-    Note over Watcher, Ring: 일시적으로 빈 목록이 조회되면<br/>기존 라우팅 기준을 유지해 전체 연결 중단을 피함
 
-    Note over Registry, Ring: 4. 정상 종료 - 자기 토큰이 맞을 때만 후보에서 제거
-    Registry->>Redis: 자기 등록 상태 제거 요청
-    Redis-->>Watcher: 후보 변경 알림
-    Watcher->>Redis: 현재 후보 목록 재조회
-    Watcher->>Ring: 제거된 인스턴스를 제외하고 반영
+    Note over WSS, Instance: 2. 라우팅 후보 제거
+    alt 정상 종료
+        WSS->>Redis: 등록 토큰 검증 후 후보 제거
+    else 비정상 종료
+        Redis-->>Redis: 후보 TTL 만료
+    end
 
-    Note over Registry, Ring: 5. 비정상 종료 - 주기 갱신 만료로 후보에서 제외
-    Redis-->>Watcher: 후보 만료 알림
-    Watcher->>Redis: 현재 후보 목록 재조회
-    Watcher->>Ring: 만료된 인스턴스를 제외하고 반영
+    Redis-->>Instance: 후보 키 이벤트
+    Instance->>Redis: 후보 목록 재조회
+    Redis-->>Instance: 활성 후보 목록
+    Instance->>Instance: 후보 목록 반영

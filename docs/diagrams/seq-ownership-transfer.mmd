@@ -1,0 +1,50 @@
+sequenceDiagram
+    autonumber
+
+    participant Client as 클라이언트
+    participant WSGW as WS Gateway
+    box 기존 WebSocket Service
+    participant OldManager as Manager
+    participant OldHub as Hub
+    end
+    participant Redis as Redis
+    box 새 WebSocket Service
+    participant NewRouter as Router
+    participant NewManager as Manager
+    participant NewHub as Hub
+    end
+    participant ChatSvc as Chat Service
+
+    Note over Client, Redis: 1. 기존 Hub 정리
+    OldManager->>OldManager: 담당 인스턴스 변경 감지
+    OldManager->>OldHub: 소유권 이전 시작
+    OldHub->>OldHub: 신규 연결과 새 메시지 수신 차단
+    OldHub->>OldHub: 저장 대기 작업 완료 대기
+
+    opt 저장 실패 확정
+        OldManager->>Redis: 마지막 발급 순번을 기준값으로 기록
+    end
+
+    OldHub-->>WSGW: WebSocket 연결 종료
+    WSGW-->>Client: WebSocket 연결 종료
+    OldManager->>Redis: 방 소유권 반납
+
+    Note over Client, NewHub: 2. 새 담당 인스턴스 연결
+    Client->>WSGW: 새 티켓으로 WebSocket 연결 요청
+    WSGW->>NewRouter: 방 기준 라우팅
+    NewRouter->>NewManager: 연결 준비
+    NewManager->>Redis: 방 소유권 확보
+    Redis-->>NewManager: 확보 완료
+    NewManager->>ChatSvc: 저장된 마지막 순번 조회
+    NewManager->>Redis: 순번 기준값 조회
+
+    alt 시작 순번 판단 실패
+        NewManager->>Redis: 방 소유권 반납
+        NewRouter-->>WSGW: 503 Service Unavailable
+        WSGW-->>Client: 새 티켓으로 재시도 안내
+    else 시작 순번 판단 성공
+        NewManager->>NewHub: 더 큰 순번 이후부터 시작
+        NewManager-->>NewRouter: 준비 완료
+        NewRouter-->>WSGW: 연결 수락
+        WSGW-->>Client: 연결 완료
+    end

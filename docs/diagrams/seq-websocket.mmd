@@ -3,93 +3,48 @@ sequenceDiagram
 
     participant Client as 클라이언트
     participant WSGW as WS Gateway
-    participant Router as WebSocket Service
+    box WebSocket Service
+    participant Router as Router
+    participant Manager as Manager
+    participant Hub as Hub
+    participant Session as Session
+    end
     participant UserSvc as User Service
-    participant Manager as 방 관리자
     participant Redis as Redis
-    participant Hub as 방 처리기
-    participant Session as 세션
-    participant Worker as 저장 워커
     participant ChatSvc as Chat Service
-    participant Others as 다른 세션
 
-    Note over Client, ChatSvc: 1. 연결 준비와 방 처리기 선택
-    Client->>WSGW: 티켓이 포함된 WebSocket 연결 요청
-    WSGW->>Router: 방 기준 담당 인스턴스로 연결 전달
+    Client->>WSGW: WebSocket 연결 요청<br/>티켓 포함
+    WSGW->>Router: 방 기준 라우팅
     Router->>UserSvc: 방 멤버십 확인
     UserSvc-->>Router: 참여 여부 반환
-    Router->>Router: 담당 인스턴스 자기검증
+    Router->>Router: 담당 인스턴스 확인
 
     alt 담당 인스턴스가 아님
-        Router-->>WSGW: 잘못 라우팅된 연결
+        Router-->>WSGW: 421 Misdirected Request
         WSGW-->>Client: 새 티켓으로 재시도 안내
     else 담당 인스턴스가 맞음
-        Router->>Manager: 방 연결 준비
-        alt 기존 방 처리기 사용 가능
-            Manager-->>Router: 연결 준비 완료
-            Router-->>Client: WebSocket 연결 수락
-            Router->>Manager: 연결 등록 확정
-            Manager->>Hub: 세션 등록
-            Hub->>Session: 송수신 루프 시작
-        else 새 방 처리기 필요
+        Router->>Manager: 연결 준비
+        alt 기존 Hub 사용 가능
+            Manager-->>Router: 준비 완료
+        else 새 Hub 필요
             Manager->>Redis: 방 소유권 확보
-            Redis-->>Manager: 소유권 확보 완료
+            Redis-->>Manager: 확보 완료
             Manager->>ChatSvc: 저장된 마지막 순번 조회
             Manager->>Redis: 순번 기준값 조회
-            Manager->>Hub: 시작 순번 결정 후 처리기 시작
-            Manager-->>Router: 연결 준비 완료
-            Router-->>Client: WebSocket 연결 수락
-            Router->>Manager: 연결 등록 확정
-            Manager->>Hub: 세션 등록
-            Hub->>Session: 송수신 루프 시작
-        else 소유권 이전 또는 순번 확인 중
-            Manager-->>Router: 잠시 후 재시도 필요
-            Router-->>WSGW: 연결 수락 보류
+            Manager->>Hub: 시작 순번 설정 후 Hub 시작
+            Manager-->>Router: 준비 완료
+        else 준비 불가
+            Manager-->>Router: 재시도 필요
+            Router-->>WSGW: 503 Service Unavailable
             WSGW-->>Client: 새 티켓으로 재시도 안내
         end
-    end
 
-    alt 같은 사용자의 기존 세션이 있음
-        Hub->>Session: 기존 세션 종료 알림
-        Session-->>Client: 이전 연결 종료
-    end
-
-    Note over Client, ChatSvc: 2. 메시지 처리 경로
-    Client->>Session: 채팅 메시지 전송
-    Session->>Session: 형식 검증과 도배 제한
-    Session->>Hub: 방에 게시
-    Hub->>Hub: 중복 요청 확인
-
-    alt 저장 대기 불가
-        Hub-->>Session: 일시 오류
-        Session-->>Client: 재시도 가능한 오류
-        Note over Hub: 순번을 발급하지 않고<br/>브로드캐스트하지 않음
-    else 처리 가능
-        Hub->>Hub: 저장 대기 슬롯 확보
-        Hub->>Hub: 방 순번 발급
-        Hub->>Worker: 저장 작업 등록
-        Hub->>Session: 보낸 사용자에게 전달
-        Hub->>Others: 방 안의 다른 세션에 전달
-        Worker->>ChatSvc: 메시지 배치 저장
-        alt 저장 성공 또는 이미 저장됨
-            ChatSvc-->>Worker: 저장 완료
-            Worker-->>Hub: 저장 완료 반영
-        else 일시 실패
-            Worker->>Worker: 백오프 후 재시도
-            Worker->>ChatSvc: 메시지 재저장
-        else 재시도 불가
-            Worker-->>Hub: 저장 실패 확정
-            Note over Hub, Redis: 이후 소유권 반납 전에<br/>마지막 발급 순번을 기준값으로 남김
+        Router-->>WSGW: WebSocket upgrade 성공
+        WSGW-->>Client: 연결 완료
+        Router->>Manager: 등록 확정
+        Manager->>Hub: Session 등록
+        opt 같은 사용자의 기존 Session 존재
+            Hub->>Hub: 기존 Session 종료
         end
-    end
-
-    Note over Client, Redis: 3. 연결 해제와 유휴 처리기 정리
-    Client->>Session: 연결 종료
-    Session->>Hub: 세션 해제
-
-    alt 마지막 세션 종료 후 유휴 시간 경과
-        Hub->>Hub: 신규 수신 차단
-        Hub->>Hub: 이미 받은 메시지 저장 완료 대기
-        Hub-->>Manager: 방 처리기 종료
-        Manager->>Redis: 방 소유권 반납
+        Hub->>Session: read/write pump 시작
     end

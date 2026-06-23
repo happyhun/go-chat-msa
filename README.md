@@ -47,7 +47,7 @@ make dev-up
 - WebSocket 서버를 늘려도 같은 방 연결이 여러 인스턴스로 흩어지지 않도록 Redis 후보 목록과 consistent hashing으로 방 단위 라우팅을 구성했습니다.
 - HPA나 rollout으로 담당 인스턴스가 바뀌어도 메시지 순번이 중복되거나 역전되지 않도록 방 소유권과 마지막 순번 기준값을 두었습니다.
 - 메시지마다 Redis Pub/Sub을 거치지 않고 담당 Hub의 로컬 메모리에서 브로드캐스트해 Redis가 중앙 병목이 되지 않게 했습니다.
-- 저장 경로가 밀릴 때는 저장 경로 자리를 먼저 확보한 메시지만 순번을 받고 브로드캐스트되도록 해, 전달됐지만 저장 경로에도 들어가지 못한 메시지 상태를 막았습니다.
+- 저장 경로가 밀릴 때는 저장 큐 등록 가능 여부를 먼저 확인한 메시지만 순번을 받고 브로드캐스트되도록 해, 전달됐지만 저장 경로에도 들어가지 못한 메시지 상태를 막았습니다.
 
 ## Kubernetes 전환으로 달라진 점
 
@@ -77,7 +77,7 @@ HPA나 rollout으로 담당 인스턴스가 바뀌면 기존 Hub는 새 메시�
 
 ### 저장 경로 과부하 제어
 
-실시간 분배와 MongoDB 저장은 분리했습니다. 다만 저장 큐가 가득 찬 메시지를 먼저 브로드캐스트하지 않도록, Hub는 저장 경로 자리를 먼저 확보한 뒤 순번을 부여하고 브로드캐스트합니다.
+실시간 분배와 MongoDB 저장은 분리했습니다. 다만 저장 큐에 등록할 수 없는 메시지를 먼저 브로드캐스트하지 않도록, Hub는 저장 큐 등록 가능 여부를 확인한 뒤 순번을 부여하고 브로드캐스트합니다.
 
 ### WebSocket 내부 구조
 
@@ -87,49 +87,117 @@ WebSocket Service는 Router, Manager, Hub, Session으로 나눴습니다. Manage
 
 가입과 로그인은 bcrypt 때문에 CPU 바운드 작업이 몰릴 수 있습니다. 요청마다 제한 없이 해싱을 시작하지 않고 `runtime.GOMAXPROCS(0)` 기준 워커 풀로 동시 실행 수를 제한해, 인증 부하가 user-service 전체 지연으로 번지는 것을 막았습니다.
 
-## 아키텍처
+## Kubernetes 실행 아키텍처
 
 ```mermaid
 flowchart TB
-    Client["Browser"]
-    Ingress["Ingress<br/>/, /api, /ws-api, /ws"]
-    API["api-gateway"]
-    WSGW["ws-gateway"]
-    WSS1["websocket-service A"]
-    WSS2["websocket-service B"]
-    User["user-service"]
-    Chat["chat-service"]
-    Redis[("Redis<br/>티켓, 멤버십, 방 소유권")]
-    Postgres[("PostgreSQL")]
-    Mongo[("MongoDB")]
-    Grafana["Grafana Stack"]
+    subgraph External ["외부"]
+        direction LR
+        Client["브라우저"]
+    end
 
-    Client --> Ingress
-    Ingress --> API
-    Ingress --> WSGW
-    API --> User
-    API --> Chat
-    WSGW --> Redis
-    WSGW -- "room_id 해시" --> WSS1
-    WSGW -- "room_id 해시" --> WSS2
-    WSS1 --> Redis
-    WSS2 --> Redis
-    WSS1 --> User
-    WSS2 --> User
-    WSS1 --> Chat
-    WSS2 --> Chat
-    User --> Postgres
-    Chat --> Mongo
-    API -. telemetry .-> Grafana
-    WSGW -. telemetry .-> Grafana
-    WSS1 -. telemetry .-> Grafana
-    WSS2 -. telemetry .-> Grafana
+    subgraph K8s ["Kubernetes 환경"]
+        direction TB
+
+        Ingress["Ingress"]
+
+        subgraph PublicUI ["화면 · 문서"]
+            direction LR
+            FE["Frontend"]
+            Docs["Swagger UI"]
+        end
+
+        subgraph Runtime ["서비스 런타임"]
+            direction TB
+
+            subgraph Services ["애플리케이션 서비스"]
+                direction TB
+
+                subgraph Gateway ["진입 계층"]
+                    direction LR
+                    AGW["API Gateway"]
+                    WSGW["WS Gateway"]
+                end
+
+                subgraph Domain ["도메인 계층"]
+                    direction LR
+                    US["User Service"]
+                    CS["Chat Service"]
+                    WSS["WebSocket Service"]
+                end
+            end
+
+            subgraph State ["상태 저장소"]
+                direction LR
+
+                subgraph Data ["영속 저장소"]
+                    direction LR
+                    PG[("PostgreSQL")]
+                    MG[("MongoDB")]
+                end
+
+                subgraph Control ["제어 상태 저장소"]
+                    direction LR
+                    RD[("Redis")]
+                end
+            end
+        end
+
+        subgraph Observability ["관측성"]
+            direction LR
+            Alloy["Alloy"]
+            Prometheus[("Prometheus")]
+            Loki[("Loki")]
+            Tempo[("Tempo")]
+            Pyroscope[("Pyroscope")]
+            Grafana["Grafana"]
+        end
+
+        subgraph Verification ["검증 리소스"]
+            direction LR
+            Load["C10K k6 Job"]
+            HPAProbe["HPA k6 Job"]
+        end
+    end
+
+    Client == "HTTP / WebSocket" ==> Ingress
+    Ingress -- "화면" --> FE
+    Ingress -- "REST" --> AGW
+    Ingress -- "WebSocket" --> WSGW
+    Ingress -- "API 문서" --> Docs
+    Ingress -- "대시보드" --> Grafana
+
+    AGW -- "사용자 · 방" --> US
+    AGW -- "메시지 조회" --> CS
+    WSGW -- "방 기준 라우팅" --> WSS
+    WSS -- "멤버십 확인" --> US
+    WSS -- "메시지 저장 · 순번 조회" --> CS
+
+    US --> PG
+    US --> RD
+    CS --> MG
+    AGW --> RD
+    WSGW --> RD
+    WSS --> RD
+    %% 상태 저장소 내부의 영속 저장소와 Redis를 좌우로 유지하기 위한 Mermaid 레이아웃 힌트
+    MG ~~~ RD
+
+    PublicUI -. "Pod 로그" .-> Alloy
+    Services -. "로그 · 메트릭 · 트레이스" .-> Alloy
+    Services -. "프로파일" .-> Pyroscope
+    Alloy --> Prometheus
+    Alloy --> Loki
+    Alloy --> Tempo
+    Prometheus --> Grafana
+    Loki --> Grafana
+    Tempo --> Grafana
+    Pyroscope --> Grafana
 ```
 
 | 서비스 | 책임 | 통신 | 상태/저장소 |
 | :--- | :--- | :--- | :--- |
 | `api-gateway` | REST API 진입점, JWT 검증 | HTTP | Redis (요청 제한) |
-| `ws-gateway` | WebSocket 티켓 발급, 방 기준 인스턴스 선택, WebSocket 프록시 | HTTP/WebSocket | Redis (티켓, 요청 제한, WebSocket Service 후보 목록) |
+| `ws-gateway` | WebSocket 티켓 발급, 방 기준 인스턴스 선택, WebSocket 라우팅 | HTTP/WebSocket | Redis (티켓, 요청 제한, WebSocket Service 후보 목록) |
 | `websocket-service` | 세션 관리, 방 단위 브로드캐스트, 메시지 순번과 방 소유권 관리 | WebSocket | Redis (방 소유권, 마지막 순번 기준) |
 | `user-service` | 사용자, 채팅방, 멤버십, refresh token 관리 | gRPC | PostgreSQL, Redis (refresh token 상태) |
 | `chat-service` | 메시지 저장, 이력 조회, 누락 메시지 조회 | gRPC | MongoDB |
@@ -139,12 +207,9 @@ flowchart TB
 
 | 다이어그램 | 내용 |
 | :--- | :--- |
-| [MSA 앱 아키텍처](docs/diagrams/flow-msa.mmd) | 서비스 책임과 데이터 저장소 경계 |
-| [K8s 런타임 배포 구조](docs/diagrams/flow-k8s-runtime.mmd) | Ingress, 서비스, 데이터 계층, 관측성 구성 |
-| [WebSocket 라우팅 비교](docs/diagrams/flow-ws-routing.mmd) | 정적 라우팅과 Redis 후보 목록 기반 동적 라우팅 비교 |
-| [멤버십 동기화](docs/diagrams/seq-membership-sync.mmd) | Redis 후보 목록 변경과 해시 링 갱신 |
-| [담당 인스턴스 자가 확인](docs/diagrams/seq-owner-self-check.mmd) | 잘못된 담당 인스턴스 라우팅 방어 |
-| [스케일아웃 시 재배치](docs/diagrams/seq-rebalance.mmd) | HPA 확장 중 담당 인스턴스 이전과 종료 절차 |
+| [Kubernetes 실행 아키텍처](docs/diagrams/flow-k8s-architecture.mmd) | Ingress, 서비스, 데이터 계층, 관측성 구성 |
+| [멤버십 싱크](docs/diagrams/seq-membership-sync.mmd) | Redis 후보 목록 변경과 해시 링 갱신 |
+| [소유권 이전](docs/diagrams/seq-ownership-transfer.mmd) | HPA 확장 중 담당 인스턴스 이전과 종료 절차 |
 | [메시지 처리 흐름](docs/diagrams/flow-message.mmd) | WebSocket 메시지 수신, 순번 부여, 브로드캐스트, 저장 |
 
 ## Kubernetes 실행 기준
