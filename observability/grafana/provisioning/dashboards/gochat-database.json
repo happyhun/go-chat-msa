@@ -723,8 +723,7 @@
             "fillOpacity": 8,
             "showPoints": "never"
           },
-          "unit": "ops",
-          "decimals": 3
+          "unit": "ops"
         },
         "overrides": []
       },
@@ -785,8 +784,7 @@
             "fillOpacity": 8,
             "showPoints": "never"
           },
-          "unit": "s",
-          "decimals": 4
+          "unit": "s"
         },
         "overrides": []
       },
@@ -1289,7 +1287,7 @@
         "refresh": 1,
         "sort": 1,
         "includeAll": true,
-        "allValue": "api-gateway|ws-gateway|websocket-service|user-service|chat-service|frontend",
+        "allValue": "api-gateway|websocket-service|user-service|chat-service|frontend",
         "current": {
           "selected": true,
           "text": "All",

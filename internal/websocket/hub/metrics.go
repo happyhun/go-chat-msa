@@ -12,31 +12,26 @@ import (
 var hubMeter = otel.Meter("go-chat-msa/websocket/hub")
 
 var (
-	hubsActive                     metric.Int64UpDownCounter
-	hubsClosedTotal                metric.Int64Counter
-	connectionsActive              metric.Int64UpDownCounter
-	sessionConflictsTotal          metric.Int64Counter
-	messagesReceivedTotal          metric.Int64Counter
-	messagesRateLimitedTotal       metric.Int64Counter
-	messagesSentTotal              metric.Int64Counter
-	duplicateMessagesDroppedTotal  metric.Int64Counter
-	sendQueueDroppedTotal          metric.Int64Counter
-	broadcastChannelDepth          metric.Float64Histogram
-	persistChannelDepth            metric.Float64Gauge
-	persistDroppedTotal            metric.Int64Counter
-	persistDrainTotal              metric.Int64Counter
-	persistDrainDuration           metric.Float64Histogram
-	persistenceBatchSaveTotal      metric.Int64Counter
-	persistenceRetryQueueDepth     metric.Float64Gauge
-	persistenceRetryOldestAge      metric.Float64Gauge
-	persistenceRetrySaveTotal      metric.Int64Counter
-	persistenceRetryQueueFullTotal metric.Int64Counter
-	roomHandoffTotal               metric.Int64Counter
-	roomHandoffDuration            metric.Float64Histogram
-	sequenceConflictTotal          metric.Int64Counter
-	fanoutDuration                 metric.Float64Histogram
-	egressDuration                 metric.Float64Histogram
-	rebalanceEvictionsTotal        metric.Int64Counter
+	hubsActive               metric.Int64UpDownCounter
+	hubsClosedTotal          metric.Int64Counter
+	connectionsActive        metric.Int64UpDownCounter
+	sessionsClosedTotal      metric.Int64Counter
+	messagesReceivedTotal    metric.Int64Counter
+	messagesRateLimitedTotal metric.Int64Counter
+	messagesSentTotal        metric.Int64Counter
+	sendQueueDroppedTotal    metric.Int64Counter
+	broadcastChannelDepth    metric.Float64Histogram
+	egressDuration           metric.Float64Histogram
+	brokerHopDuration        metric.Float64Histogram
+	jetStreamPublishDuration metric.Float64Histogram
+	hubFanoutDuration        metric.Float64Histogram
+	outOfOrderTotal          metric.Int64Counter
+	reorderSpanSeconds       metric.Float64Histogram
+	natsSlowConsumerTotal    metric.Int64Counter
+	natsDroppedMessagesTotal metric.Int64Counter
+	natsPublishFailedTotal   metric.Int64Counter
+	natsDisconnectsTotal     metric.Int64Counter
+	roomEventsIgnoredTotal   metric.Int64Counter
 )
 
 func init() {
@@ -44,165 +39,114 @@ func init() {
 	hubsActive, err = hubMeter.Int64UpDownCounter("gochat_ws_hubs_active",
 		metric.WithDescription("활성 Hub 고루틴 수 (방당 1개)"),
 	)
-	if err != nil {
-		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_ws_hubs_active", "error", err)
-	}
+	warnOnMetricError("gochat_ws_hubs_active", err)
+
 	hubsClosedTotal, err = hubMeter.Int64Counter("gochat_ws_hubs_closed",
 		metric.WithDescription("종료된 Hub 수"),
 	)
-	if err != nil {
-		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_ws_hubs_closed", "error", err)
-	}
+	warnOnMetricError("gochat_ws_hubs_closed", err)
+
 	connectionsActive, err = hubMeter.Int64UpDownCounter("gochat_ws_connections_active",
 		metric.WithDescription("활성 WebSocket 세션 수"),
 	)
-	if err != nil {
-		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_ws_connections_active", "error", err)
-	}
-	sessionConflictsTotal, err = hubMeter.Int64Counter("gochat_ws_session_conflicts",
-		metric.WithDescription("중복 연결로 끊긴 세션 수"),
+	warnOnMetricError("gochat_ws_connections_active", err)
+
+	sessionsClosedTotal, err = hubMeter.Int64Counter("gochat_ws_sessions_closed",
+		metric.WithDescription("서버가 이유를 달아 닫은 세션 수"),
 	)
-	if err != nil {
-		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_ws_session_conflicts", "error", err)
-	}
+	warnOnMetricError("gochat_ws_sessions_closed", err)
+
 	messagesReceivedTotal, err = hubMeter.Int64Counter("gochat_ws_messages_received",
 		metric.WithDescription("클라이언트로부터 수신한 메시지 수"),
 	)
-	if err != nil {
-		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_ws_messages_received", "error", err)
-	}
+	warnOnMetricError("gochat_ws_messages_received", err)
+
 	messagesRateLimitedTotal, err = hubMeter.Int64Counter("gochat_ws_messages_rate_limited",
 		metric.WithDescription("속도 제한 초과로 폐기된 메시지 수"),
 	)
-	if err != nil {
-		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_ws_messages_rate_limited", "error", err)
-	}
+	warnOnMetricError("gochat_ws_messages_rate_limited", err)
+
 	messagesSentTotal, err = hubMeter.Int64Counter("gochat_ws_messages_sent",
 		metric.WithDescription("클라이언트로 송신한 메시지 수"),
 	)
-	if err != nil {
-		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_ws_messages_sent", "error", err)
-	}
-	duplicateMessagesDroppedTotal, err = hubMeter.Int64Counter("gochat_ws_duplicate_messages_dropped",
-		metric.WithDescription("멱등성 캐시에 의해 폐기된 중복 메시지 수"),
-	)
-	if err != nil {
-		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_ws_duplicate_messages_dropped", "error", err)
-	}
+	warnOnMetricError("gochat_ws_messages_sent", err)
+
 	sendQueueDroppedTotal, err = hubMeter.Int64Counter("gochat_ws_send_queue_dropped",
-		metric.WithDescription("송신 큐 포화로 폐기된 메시지 수"),
+		metric.WithDescription("세션 전송 버퍼 포화로 버린 프레임 수"),
 	)
-	if err != nil {
-		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_ws_send_queue_dropped", "error", err)
-	}
+	warnOnMetricError("gochat_ws_send_queue_dropped", err)
+
 	broadcastChannelDepth, err = hubMeter.Float64Histogram("gochat_ws_broadcast_channel_depth",
 		metric.WithDescription("메시지 디큐 시점의 브로드캐스트 채널 깊이"),
 		metric.WithExplicitBucketBoundaries(0, 1, 5, 10, 25, 50, 100, 150, 200, 256),
 	)
-	if err != nil {
-		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_ws_broadcast_channel_depth", "error", err)
-	}
-	persistChannelDepth, err = hubMeter.Float64Gauge("gochat_ws_persist_channel_depth",
-		metric.WithDescription("영속화 채널 현재 깊이"),
-	)
-	if err != nil {
-		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_ws_persist_channel_depth", "error", err)
-	}
-	persistDroppedTotal, err = hubMeter.Int64Counter("gochat_ws_persist_dropped",
-		metric.WithDescription("영속화 채널 포화로 폐기된 메시지 수"),
-	)
-	if err != nil {
-		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_ws_persist_dropped", "error", err)
-	}
-	persistDrainTotal, err = hubMeter.Int64Counter("gochat_ws_persist_drain",
-		metric.WithDescription("Hub 종료 전 영속화 drain 결과"),
-	)
-	if err != nil {
-		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_ws_persist_drain", "error", err)
-	}
-	persistDrainDuration, err = hubMeter.Float64Histogram("gochat_ws_persist_drain_duration_seconds",
-		metric.WithDescription("Hub 종료 전 영속화 drain 소요 시간"),
-		metric.WithExplicitBucketBoundaries(.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 30),
-	)
-	if err != nil {
-		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_ws_persist_drain_duration_seconds", "error", err)
-	}
-	persistenceBatchSaveTotal, err = hubMeter.Int64Counter("gochat_persistence_batch_save",
-		metric.WithDescription("배치 저장 시도 횟수"),
-	)
-	if err != nil {
-		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_persistence_batch_save", "error", err)
-	}
-	persistenceRetryQueueDepth, err = hubMeter.Float64Gauge("gochat_persistence_retry_queue_depth",
-		metric.WithDescription("재시도 큐 대기 배치 수"),
-	)
-	if err != nil {
-		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_persistence_retry_queue_depth", "error", err)
-	}
-	persistenceRetryOldestAge, err = hubMeter.Float64Gauge("gochat_persistence_retry_oldest_age_seconds",
-		metric.WithDescription("재시도 대기 중 가장 오래된 작업의 경과 시간(초)"),
-	)
-	if err != nil {
-		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_persistence_retry_oldest_age_seconds", "error", err)
-	}
-	persistenceRetrySaveTotal, err = hubMeter.Int64Counter("gochat_persistence_retry_save",
-		metric.WithDescription("재시도 저장 결과"),
-	)
-	if err != nil {
-		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_persistence_retry_save", "error", err)
-	}
-	persistenceRetryQueueFullTotal, err = hubMeter.Int64Counter("gochat_persistence_retry_queue_full",
-		metric.WithDescription("재시도 큐 포화로 폐기된 배치 수"),
-	)
-	if err != nil {
-		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_persistence_retry_queue_full", "error", err)
-	}
-	roomHandoffTotal, err = hubMeter.Int64Counter("gochat_ws_room_handoff_total",
-		metric.WithDescription("room owner handoff lifecycle results"),
-	)
-	if err != nil {
-		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_ws_room_handoff_total", "error", err)
-	}
-	roomHandoffDuration, err = hubMeter.Float64Histogram("gochat_ws_room_handoff_duration_seconds",
-		metric.WithDescription("room owner handoff drain duration"),
-		metric.WithExplicitBucketBoundaries(.05, .1, .25, .5, 1, 2.5, 5, 10, 15, 30),
-	)
-	if err != nil {
-		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_ws_room_handoff_duration_seconds", "error", err)
-	}
-	sequenceConflictTotal, err = hubMeter.Int64Counter("gochat_ws_sequence_conflict_total",
-		metric.WithDescription("persistent sequence number duplicate conflicts"),
-	)
-	if err != nil {
-		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_ws_sequence_conflict_total", "error", err)
-	}
-	fanoutDuration, err = hubMeter.Float64Histogram("gochat_ws_fanout_duration_seconds",
-		metric.WithDescription("팬아웃 지연 시간 (수신 → 세션 큐 적재)"),
-		metric.WithExplicitBucketBoundaries(.0001, .00025, .0005, .001, .0025, .005, .01, .025, .05, .1),
-	)
-	if err != nil {
-		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_ws_fanout_duration_seconds", "error", err)
-	}
+	warnOnMetricError("gochat_ws_broadcast_channel_depth", err)
+
 	egressDuration, err = hubMeter.Float64Histogram("gochat_ws_egress_duration_seconds",
-		metric.WithDescription("송신 지연 시간 (수신 → 네트워크 전송)"),
+		metric.WithDescription("송신 → NATS 왕복 → 발신자 소켓 쓰기. 발신 Pod 단일 시계"),
 		metric.WithExplicitBucketBoundaries(.005, .01, .025, .05, .1, .25, .5, 1.0, 2.5, 5.0),
 	)
-	if err != nil {
-		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_ws_egress_duration_seconds", "error", err)
-	}
-	rebalanceEvictionsTotal, err = hubMeter.Int64Counter("gochat_ws_rebalance_evictions",
-		metric.WithDescription("owner 재검사로 close된 룸 수"),
+	warnOnMetricError("gochat_ws_egress_duration_seconds", err)
+
+	brokerHopDuration, err = hubMeter.Float64Histogram("gochat_ws_broker_hop_duration_seconds",
+		metric.WithDescription("NATS 수락 시각 → 구독 콜백 도착"),
+		metric.WithExplicitBucketBoundaries(.0005, .001, .0025, .005, .01, .025, .05, .1, .25, .5),
 	)
-	if err != nil {
-		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_ws_rebalance_evictions", "error", err)
-	}
+	warnOnMetricError("gochat_ws_broker_hop_duration_seconds", err)
+
+	jetStreamPublishDuration, err = hubMeter.Float64Histogram("gochat_ws_jetstream_publish_ack_duration_seconds",
+		metric.WithDescription("JetStream publish 호출부터 PubAck까지의 시간"),
+		metric.WithExplicitBucketBoundaries(.0005, .001, .0025, .005, .01, .025, .05, .1, .25, .5, 1),
+	)
+	warnOnMetricError("gochat_ws_jetstream_publish_ack_duration_seconds", err)
+
+	hubFanoutDuration, err = hubMeter.Float64Histogram("gochat_ws_hub_fanout_duration_seconds",
+		metric.WithDescription("구독 콜백 도착 → 그 Hub의 전 세션 큐 적재 완료. 수신 Pod 단일 시계"),
+		metric.WithExplicitBucketBoundaries(.0001, .00025, .0005, .001, .0025, .005, .01, .025, .05, .1),
+	)
+	warnOnMetricError("gochat_ws_hub_fanout_duration_seconds", err)
+
+	outOfOrderTotal, err = hubMeter.Int64Counter("gochat_ws_out_of_order",
+		metric.WithDescription("그 방에 마지막으로 전달한 id보다 작은 id가 도착한 횟수"),
+	)
+	warnOnMetricError("gochat_ws_out_of_order", err)
+
+	reorderSpanSeconds, err = hubMeter.Float64Histogram("gochat_ws_reorder_span_seconds",
+		metric.WithDescription("역전 폭. 두 UUIDv7 id의 시각 차이"),
+		metric.WithExplicitBucketBoundaries(.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5),
+	)
+	warnOnMetricError("gochat_ws_reorder_span_seconds", err)
+
+	natsSlowConsumerTotal, err = hubMeter.Int64Counter("gochat_ws_nats_slow_consumer",
+		metric.WithDescription("구독 slow consumer 발생 횟수"),
+	)
+	warnOnMetricError("gochat_ws_nats_slow_consumer", err)
+
+	natsDroppedMessagesTotal, err = hubMeter.Int64Counter("gochat_ws_nats_dropped_messages",
+		metric.WithDescription("slow consumer로 NATS 클라이언트가 버린 메시지 수"),
+	)
+	warnOnMetricError("gochat_ws_nats_dropped_messages", err)
+
+	natsPublishFailedTotal, err = hubMeter.Int64Counter("gochat_ws_nats_publish_failed",
+		metric.WithDescription("NATS 발행 실패 수"),
+	)
+	warnOnMetricError("gochat_ws_nats_publish_failed", err)
+
+	natsDisconnectsTotal, err = hubMeter.Int64Counter("gochat_ws_nats_disconnects",
+		metric.WithDescription("NATS 연결 끊김 횟수"),
+	)
+	warnOnMetricError("gochat_ws_nats_disconnects", err)
+
+	roomEventsIgnoredTotal, err = hubMeter.Int64Counter("gochat_ws_room_events_ignored",
+		metric.WithDescription("무시한 제어 이벤트 수"),
+	)
+	warnOnMetricError("gochat_ws_room_events_ignored", err)
 }
 
-func observeFanout(ctx context.Context, receivedAt time.Time) {
-	if receivedAt.IsZero() {
-		return
+func warnOnMetricError(name string, err error) {
+	if err != nil {
+		slog.WarnContext(context.Background(), "failed to register metric", "name", name, "error", err)
 	}
-	fanoutDuration.Record(ctx, time.Since(receivedAt).Seconds())
 }
 
 func observeEgress(ctx context.Context, receivedAt time.Time) {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -68,18 +69,18 @@ type SearchRoomsResponse struct {
 }
 
 type Message struct {
-	ID             string `json:"id"`
-	RoomID         string `json:"room_id"`
-	SenderID       string `json:"sender_id"`
-	Content        string `json:"content"`
-	ClientMsgID    string `json:"client_msg_id,omitempty"`
-	Type           string `json:"type"`
-	SequenceNumber int64  `json:"sequence_number"`
-	Timestamp      int64  `json:"timestamp"`
+	ID          string `json:"id"`
+	RoomID      string `json:"room_id"`
+	SenderID    string `json:"sender_id"`
+	Content     string `json:"content"`
+	ClientMsgID string `json:"client_msg_id,omitempty"`
+	Type        string `json:"type"`
+	Timestamp   int64  `json:"timestamp"`
 }
 
 type ListMessagesResponse struct {
 	Messages []Message `json:"messages"`
+	HasMore  bool      `json:"has_more"`
 }
 
 func (r *Router) handleListJoinedRooms(w http.ResponseWriter, req *http.Request) {
@@ -257,7 +258,7 @@ func (r *Router) handleDeleteRoom(w http.ResponseWriter, req *http.Request) {
 		defer cancel()
 		defer r.wg.Done()
 
-		url := fmt.Sprintf("%s/internal/rooms/%s", r.config.WSGatewayAddr(), roomID)
+		url := fmt.Sprintf("%s/internal/rooms/%s/sessions", r.config.WebSocketAddr(), roomID)
 		proxyReq, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
 		if err != nil {
 			slog.ErrorContext(ctx, "Failed to create request for room cleanup", "error", err, "room_id", roomID)
@@ -267,13 +268,13 @@ func (r *Router) handleDeleteRoom(w http.ResponseWriter, req *http.Request) {
 
 		resp, err := r.httpClient.Do(proxyReq)
 		if err != nil {
-			slog.WarnContext(ctx, "Failed to force close room hub via ws-gateway", "error", err, "room_id", roomID)
+			slog.WarnContext(ctx, "Failed to close room sessions via websocket-service", "error", err, "room_id", roomID)
 			return
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
-			slog.ErrorContext(ctx, "Unexpected status code from ws-gateway cleanup", "status", resp.StatusCode, "room_id", roomID)
+			slog.ErrorContext(ctx, "Unexpected status code from websocket-service cleanup", "status", resp.StatusCode, "room_id", roomID)
 		}
 	}(timeoutCtx, roomID)
 }
@@ -358,26 +359,18 @@ func (r *Router) handleListMessages(w http.ResponseWriter, req *http.Request) {
 	}
 	joinedAt := membership.JoinedAt
 
-	lastSeqStr := query.Get("last_seq")
-	if lastSeqStr != "" {
-		lastSeq, err := strconv.ParseInt(lastSeqStr, 10, 64)
-		if err != nil {
-			httpio.WriteProblem(req.Context(), w, http.StatusBadRequest, "invalid last_seq parameter")
-			return
-		}
-		var limit int64
-		if s := query.Get("limit"); s != "" {
-			limit, err = strconv.ParseInt(s, 10, 32)
-			if err != nil || limit <= 0 {
-				httpio.WriteProblem(req.Context(), w, http.StatusBadRequest, "invalid limit parameter")
-				return
-			}
-		}
+	limit, err := parseMessageLimit(query)
+	if err != nil {
+		httpio.WriteProblem(req.Context(), w, http.StatusBadRequest, "invalid limit parameter")
+		return
+	}
+
+	if afterID := query.Get("after_id"); query.Has("after_id") {
 		resp, err := r.chatClient.SyncMessages(req.Context(), &chatpb.SyncMessagesRequest{
-			RoomId:             roomID,
-			LastSequenceNumber: lastSeq,
-			Limit:              int32(limit),
-			JoinedAt:           joinedAt,
+			RoomId:         roomID,
+			AfterMessageId: afterID,
+			Limit:          int32(limit),
+			JoinedAt:       joinedAt,
 		})
 		if err != nil {
 			writeProblemFromGRPC(w, req, err)
@@ -385,18 +378,11 @@ func (r *Router) handleListMessages(w http.ResponseWriter, req *http.Request) {
 		}
 		httpio.WriteJSON(req.Context(), w, http.StatusOK, ListMessagesResponse{
 			Messages: messagesFromProto(resp.Messages),
+			HasMore:  resp.HasMore,
 		})
 		return
 	}
 
-	var limit int64
-	if s := query.Get("limit"); s != "" {
-		limit, err = strconv.ParseInt(s, 10, 32)
-		if err != nil || limit <= 0 {
-			httpio.WriteProblem(req.Context(), w, http.StatusBadRequest, "invalid limit parameter")
-			return
-		}
-	}
 	resp, err := r.chatClient.ListMessages(req.Context(), &chatpb.ListMessagesRequest{
 		RoomId:   roomID,
 		Limit:    int32(limit),
@@ -408,7 +394,20 @@ func (r *Router) handleListMessages(w http.ResponseWriter, req *http.Request) {
 	}
 	httpio.WriteJSON(req.Context(), w, http.StatusOK, ListMessagesResponse{
 		Messages: messagesFromProto(resp.Messages),
+		HasMore:  resp.HasMore,
 	})
+}
+
+func parseMessageLimit(query url.Values) (int64, error) {
+	raw := query.Get("limit")
+	if raw == "" {
+		return 0, nil
+	}
+	limit, err := strconv.ParseInt(raw, 10, 32)
+	if err != nil || limit <= 0 {
+		return 0, fmt.Errorf("invalid limit parameter: %q", raw)
+	}
+	return limit, nil
 }
 
 func messagesFromProto(msgs []*chatpb.Message) []Message {
@@ -419,14 +418,13 @@ func messagesFromProto(msgs []*chatpb.Message) []Message {
 			ts = m.Timestamp.Seconds
 		}
 		items[i] = Message{
-			ID:             m.Id,
-			RoomID:         m.RoomId,
-			SenderID:       m.SenderId,
-			Content:        m.Content,
-			ClientMsgID:    m.ClientMsgId,
-			Type:           m.Type,
-			SequenceNumber: m.SequenceNumber,
-			Timestamp:      ts,
+			ID:          m.Id,
+			RoomID:      m.RoomId,
+			SenderID:    m.SenderId,
+			Content:     m.Content,
+			ClientMsgID: m.ClientMsgId,
+			Type:        m.Type,
+			Timestamp:   ts,
 		}
 	}
 	return items
@@ -493,7 +491,7 @@ func (r *Router) broadcastSystemMessage(ctx context.Context, roomID, username, e
 		return
 	}
 
-	url := fmt.Sprintf("%s/internal/rooms/%s/broadcast", r.config.WSGatewayAddr(), roomID)
+	url := fmt.Sprintf("%s/internal/rooms/%s/system-messages", r.config.WebSocketAddr(), roomID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		slog.ErrorContext(ctx, "Failed to create broadcast system message request", "error", err)
@@ -507,7 +505,7 @@ func (r *Router) broadcastSystemMessage(ctx context.Context, roomID, username, e
 		slog.ErrorContext(ctx, "Failed to send broadcast system message request", "error", err, "url", url)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusNoContent {
 		slog.ErrorContext(ctx, "Unexpected status from broadcast system message request", "status", resp.StatusCode)

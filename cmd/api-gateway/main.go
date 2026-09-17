@@ -53,7 +53,7 @@ func run(ctx context.Context) error {
 			defer func() {
 				shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
-				shutdown(shutdownCtx)
+				_ = shutdown(shutdownCtx)
 			}()
 		}
 	}
@@ -77,7 +77,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer redisClient.Close()
+	defer func() { _ = redisClient.Close() }()
 
 	router := apigateway.NewRouter(cfg, userClient, chatClient, redisClient,
 		apigateway.WithHealthClients(userHealth, chatHealth))
@@ -122,13 +122,13 @@ func initClients(cfg *apigateway.Config) (
 
 	chatConn, err := grpc.NewClient(cfg.ChatAddr(), opts...)
 	if err != nil {
-		userConn.Close()
+		_ = userConn.Close()
 		return nil, nil, nil, nil, nil, err
 	}
 
 	cleanupClients := func() {
-		userConn.Close()
-		chatConn.Close()
+		_ = userConn.Close()
+		_ = chatConn.Close()
 	}
 
 	return userpb.NewUserServiceClient(userConn),
@@ -186,7 +186,6 @@ func runServer(ctx context.Context, cfg *apigateway.Config, router *apigateway.R
 		err := srv.Shutdown(shutdownCtx)
 
 		slog.InfoContext(ctx, "Waiting for background goroutines to finish...")
-		router.Stop()
 		router.Wait()
 
 		slog.InfoContext(ctx, "API Gateway stopped gracefully")

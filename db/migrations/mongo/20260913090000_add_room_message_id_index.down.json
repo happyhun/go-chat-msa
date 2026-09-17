@@ -1,0 +1,6 @@
+[
+    {
+        "dropIndexes": "messages",
+        "index": "idx_room_message_id"
+    }
+]

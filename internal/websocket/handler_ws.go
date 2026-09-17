@@ -7,23 +7,28 @@ import (
 
 	userpb "go-chat-msa/api/proto/user/v1"
 	"go-chat-msa/internal/shared/httpio"
+	"go-chat-msa/internal/shared/middleware"
 	"go-chat-msa/internal/websocket/hub"
-	"go-chat-msa/internal/websocket/roomlease"
 
+	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
 func (r *Router) serveWebSocket(w http.ResponseWriter, req *http.Request) {
-	userID := req.Header.Get("X-User-ID")
-	if userID == "" {
-		httpio.WriteProblem(req.Context(), w, http.StatusUnauthorized, "missing X-User-ID header")
+	userID, ok := middleware.GetUserID(req.Context())
+	if !ok {
+		httpio.WriteProblem(req.Context(), w, http.StatusUnauthorized, "missing user identity")
 		return
 	}
 
 	roomID := req.URL.Query().Get("room_id")
 	if roomID == "" {
 		httpio.WriteProblem(req.Context(), w, http.StatusBadRequest, "missing room_id query parameter")
+		return
+	}
+	if !isCanonicalUUID(roomID) {
+		httpio.WriteProblem(req.Context(), w, http.StatusBadRequest, "room_id must be a canonical uuid")
 		return
 	}
 
@@ -41,20 +46,9 @@ func (r *Router) serveWebSocket(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	owner := r.hashRing.Locate(roomID)
-	if owner != r.advertisedAddr {
-		ownerRejectedTotal.Add(req.Context(), 1)
-		slog.WarnContext(req.Context(), "self-check rejected request",
-			"room_id", roomID, "expected_owner", owner, "my_addr", r.advertisedAddr)
-		httpio.WriteProblem(req.Context(), w, http.StatusMisdirectedRequest, "not the owner of this room")
-		return
-	}
-
 	registration, err := r.manager.PrepareRegister(req.Context(), roomID)
 	if err != nil {
-		if errors.Is(err, roomlease.ErrBusy) ||
-			errors.Is(err, hub.ErrRoomHandoffInProgress) ||
-			errors.Is(err, hub.ErrRoomSequenceUnavailable) {
+		if errors.Is(err, hub.ErrRoomUnavailable) || errors.Is(err, hub.ErrBusUnavailable) || errors.Is(err, hub.ErrManagerStopped) {
 			w.Header().Set("Retry-After", "1")
 			httpio.WriteProblem(req.Context(), w, http.StatusServiceUnavailable, "room temporarily unavailable, please retry")
 			return
@@ -74,7 +68,12 @@ func (r *Router) serveWebSocket(w http.ResponseWriter, req *http.Request) {
 	if err := registration.Commit(req.Context(), conn, userID); err != nil {
 		registration.Cancel()
 		slog.ErrorContext(req.Context(), "Manager.CommitRegister failed", "error", err, "room_id", roomID, "user_id", userID)
-		conn.Close()
+		_ = conn.Close()
 		return
 	}
+}
+
+func isCanonicalUUID(value string) bool {
+	parsed, err := uuid.Parse(value)
+	return err == nil && parsed.String() == value
 }

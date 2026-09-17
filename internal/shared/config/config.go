@@ -21,10 +21,10 @@ type TelemetryConfig struct {
 
 type PortConfig struct {
 	APIGateway string `mapstructure:"API_GATEWAY"  validate:"required"`
-	WSGateway  string `mapstructure:"WS_GATEWAY"   validate:"required"`
 	WebSocket  string `mapstructure:"WEBSOCKET"    validate:"required"`
 	UserGRPC   string `mapstructure:"USER_GRPC"   validate:"required"`
 	ChatGRPC   string `mapstructure:"CHAT_GRPC"   validate:"required"`
+	NATS       string `mapstructure:"NATS"        validate:"required"`
 }
 
 type HTTPServerConfig struct {
@@ -90,7 +90,7 @@ type ManagerConfig struct {
 	PongWait    time.Duration `mapstructure:"PONG_WAIT" validate:"required"`
 	PingPeriod  time.Duration `mapstructure:"PING_PERIOD" validate:"required"`
 	IdleTimeout time.Duration `mapstructure:"IDLE_TIMEOUT" validate:"required"`
-	MaxLength   int           `mapstructure:"MAX_LENGTH" validate:"required"`
+	MaxLength   int           `mapstructure:"MAX_LENGTH" validate:"required,min=1"`
 }
 
 type UserConfig struct {
@@ -124,14 +124,19 @@ type SearchConfig struct {
 }
 
 type ChatConfig struct {
-	Message    MessageConfig    `mapstructure:"MESSAGE" validate:"required"`
+	GRPCClient GRPCClientConfig `mapstructure:"GRPC_CLIENT" validate:"required"`
 	History    HistoryConfig    `mapstructure:"HISTORY" validate:"required"`
 	Sync       SyncConfig       `mapstructure:"SYNC" validate:"required"`
 	GRPCServer GRPCServerConfig `mapstructure:"GRPC_SERVER" validate:"required"`
 }
 
-type MessageConfig struct {
-	MaxLength int `mapstructure:"MAX_LENGTH" validate:"required"`
+type PersistenceConfig struct {
+	Workers       int           `mapstructure:"WORKERS" validate:"required,min=1"`
+	MaxBytes      int64         `mapstructure:"MAX_BYTES" validate:"required,gt=0"`
+	DLQMaxBytes   int64         `mapstructure:"DLQ_MAX_BYTES" validate:"required,gt=0"`
+	MaxAckPending int           `mapstructure:"MAX_ACK_PENDING" validate:"required,min=500"`
+	WriteTimeout  time.Duration `mapstructure:"WRITE_TIMEOUT" validate:"required,gt=0"`
+	AckWait       time.Duration `mapstructure:"ACK_WAIT" validate:"required,gt=0"`
 }
 
 type HistoryConfig struct {

@@ -1,6 +1,7 @@
 package websocket
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -10,16 +11,16 @@ import (
 	"go-chat-msa/internal/websocket/hub"
 )
 
-func (r *Router) handleBroadcast(w http.ResponseWriter, req *http.Request) {
+func (r *Router) handleSystemMessage(w http.ResponseWriter, req *http.Request) {
 	roomID := req.PathValue("id")
-	if roomID == "" {
-		httpio.WriteProblem(req.Context(), w, http.StatusBadRequest, "room_id is required")
+	if !isCanonicalUUID(roomID) {
+		httpio.WriteProblem(req.Context(), w, http.StatusBadRequest, "room id must be a canonical uuid")
 		return
 	}
 
 	var body event.BroadcastSystemMessageRequest
 	if err := httpio.ReadJSON(req.Context(), w, req, &body); err != nil {
-		slog.WarnContext(req.Context(), "Invalid broadcast request", "error", err)
+		slog.WarnContext(req.Context(), "Invalid system message request", "error", err)
 		httpio.WriteProblem(req.Context(), w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -40,34 +41,42 @@ func (r *Router) handleBroadcast(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	msg, err := hub.NewSystemMessage(roomID, content)
-	if err != nil {
-		slog.ErrorContext(req.Context(), "Failed to create system message", "error", err)
-		httpio.WriteProblem(req.Context(), w, http.StatusInternalServerError, "failed to create system message")
-		return
-	}
-
-	if err := r.manager.Broadcast(req.Context(), msg); err != nil {
-		slog.ErrorContext(req.Context(), "Manager.Broadcast failed", "error", err, "room_id", roomID)
-		httpio.WriteProblem(req.Context(), w, http.StatusInternalServerError, "failed to broadcast message")
+	if err := r.manager.PublishSystemMessage(req.Context(), roomID, content); err != nil {
+		if isTransientPublishError(err) {
+			slog.WarnContext(req.Context(), "system message publish unavailable", "error", err, "room_id", roomID)
+			httpio.WriteProblem(req.Context(), w, http.StatusServiceUnavailable, "publish temporarily unavailable, please retry")
+			return
+		}
+		slog.ErrorContext(req.Context(), "Manager.PublishSystemMessage failed", "error", err, "room_id", roomID)
+		httpio.WriteProblem(req.Context(), w, http.StatusInternalServerError, "failed to publish system message")
 		return
 	}
 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (r *Router) handleForceCloseRoom(w http.ResponseWriter, req *http.Request) {
+func (r *Router) handleCloseRoomSessions(w http.ResponseWriter, req *http.Request) {
 	roomID := req.PathValue("id")
-	if roomID == "" {
-		httpio.WriteProblem(req.Context(), w, http.StatusBadRequest, "room_id is required")
+	if !isCanonicalUUID(roomID) {
+		httpio.WriteProblem(req.Context(), w, http.StatusBadRequest, "room id must be a canonical uuid")
 		return
 	}
 
-	if _, err := r.manager.ForceCloseRoom(req.Context(), roomID); err != nil {
-		slog.ErrorContext(req.Context(), "Manager.ForceCloseRoom failed", "error", err, "room_id", roomID)
-		httpio.WriteProblem(req.Context(), w, http.StatusInternalServerError, "failed to force close room")
+	if err := r.manager.CloseRoomSessions(req.Context(), roomID); err != nil {
+		if isTransientPublishError(err) {
+			slog.WarnContext(req.Context(), "room close event publish unavailable", "error", err, "room_id", roomID)
+			httpio.WriteProblem(req.Context(), w, http.StatusServiceUnavailable, "publish temporarily unavailable, please retry")
+			return
+		}
+		slog.ErrorContext(req.Context(), "Manager.CloseRoomSessions failed", "error", err, "room_id", roomID)
+		httpio.WriteProblem(req.Context(), w, http.StatusInternalServerError, "failed to close room sessions")
 		return
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func isTransientPublishError(err error) bool {
+	return errors.Is(err, hub.ErrBusUnavailable) ||
+		errors.Is(err, hub.ErrManagerStopped)
 }

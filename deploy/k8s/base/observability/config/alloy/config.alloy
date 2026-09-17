@@ -201,6 +201,17 @@ prometheus.relabel "kube_state_metrics" {
 	}
 }
 
+prometheus.scrape "nats" {
+	targets = [{
+		__address__ = "nats:7777",
+		job         = "nats",
+		namespace   = "__GOCHAT_NAMESPACE__",
+		service     = "nats",
+	}]
+	forward_to      = [prometheus.remote_write.default.receiver]
+	scrape_interval = "15s"
+}
+
 otelcol.receiver.otlp "default" {
 	grpc {
 		endpoint = "0.0.0.0:4317"

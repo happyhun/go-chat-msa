@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
 
@@ -51,8 +52,6 @@ func (s *E2ESuite) login(ctx context.Context, username, password string) (string
 		s.T().Logf("login error: %v", err)
 		return "", "", err
 	}
-	s.T().Logf("login response: %v", res)
-
 	acc, _ := res["access_token"].(string)
 	uid, _ := res["user_id"].(string)
 	if acc == "" {
@@ -156,43 +155,23 @@ func (s *E2ESuite) makeRequest(ctx context.Context, method, path string, body an
 	return nil
 }
 
+func (s *E2ESuite) sendMessage(conn *websocket.Conn, content string) error {
+	return conn.WriteJSON(map[string]string{
+		"type": "chat", "content": content, "client_msg_id": uuid.NewString(),
+	})
+}
+
 func (s *E2ESuite) getWSTicket(ctx context.Context, token string) (string, error) {
-	wsBase := s.wsBaseURL
-
-	if strings.HasPrefix(wsBase, "ws://") {
-		wsBase = "http://" + wsBase[5:]
+	var res struct {
+		Ticket string `json:"ticket"`
 	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", wsBase+"/ws/ticket", nil)
-	if err != nil {
+	if err := s.makeRequest(ctx, "POST", "/auth/ws-ticket", nil, &res, token); err != nil {
 		return "", err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
-
-	client := &http.Client{Timeout: httpClientTimeout}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("티켓 발급 요청 실패: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		bodyBytes, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return "", fmt.Errorf("응답 바디 읽기 실패: %w", err)
-		}
-		return "", &HTTPError{StatusCode: resp.StatusCode, Body: string(bodyBytes)}
-	}
-
-	var res map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
-		return "", fmt.Errorf("응답 언마샬링 실패: %w", err)
-	}
-	ticket, ok := res["ticket"].(string)
-	if !ok {
+	if res.Ticket == "" {
 		return "", fmt.Errorf("응답에 ticket이 없습니다")
 	}
-	return ticket, nil
+	return res.Ticket, nil
 }
 
 func (s *E2ESuite) getWSURL(roomID, ticket string) string {
@@ -207,8 +186,7 @@ func (s *E2ESuite) getWSURL(roomID, ticket string) string {
 func (s *E2ESuite) dialWS(ctx context.Context, token, roomID string) (*websocket.Conn, *http.Response, error) {
 	ticket, err := s.getWSTicket(ctx, token)
 	if err != nil {
-		var httpErr *HTTPError
-		if errors.As(err, &httpErr) {
+		if httpErr, ok := errors.AsType[*HTTPError](err); ok {
 			return nil, &http.Response{StatusCode: httpErr.StatusCode}, err
 		}
 		return nil, nil, err
@@ -255,8 +233,7 @@ func (s *E2ESuite) waitForWSMessage(ctx context.Context, conn *websocket.Conn, m
 
 func (s *E2ESuite) assertHTTPError(err error, expectedStatus int) {
 	s.Require().Error(err, "에러가 발생해야 함")
-	var httpErr *HTTPError
-	if errors.As(err, &httpErr) {
+	if httpErr, ok := errors.AsType[*HTTPError](err); ok {
 		s.Equal(expectedStatus, httpErr.StatusCode, "상태 코드 불일치")
 	} else {
 

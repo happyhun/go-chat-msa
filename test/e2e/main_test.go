@@ -45,16 +45,17 @@ func (s *E2ESuite) TearDownTest() {
 func (s *E2ESuite) startKubernetes(ctx context.Context) {
 	s.namespace = getenvDefault("E2E_K8S_NAMESPACE", "go-chat-test")
 	s.gatewayBaseURL = strings.TrimRight(getenvDefault("E2E_GATEWAY_BASE_URL", "http://test.gochat.localhost:30080/api"), "/")
-	s.wsBaseURL = strings.TrimRight(getenvDefault("E2E_WS_BASE_URL", "http://test.gochat.localhost:30080/ws-api"), "/")
+	s.wsBaseURL = strings.TrimRight(getenvDefault("E2E_WS_BASE_URL", "http://test.gochat.localhost:30080"), "/")
 
 	s.Require().NoError(s.runKubectl(ctx, "get", "namespace", s.namespace))
 	for _, deployment := range []string{
 		"postgres", "mongo", "redis",
 		"prometheus", "loki", "tempo", "pyroscope", "alloy", "grafana",
-		"user-service", "chat-service", "api-gateway", "websocket-service", "ws-gateway", "frontend",
+		"user-service", "chat-service", "api-gateway", "websocket-service", "frontend",
 	} {
 		s.Require().NoError(s.runKubectl(ctx, "-n", s.namespace, "rollout", "status", "deployment/"+deployment, "--timeout=180s"))
 	}
+	s.Require().NoError(s.runKubectl(ctx, "-n", s.namespace, "rollout", "status", "statefulset/nats", "--timeout=180s"))
 }
 
 func getenvDefault(key, fallback string) string {
@@ -87,7 +88,7 @@ func (s *E2ESuite) cleanupKubernetesDatabases(ctx context.Context) {
 	}
 
 	if err := s.runKubectl(ctx, "-n", s.namespace, "exec", "deployment/mongo", "--",
-		"mongosh", "chat_service", "--quiet", "--eval", "db.dropDatabase()",
+		"mongosh", "chat_service", "--quiet", "--eval", "db.messages.deleteMany({})",
 	); err != nil {
 		s.T().Logf("cleanup: k8s mongo drop error: %v", err)
 	}
@@ -100,9 +101,9 @@ func (s *E2ESuite) cleanupKubernetesRedis(ctx context.Context) {
 		"auth:rt:*",
 		"ws:ticket:*",
 		"rate:*",
-		"wss:room:lease:*",
+		"msg:idempotency:*",
 	} {
-		keys, err := s.redisKeysE(ctx, pattern)
+		keys, err := s.redisKeys(ctx, pattern)
 		if err != nil {
 			s.T().Logf("cleanup: k8s redis scan error for %q: %v", pattern, err)
 			continue
@@ -127,13 +128,7 @@ func (s *E2ESuite) requireDeploymentReadyReplicas(ctx context.Context, name stri
 	s.Require().Equal(expected, ready, "deployment/%s ready replicas", name)
 }
 
-func (s *E2ESuite) redisKeys(ctx context.Context, pattern string) []string {
-	keys, err := s.redisKeysE(ctx, pattern)
-	s.Require().NoError(err)
-	return keys
-}
-
-func (s *E2ESuite) redisKeysE(ctx context.Context, pattern string) ([]string, error) {
+func (s *E2ESuite) redisKeys(ctx context.Context, pattern string) ([]string, error) {
 	out, err := s.kubectlOutput(ctx, "-n", s.namespace, "exec", "deployment/redis", "--",
 		"redis-cli", "--raw", "KEYS", pattern,
 	)

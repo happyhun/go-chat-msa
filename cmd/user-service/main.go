@@ -53,7 +53,7 @@ func run(ctx context.Context) error {
 			defer func() {
 				shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
-				shutdown(shutdownCtx)
+				_ = shutdown(shutdownCtx)
 			}()
 		}
 	}
@@ -80,7 +80,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer redisClient.Close()
+	defer func() { _ = redisClient.Close() }()
 
 	telemetry.RegisterPgxpoolMetrics(pgPool)
 
@@ -92,7 +92,7 @@ func run(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			defer tx.Rollback(ctx)
+			defer func() { _ = tx.Rollback(ctx) }()
 
 			if err := fn(db.New(telemetry.InstrumentedDBTX(tx))); err != nil {
 				return err

@@ -3,17 +3,18 @@ package websocket
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
-	chatpb "go-chat-msa/api/proto/chat/v1"
 	userpb "go-chat-msa/api/proto/user/v1"
 	"go-chat-msa/internal/shared/httpio"
+	"go-chat-msa/internal/shared/middleware"
+	"go-chat-msa/internal/shared/ratelimit"
+	"go-chat-msa/internal/shared/wsticket"
 	"go-chat-msa/internal/websocket/hub"
-	"go-chat-msa/internal/websocket/roomlease"
-	"go-chat-msa/internal/websocket/roomseq"
-	"go-chat-msa/internal/wsgateway/loadbalance"
 
 	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
@@ -21,26 +22,36 @@ import (
 )
 
 const (
-	wsReadBufferSize           = 4096
-	wsWriteBufferSize          = 4096
-	readinessTimeout           = 2 * time.Second
-	persistQueueReadyThreshold = 0.80
+	wsReadBufferSize  = 4096
+	wsWriteBufferSize = 4096
+	readinessTimeout  = 2 * time.Second
 )
 
 type RouterOption func(*routerOptions)
 
 type routerOptions struct {
 	shutdownTimeout time.Duration
-	redisClient     *redis.Client
-	roomLeaseStore  *roomlease.Store
-	sequenceFloor   *roomseq.Store
-	chatHealth      grpc_health_v1.HealthClient
 	userHealth      grpc_health_v1.HealthClient
+	internalSecret  string
+	podName         string
+	redisClient     *redis.Client
 }
 
 func WithShutdownTimeout(timeout time.Duration) RouterOption {
 	return func(o *routerOptions) {
 		o.shutdownTimeout = timeout
+	}
+}
+
+func WithHealthClients(userHealth grpc_health_v1.HealthClient) RouterOption {
+	return func(o *routerOptions) {
+		o.userHealth = userHealth
+	}
+}
+
+func WithInternalSecret(secret string) RouterOption {
+	return func(o *routerOptions) {
+		o.internalSecret = secret
 	}
 }
 
@@ -50,22 +61,9 @@ func WithRedisClient(client *redis.Client) RouterOption {
 	}
 }
 
-func WithRoomLeaseStore(store *roomlease.Store) RouterOption {
+func WithPodName(name string) RouterOption {
 	return func(o *routerOptions) {
-		o.roomLeaseStore = store
-	}
-}
-
-func WithSequenceFloorStore(store *roomseq.Store) RouterOption {
-	return func(o *routerOptions) {
-		o.sequenceFloor = store
-	}
-}
-
-func WithHealthClients(chatHealth, userHealth grpc_health_v1.HealthClient) RouterOption {
-	return func(o *routerOptions) {
-		o.chatHealth = chatHealth
-		o.userHealth = userHealth
+		o.podName = name
 	}
 }
 
@@ -73,22 +71,20 @@ type Router struct {
 	mux      *http.ServeMux
 	upgrader websocket.Upgrader
 
-	advertisedAddr string
-	hashRing       *loadbalance.HashRing
+	userClient userpb.UserServiceClient
+	userHealth grpc_health_v1.HealthClient
+	manager    *hub.Manager
 
-	userClient  userpb.UserServiceClient
-	chatHealth  grpc_health_v1.HealthClient
-	userHealth  grpc_health_v1.HealthClient
-	redisClient *redis.Client
-	manager     *hub.Manager
-	store       *chatStoreAdapter
+	redisClient    *redis.Client
+	tickets        *wsticket.Store
+	connectLimiter *ratelimit.RedisLimiter
+	internalSecret string
 }
 
 func NewRouter(
-	chatClient chatpb.ChatServiceClient,
 	userClient userpb.UserServiceClient,
 	cfg WebSocketConfig,
-	hashRing *loadbalance.HashRing,
+	bus hub.MessageBus,
 	opts ...RouterOption,
 ) *Router {
 	options := routerOptions{}
@@ -96,34 +92,33 @@ func NewRouter(
 		opt(&options)
 	}
 
-	store := newChatStoreAdapter(chatClient, cfg.GRPCClient.Timeout)
-
 	upgrader := websocket.Upgrader{
 		ReadBufferSize:  wsReadBufferSize,
 		WriteBufferSize: wsWriteBufferSize,
 
 		CheckOrigin: func(r *http.Request) bool {
-			return true
+			origin := r.Header.Get("Origin")
+			return origin == "" || slices.Contains(cfg.AllowedOrigins, origin)
 		},
 	}
 
-	manager := hub.NewManager(cfg.Manager, cfg.RateLimit.WSMessage, store, options.shutdownTimeout)
-	manager.SetRoomLeaseStore(options.roomLeaseStore)
-	if options.sequenceFloor != nil {
-		manager.SetSequenceFloorStore(options.sequenceFloor)
-	}
+	manager := hub.NewManager(cfg.Manager, cfg.RateLimit.WSMessage, bus,
+		options.podName, cfg.NATS.MaxDeliveryLag, options.shutdownTimeout)
 
 	r := &Router{
-		mux:            http.NewServeMux(),
-		upgrader:       upgrader,
-		advertisedAddr: cfg.AdvertisedAddr,
-		hashRing:       hashRing,
-		userClient:     userClient,
-		chatHealth:     options.chatHealth,
-		userHealth:     options.userHealth,
-		redisClient:    options.redisClient,
-		manager:        manager,
-		store:          store,
+		mux:         http.NewServeMux(),
+		upgrader:    upgrader,
+		userClient:  userClient,
+		userHealth:  options.userHealth,
+		manager:     manager,
+		redisClient: options.redisClient,
+		tickets:     wsticket.NewStore(options.redisClient),
+		connectLimiter: ratelimit.NewRedis(
+			options.redisClient,
+			int(math.Ceil(cfg.RateLimit.WSConnect.RPS)),
+			cfg.RateLimit.WSConnect.Burst,
+		),
+		internalSecret: options.internalSecret,
 	}
 
 	r.registerRoutes()
@@ -135,8 +130,8 @@ func (r *Router) RunManager(ctx context.Context) {
 	r.manager.Run(ctx)
 }
 
-func (r *Router) WatchOwnership(ctx context.Context, events <-chan struct{}) {
-	r.manager.WatchOwnership(ctx, r.hashRing, r.advertisedAddr, events)
+func (r *Router) Observer() hub.BusObserver {
+	return r.manager
 }
 
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
@@ -149,10 +144,19 @@ func (r *Router) registerRoutes() {
 	})
 	r.mux.HandleFunc("GET /ready", r.handleReady)
 
-	r.mux.HandleFunc("GET /ws", r.serveWebSocket)
+	wsMws := []func(http.Handler) http.Handler{
+		middleware.RateLimitMiddleware(r.connectLimiter, middleware.IPKeyFunc()),
+		middleware.TicketAuthMiddleware(r.tickets),
+	}
+	r.mux.Handle("GET /ws", middleware.ChainMiddleware(r.serveWebSocket, wsMws...))
 
-	r.mux.HandleFunc("POST /internal/rooms/{id}/broadcast", r.handleBroadcast)
-	r.mux.HandleFunc("DELETE /internal/rooms/{id}", r.handleForceCloseRoom)
+	internalMws := []func(http.Handler) http.Handler{
+		middleware.InternalAuthMiddleware(r.internalSecret),
+	}
+	r.mux.Handle("POST /internal/rooms/{id}/system-messages",
+		middleware.ChainMiddleware(r.handleSystemMessage, internalMws...))
+	r.mux.Handle("DELETE /internal/rooms/{id}/sessions",
+		middleware.ChainMiddleware(r.handleCloseRoomSessions, internalMws...))
 }
 
 func (r *Router) handleReady(w http.ResponseWriter, req *http.Request) {
@@ -167,10 +171,6 @@ func (r *Router) handleReady(w http.ResponseWriter, req *http.Request) {
 func (r *Router) readinessFailures(ctx context.Context) []string {
 	failures := make([]string, 0, 5)
 
-	if r.manager.Stopped() {
-		failures = append(failures, "manager stopped")
-	}
-
 	if r.redisClient == nil {
 		failures = append(failures, "redis client not configured")
 	} else {
@@ -181,21 +181,16 @@ func (r *Router) readinessFailures(ctx context.Context) []string {
 		cancel()
 	}
 
-	if err := checkGRPCHealth(ctx, r.chatHealth, "chat.v1.ChatService"); err != nil {
-		failures = append(failures, fmt.Sprintf("chat-service health failed: %v", err))
+	if r.manager.Stopped() {
+		failures = append(failures, "manager stopped")
 	}
+
+	if !r.manager.BusConnected() {
+		failures = append(failures, "nats disconnected")
+	}
+
 	if err := checkGRPCHealth(ctx, r.userHealth, "user.v1.UserService"); err != nil {
 		failures = append(failures, fmt.Sprintf("user-service health failed: %v", err))
-	}
-
-	if r.hashRing.Len() == 0 {
-		failures = append(failures, "hash ring empty")
-	} else if !r.hashRing.Contains(r.advertisedAddr) {
-		failures = append(failures, "self not observed in hash ring")
-	}
-
-	if usage := r.manager.PersistQueueUtilization(); usage >= persistQueueReadyThreshold {
-		failures = append(failures, fmt.Sprintf("persist queue utilization %.2f >= %.2f", usage, persistQueueReadyThreshold))
 	}
 
 	return failures

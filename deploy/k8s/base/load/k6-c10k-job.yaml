@@ -9,7 +9,7 @@ spec:
   completions: 4
   parallelism: 4
   completionMode: Indexed
-  backoffLimit: 0
+  backoffLimitPerIndex: 0
   ttlSecondsAfterFinished: 86400
   template:
     metadata:
@@ -40,7 +40,7 @@ spec:
           args:
             - |
               worker_index="${JOB_COMPLETION_INDEX:-0}"
-              worker_vus=2500
+              worker_vus="${K6_WORKER_VUS:-2500}"
               export K6_TARGET_VUS="${worker_vus}"
               export K6_VU_OFFSET="$((worker_index * worker_vus))"
               printf 'k6 ip_local_port_range='
@@ -48,7 +48,7 @@ spec:
               printf 'k6 nofile='
               ulimit -n
               printf 'k6 worker_index=%s vus=%s offset=%s\n' "${worker_index}" "${K6_TARGET_VUS}" "${K6_VU_OFFSET}"
-              exec k6 run /scripts/c10k-test.js
+              exec k6 run --log-format raw /scripts/c10k-test.js
           envFrom:
             - configMapRef:
                 name: k6-load-env

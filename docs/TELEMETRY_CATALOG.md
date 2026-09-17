@@ -1,6 +1,6 @@
 # 텔레메트리 카탈로그
 
-이 문서는 현재 mainline 프로젝트 기준의 텔레메트리 카탈로그다. 기준 소스는 앱 계측 코드(`cmd/*`, `internal/shared/telemetry`, `internal/shared/middleware`, 각 도메인 `metrics.go`), Kubernetes 관측성 설정(`deploy/k8s/base/observability/config/alloy/config.alloy`, `deploy/k8s/base/observability/observability.yaml`), backend 설정(`observability/*/config.yaml`), QA HPA/Prometheus Adapter 설정, Grafana dashboard query다.
+앱에서 수집하는 로그·메트릭·트레이스·프로파일과 조회 시 주의할 점을 정리한다. 기준 소스는 앱 계측 코드(`cmd/*`, `internal/shared/telemetry`, `internal/shared/middleware`, 각 도메인 `metrics.go`), Kubernetes 관측성 설정(`deploy/k8s/base/observability/config/alloy/config.alloy`, `deploy/k8s/base/observability/observability.yaml`), backend 설정(`observability/*/config.yaml`), QA HPA/Prometheus Adapter 설정, Grafana dashboard query다.
 
 ## 목차
 
@@ -19,12 +19,12 @@
 
 현재 실행 경로는 Kubernetes overlay 기준이다. Docker Compose manifest는 mainline에서 제거되어 있고, 루트의 `observability/alloy/config.alloy`는 Docker discovery 기반 legacy/local 설정으로 남아 있다.
 
-Grafana Full Stack 기반 관측성 구성이다. Metrics/Traces는 앱 SDK가 Alloy로 OTLP HTTP push하고, Logs는 Alloy가 Pod 로그를 tailing해서 Loki로 push한다. Profiles는 Alloy를 거치지 않고 앱 SDK가 Pyroscope로 직접 push한다.
+Grafana Full Stack 기반 관측성 구성이다. Metrics/Traces는 앱 SDK가 Alloy로 OTLP HTTP push한다. Logs는 앱이 `slog`로 표준 출력에 기록하고, Alloy가 Kubernetes API를 통해 Pod 로그 스트림을 tailing해서 Loki로 push한다. Profiles는 Alloy를 거치지 않고 앱 SDK가 Pyroscope로 직접 push한다.
 
 | 시그널 | 백엔드 | 현재 수집 경로 | 주기 | 보존 |
 |--------|--------|----------------|------|------|
 | Logs | Loki | Alloy `loki.source.kubernetes` → Loki HTTP push | 스트리밍 tailing | 168h |
-| Metrics | Prometheus | 앱 OTLP HTTP push → Alloy Prometheus exporter/remote write, Alloy cAdvisor/kube-state-metrics scrape → remote write | 앱/infra 15s | 7d |
+| Metrics | Prometheus | 앱 OTLP HTTP push → Alloy Prometheus exporter/remote write, Alloy cAdvisor/kube-state-metrics/NATS exporter scrape → remote write | 앱/infra 15s | 7d |
 | Traces | Tempo | 앱 OTLP HTTP push → Alloy filter/batch → Tempo OTLP HTTP | SDK batch 기본 5s | 168h |
 | Profiles | Pyroscope | 앱 Pyroscope SDK → Pyroscope HTTP push | pyroscope-go 기본 15s | 168h |
 
@@ -41,12 +41,11 @@ K8s Alloy는 OTLP metric datapoint에 다음 resource 정보를 라벨로 복사
 | 서비스 | Logs | Metrics | Traces |
 |--------|------|---------|--------|
 | api-gateway | HTTP request log | HTTP, gRPC client, Redis, recovery, build/runtime | HTTP server, gRPC client, Redis |
-| ws-gateway | HTTP request log | HTTP, routing, membership, Redis, recovery, build/runtime | HTTP server, Redis |
-| websocket-service | HTTP request log | HTTP, WebSocket hub/session, persistence, room lease/handoff, membership, gRPC client, Redis, recovery, build/runtime | HTTP server, gRPC client, Redis |
+| websocket-service | HTTP request log | HTTP, WebSocket hub/session, NATS, JetStream publish, gRPC client, Redis, recovery, build/runtime | HTTP server, gRPC client, Redis |
 | user-service | gRPC request log | gRPC server, PostgreSQL, pgxpool, Redis, user/auth/room, hasher, recovery, build/runtime | gRPC server, PostgreSQL, Redis |
-| chat-service | gRPC request log | gRPC server, MongoDB, Mongo pool, chat domain, recovery, build/runtime | gRPC server, MongoDB |
+| chat-service | gRPC request log | gRPC server, MongoDB, Mongo pool, JetStream persistence, chat domain, recovery, build/runtime | gRPC server, MongoDB |
 
-Frontend, Swagger UI, Redis/Postgres/Mongo, load-test Pod 로그도 Alloy 수집 대상이 될 수 있지만, `postgres-migrate`, `mongo-migrate` Pod 로그는 K8s Alloy relabel 단계에서 drop된다. 이 카탈로그의 앱 텔레메트리 항목은 위 5개 Go 서비스 기준이다.
+Frontend, Swagger UI, Redis/Postgres/Mongo/NATS, load-test Pod 로그도 Alloy 수집 대상이 될 수 있지만, `postgres-migrate`, `mongo-migrate` Pod 로그는 K8s Alloy relabel 단계에서 drop된다. 이 카탈로그의 앱 텔레메트리 항목은 위 4개 Go 서비스 기준이다.
 
 ---
 
@@ -121,7 +120,8 @@ K8s Alloy는 Go 앱 로그에서 `span_id`를 Loki label로 승격하지 않는�
 
 - 5xx 응답은 ERROR 레벨이다.
 - `token`, `password`, `secret`, `key`, `authorization`, `access_token`, `refresh_token` 쿼리 파라미터 값은 `***`로 마스킹한다.
-- 서비스: api-gateway, ws-gateway, websocket-service
+- 현재 마스킹 목록에 `ticket`은 포함되어 있지 않아 WebSocket 요청 로그의 query에 남을 수 있다.
+- 서비스: api-gateway, websocket-service
 
 ### gRPC Request Log
 
@@ -159,7 +159,7 @@ HTTP/gRPC panic recovery는 `gochat_panic_recovered` counter를 증가시키고 
 | gochat_http_requests_total | counter | service, method, path, status_code |
 | gochat_http_request_duration_seconds | histogram | service, method, path, status_code |
 
-- 서비스: api-gateway, ws-gateway, websocket-service
+- 서비스: api-gateway, websocket-service
 - `path`는 UUID path segment를 `:id`로 정규화한다.
 
 ### gRPC Server
@@ -187,42 +187,68 @@ HTTP/gRPC panic recovery는 `gochat_panic_recovered` counter를 증가시키고 
 | gochat_ws_hubs_active | updowncounter | - |
 | gochat_ws_hubs_closed_total | counter | reason |
 | gochat_ws_connections_active | updowncounter | - |
-| gochat_ws_session_conflicts_total | counter | - |
+| gochat_ws_sessions_closed_total | counter | reason |
 | gochat_ws_messages_received_total | counter | - |
 | gochat_ws_messages_rate_limited_total | counter | - |
 | gochat_ws_messages_sent_total | counter | - |
-| gochat_ws_duplicate_messages_dropped_total | counter | - |
 | gochat_ws_send_queue_dropped_total | counter | - |
 | gochat_ws_broadcast_channel_depth | histogram | - |
-| gochat_ws_fanout_duration_seconds | histogram | - |
 | gochat_ws_egress_duration_seconds | histogram | - |
-| gochat_ws_rebalance_evictions_total | counter | - |
-| gochat_websocket_owner_rejected_total | counter | - |
-| gochat_ws_room_lease_acquire_total | counter | status |
-| gochat_ws_room_lease_renew_total | counter | status |
-| gochat_ws_room_handoff_total | counter | status |
-| gochat_ws_room_handoff_duration_seconds | histogram | status |
-| gochat_ws_sequence_conflict_total | counter | - |
+| gochat_ws_broker_hop_duration_seconds | histogram | - |
+| gochat_ws_jetstream_publish_ack_duration_seconds | histogram | status |
+| gochat_ws_hub_fanout_duration_seconds | histogram | - |
+| gochat_ws_out_of_order_total | counter | - |
+| gochat_ws_reorder_span_seconds | histogram | - |
+| gochat_ws_nats_slow_consumer_total | counter | - |
+| gochat_ws_nats_dropped_messages_total | counter | - |
+| gochat_ws_nats_publish_failed_total | counter | subject_kind |
+| gochat_ws_nats_disconnects_total | counter | - |
+| gochat_ws_nats_invalid_headers_total | counter | - |
+| gochat_ws_room_events_ignored_total | counter | reason |
 
-- 서비스: websocket-service
-- `gochat_ws_connections_active`는 QA HPA custom metric으로도 사용된다.
-- `gochat_ws_hubs_active`, `gochat_ws_connections_active`는 OTel UpDownCounter라 Prometheus에서는 현재값 계열로 조회한다.
+- 서비스: websocket-service. active 계열은 현재값이며 `gochat_ws_connections_active`는 QA HPA에도 사용한다.
+- publish ack의 `status`는 `accepted`, `error`다. 성공은 MongoDB 저장 완료가 아니라 발행 호출의 성공 `PubAck`다.
+- publish failure의 `subject_kind`는 `msg`, `event`, 무시한 room event의 `reason`은 `invalid`, `unknown_type`이다.
+- egress는 서버가 채팅을 받은 시각부터 같은 발신자 ID 세션의 소켓 쓰기 직전까지다. 쓰기 완료 시간은 포함하지 않으며, 같은 사용자가 다른 Pod에도 연결되어 있으면 Pod 간 시계 차이가 섞일 수 있다. hub fan-out은 구독 콜백 도착부터 로컬 세션 큐 적재까지를 수신 Pod의 시계로 측정한다.
+- broker hop은 메시지의 `ReceivedAt`부터 구독 콜백 도착까지다. 현재 발행 경로는 송신 Pod의 수신 시각을 header로 전달하므로 JetStream 수락 뒤의 순수 broker 지연으로 해석하지 않는다. Pod 간 시계 차이도 포함될 수 있다.
+- out-of-order와 reorder span은 UUIDv7 ID의 역전과 시각 차이를 관측한다. 연속 순번 누락이나 전체 메시지 정합성을 증명하는 지표가 아니다.
+- NATS dropped counter는 slow-consumer 콜백마다 subscription의 누적 `Dropped()` 값을 더한다. 같은 구독에서 콜백이 반복되면 중복 합산될 수 있어 정확한 누락 메시지 수로 해석하지 않는다.
 
 ### Persistence
 
 | 메트릭 | 타입 | 계측 라벨 |
 |--------|------|-----------|
-| gochat_ws_persist_channel_depth | gauge | - |
-| gochat_ws_persist_dropped_total | counter | - |
-| gochat_ws_persist_drain_total | counter | status |
-| gochat_ws_persist_drain_duration_seconds | histogram | status |
-| gochat_persistence_batch_save_total | counter | status |
-| gochat_persistence_retry_queue_depth | gauge | - |
-| gochat_persistence_retry_save_total | counter | status |
-| gochat_persistence_retry_oldest_age_seconds | gauge | - |
-| gochat_persistence_retry_queue_full_total | counter | - |
+| gochat_chat_persistence_lag_seconds | histogram | - |
+| gochat_chat_persistence_batch_size | histogram | - |
+| gochat_chat_persistence_retry_total | counter | - |
+| gochat_chat_persistence_dlq_total | counter | - |
+| gochat_chat_persistence_pending | gauge | - |
+| gochat_chat_persistence_circuit | gauge | - |
+| gochat_chat_persistence_workers | gauge | - |
+| gochat_chat_persistence_oldest_pending_age_seconds | gauge | - |
 
-- 서비스: websocket-service
+- 서비스: chat-service. lag는 문서 `createdAt`부터 저장 성공 처리까지의 시간이다. `createdAt`은 기본적으로 UUIDv7에서 복원하며 엄밀한 JetStream 수락 시각은 아니다.
+- pending은 shared consumer의 `NumPending + NumAckPending`, oldest age는 stream의 가장 오래된 메시지 시각 기준이다. 각 Pod가 같은 consumer/stream을 관측하므로 전체 backlog는 Pod 값을 합산하지 않고 `max` 등으로 조회한다.
+- circuit은 Pod별 `0=closed`, `1=open`, `2=half-open`이다. workers는 해당 Pod의 설정된 worker 수이며 현재 실행 중인 batch 수가 아니다.
+- retry는 delayed NAK 시도, DLQ는 DLQ publish 성공 횟수다. 누적 DLQ counter는 현재 DLQ에 남은 메시지 수와 다르다.
+- `gochat_chat_messages_saved_total`은 저장 성공 또는 내용이 같은 중복으로 처리한 건수이며, 고유 문서 수가 아니다.
+
+현재 Grafana의 Operations Overview, Realtime Messaging, Data Persistence 일부 패널에는 제거된 `gochat_ws_persist_*`, `gochat_persistence_*` 조회가 남아 있다. 해당 패널의 0 또는 빈 결과는 정상 저장의 근거가 아니다. 위 `gochat_chat_persistence_*`는 현재 코드 계측 기준이며 대시보드의 이전 retry/drain 패널과 일치하지 않는다.
+
+### NATS Exporter
+
+NATS StatefulSet의 exporter는 `-varz`, `-jsz=all`, `-connz_detailed`, `-prefix=nats`, `-use_internal_server_id`로 실행한다. Alloy가 `nats:7777`을 15초마다 scrape하고 `namespace`, `service=nats`, `job=nats`를 붙인다.
+
+현재 Realtime Messaging 대시보드가 조회하는 주요 지표는 다음과 같다.
+
+| 메트릭 | 용도 |
+|--------|------|
+| nats_varz_in_msgs / nats_varz_out_msgs | 서버 수신·송신 메시지 수 |
+| nats_varz_slow_consumers | 서버가 관측한 slow consumer |
+| nats_connz_pending_bytes | 연결별 전송 대기 바이트 |
+| nats_connz_rtt | 연결 RTT |
+
+JetStream stream·consumer 상태도 exporter에서 수집한다. 앱의 shared consumer backlog와 Pod별 circuit 상태를 함께 확인한다.
 
 ### PostgreSQL
 
@@ -276,7 +302,7 @@ HTTP/gRPC panic recovery는 `gochat_panic_recovered` counter를 증가시키고 
 | db_client_connections_create_time_milliseconds | histogram | status, error_type |
 | db_client_connections_use_time_milliseconds | histogram | type, status, error_type |
 
-- 서비스: api-gateway, ws-gateway, websocket-service, user-service
+- 서비스: api-gateway, websocket-service, user-service
 - `state` 값은 `idle`, `used`다.
 - `type` 값은 `command`, `pipeline`이다.
 - `status` 값은 `ok`, `nil`, `error`이고, `error_type` 값은 `none`, `context_canceled`, `context_timeout`, `other`다.
@@ -291,15 +317,12 @@ HTTP/gRPC panic recovery는 `gochat_panic_recovered` counter를 증가시키고 
 | gochat_auth_login_total | counter | status | user-service |
 | gochat_auth_token_reuse_detected_total | counter | - | user-service |
 | gochat_room_join_total | counter | status | user-service |
-| gochat_chat_messages_saved_total | counter | status | chat-service |
+| gochat_chat_messages_saved_total | counter | - | chat-service |
 | gochat_chat_history_fetched_messages | histogram | - | chat-service |
 | gochat_hasher_jobs_total | counter | type, status | user-service |
 | gochat_hasher_duration_seconds | histogram | type | user-service |
 | gochat_hasher_queue_depth | gauge | - | user-service |
 | gochat_hasher_queue_full_total | counter | - | user-service |
-| gochat_wsgateway_routed_total | counter | endpoint | ws-gateway |
-| gochat_wsgateway_misdirected_total | counter | - | ws-gateway |
-| gochat_membership_reconcile_total | counter | status | ws-gateway, websocket-service |
 
 ### System / Kubernetes
 
@@ -354,10 +377,12 @@ K8s 공통 라벨(`namespace`, `service`, `pod`, `node`, `component` 등)은 All
 
 | 계층 | 라이브러리/설정 | 서비스 |
 |------|----------------|--------|
-| HTTP server | `otelhttp.NewMiddleware` | api-gateway, ws-gateway, websocket-service |
+| HTTP server | `otelhttp.NewMiddleware` | api-gateway, websocket-service |
 | gRPC server | `otelgrpc.NewServerHandler` | user-service, chat-service |
 | gRPC client | `otelgrpc.NewClientHandler` | api-gateway, websocket-service |
-| Redis client | `redisotel.InstrumentTracing` | api-gateway, ws-gateway, websocket-service, user-service |
+| Redis client | `redisotel.InstrumentTracing` | api-gateway, websocket-service, user-service |
+
+NATS 메시지 경계에서는 트레이스 컨텍스트를 전파하지 않는다. 메시지 전달·저장 경로는 전용 메트릭과 프로파일로 확인한다.
 
 HTTP span name은 `METHOD + " " + telemetry.NormalizePath(path)` 형태다. UUID path segment는 `:id`로 정규화된다.
 
@@ -394,7 +419,7 @@ Tempo가 trace 데이터에서 service graph 계열 메트릭을 만들어 Prome
 | InuseSpace | live heap memory |
 | Goroutines | goroutine stack profile |
 
-- 서비스: api-gateway, ws-gateway, websocket-service, user-service, chat-service
+- 서비스: api-gateway, websocket-service, user-service, chat-service
 - 업로드 주기: pyroscope-go 기본 15s
 - Mutex/Block profile은 현재 수집하지 않으며, 관련 Go runtime profiler도 활성화하지 않는다.
 
@@ -438,4 +463,4 @@ Prometheus Adapter rule:
 | metricsQuery | `sum(<<.Series>>{<<.LabelMatchers>>}) by (<<.GroupBy>>)` |
 | relist/max-age | `15s` / `2m` |
 
-따라서 Alloy/Prometheus 경로에서 `namespace`와 `pod` 라벨이 유지되어야 HPA가 Pod metric으로 해석할 수 있다. 이 값은 운영 autoscaling 기준이 아니라 로컬 kind QA에서 HPA handoff를 재현하기 위한 낮은 기준이다. 성능 판단은 `dev-load` C10K 시나리오, HPA handoff 정합성 판단은 `qa-load` 시나리오로 분리한다.
+따라서 Alloy/Prometheus 경로에서 `namespace`와 `pod` 라벨이 유지되어야 HPA가 Pod metric으로 해석할 수 있다. 이 값은 운영 autoscaling 기준이 아니라 로컬 kind QA에서 HPA 확장·축소를 재현하기 위한 낮은 기준이다. 성능 판단은 `dev-load` C10K 시나리오, 연결 유지·재연결과 메시지 복구 판단은 `qa-load` 시나리오로 분리한다.

@@ -1,15 +1,21 @@
 package apigateway
 
 import (
+	"log/slog"
 	"net/http"
 	"time"
 
 	userpb "go-chat-msa/api/proto/user/v1"
 	"go-chat-msa/internal/shared/httpio"
+	"go-chat-msa/internal/shared/middleware"
 )
 
 type RefreshTokenResponse struct {
 	AccessToken string `json:"access_token"`
+}
+
+type WSTicketResponse struct {
+	Ticket string `json:"ticket"`
 }
 
 const secondsPerDay = int(24 * time.Hour / time.Second)
@@ -54,6 +60,23 @@ func (r *Router) handleRevokeToken(w http.ResponseWriter, req *http.Request) {
 	r.clearRefreshTokenCookie(w)
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (r *Router) handleCreateWSTicket(w http.ResponseWriter, req *http.Request) {
+	userID, ok := middleware.GetUserID(req.Context())
+	if !ok {
+		httpio.WriteProblem(req.Context(), w, http.StatusUnauthorized, "missing user identity")
+		return
+	}
+
+	ticket, err := r.ticketStore.Issue(req.Context(), userID, r.config.APIGateway.TicketTTL)
+	if err != nil {
+		slog.ErrorContext(req.Context(), "failed to issue ws ticket", "error", err)
+		httpio.WriteProblem(req.Context(), w, http.StatusInternalServerError, "failed to issue ticket")
+		return
+	}
+
+	httpio.WriteJSON(req.Context(), w, http.StatusOK, WSTicketResponse{Ticket: ticket})
 }
 
 func (r *Router) setRefreshTokenCookie(w http.ResponseWriter, token string) {

@@ -1,0 +1,6 @@
+[
+    {
+        "dropIndexes": "messages",
+        "index": "unique_room_sequence"
+    }
+]

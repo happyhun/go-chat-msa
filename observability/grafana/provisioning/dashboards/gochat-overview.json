@@ -142,8 +142,12 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "red",
+                "color": "transparent",
                 "value": null
+              },
+              {
+                "color": "red",
+                "value": 0
               },
               {
                 "color": "yellow",
@@ -154,7 +158,8 @@
                 "value": 99.9
               }
             ]
-          }
+          },
+          "noValue": "No traffic"
         },
         "overrides": []
       },
@@ -214,8 +219,12 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "red",
+                "color": "transparent",
                 "value": null
+              },
+              {
+                "color": "red",
+                "value": 0
               },
               {
                 "color": "yellow",
@@ -226,7 +235,8 @@
                 "value": 99.9
               }
             ]
-          }
+          },
+          "noValue": "No traffic"
         },
         "overrides": []
       },
@@ -354,8 +364,12 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "transparent",
                 "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
               },
               {
                 "color": "yellow",
@@ -366,7 +380,8 @@
                 "value": 250
               }
             ]
-          }
+          },
+          "noValue": "No traffic"
         },
         "overrides": []
       },
@@ -426,8 +441,12 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "transparent",
                 "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
               },
               {
                 "color": "yellow",
@@ -438,7 +457,8 @@
                 "value": 250
               }
             ]
-          }
+          },
+          "noValue": "No traffic"
         },
         "overrides": []
       },
@@ -498,8 +518,12 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "transparent",
                 "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
               },
               {
                 "color": "yellow",
@@ -510,7 +534,8 @@
                 "value": 100
               }
             ]
-          }
+          },
+          "noValue": "No traffic"
         },
         "overrides": []
       },
@@ -754,8 +779,7 @@
             "fillOpacity": 8,
             "showPoints": "never"
           },
-          "unit": "ops",
-          "decimals": 3
+          "unit": "ops"
         },
         "overrides": []
       },
@@ -863,7 +887,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(gochat_ws_connections_active{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"})",
+          "expr": "sum(gochat_ws_connections_active{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}) or on() vector(0)",
           "refId": "A"
         }
       ]
@@ -954,8 +978,7 @@
             "fillOpacity": 8,
             "showPoints": "never"
           },
-          "unit": "ops",
-          "decimals": 3
+          "unit": "ops"
         },
         "overrides": []
       },
@@ -995,30 +1018,21 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(rate(gochat_ws_duplicate_messages_dropped_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval])) or on() vector(0)",
-          "refId": "C",
-          "legendFormat": "duplicate dropped"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
           "expr": "sum(rate(gochat_ws_messages_rate_limited_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval])) or on() vector(0)",
-          "refId": "D",
+          "refId": "C",
           "legendFormat": "rate limited"
         }
       ]
     },
     {
       "id": 21,
-      "title": "Routing and Lifecycle",
+      "title": "NATS and Lifecycle",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Signals that point to room ownership, routing, or hub lifecycle churn.",
+      "description": "Broker health and hub/session lifecycle churn.",
       "gridPos": {
         "x": 18,
         "y": 20,
@@ -1034,8 +1048,7 @@
             "fillOpacity": 8,
             "showPoints": "never"
           },
-          "unit": "ops",
-          "decimals": 3
+          "unit": "ops"
         },
         "overrides": []
       },
@@ -1053,39 +1066,39 @@
       },
       "targets": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum(rate(gochat_ws_rebalance_evictions_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval])) or on() vector(0)",
+          "expr": "sum(rate(gochat_ws_nats_slow_consumer_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval])) or on() vector(0)",
           "refId": "A",
-          "legendFormat": "rebalance evictions"
-        },
-        {
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(rate(gochat_websocket_owner_rejected_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval])) or on() vector(0)",
+          "legendFormat": "slow consumer"
+        },
+        {
+          "expr": "sum(rate(gochat_ws_nats_publish_failed_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval])) or on() vector(0)",
           "refId": "B",
-          "legendFormat": "owner rejected"
-        },
-        {
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(rate(gochat_wsgateway_misdirected_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\"}[$__rate_interval])) or on() vector(0)",
+          "legendFormat": "publish failed"
+        },
+        {
+          "expr": "sum(rate(gochat_ws_nats_disconnects_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval])) or on() vector(0)",
           "refId": "C",
-          "legendFormat": "misdirected"
-        },
-        {
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
+          "legendFormat": "disconnects"
+        },
+        {
           "expr": "sum(rate(gochat_ws_hubs_closed_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval])) or on() vector(0)",
           "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
           "legendFormat": "hub closed"
         },
         {
@@ -1093,9 +1106,18 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(rate(gochat_ws_session_conflicts_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval])) or on() vector(0)",
+          "expr": "sum by(reason) (rate(gochat_ws_sessions_closed_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval]))",
           "refId": "E",
-          "legendFormat": "session conflicts"
+          "legendFormat": "closed {{reason}}"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(nats_varz_slow_consumers{namespace=~\"$namespace\"}[$__rate_interval])) or on() vector(0)",
+          "refId": "F",
+          "legendFormat": "server slow consumer"
         }
       ]
     },
@@ -1341,8 +1363,7 @@
             "fillOpacity": 8,
             "showPoints": "never"
           },
-          "unit": "ops",
-          "decimals": 3
+          "unit": "ops"
         },
         "overrides": []
       },
@@ -1686,7 +1707,7 @@
         "refresh": 1,
         "sort": 1,
         "includeAll": true,
-        "allValue": "api-gateway|ws-gateway|websocket-service|user-service|chat-service|frontend",
+        "allValue": "api-gateway|websocket-service|user-service|chat-service|frontend",
         "current": {
           "selected": true,
           "text": "All",

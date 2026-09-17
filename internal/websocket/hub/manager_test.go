@@ -2,23 +2,15 @@ package hub
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"sync/atomic"
+	"sync"
 	"testing"
 	"time"
 
 	"go-chat-msa/internal/shared/config"
-	"go-chat-msa/internal/websocket/roomlease"
-	"go-chat-msa/internal/websocket/roomseq"
 
-	"github.com/alicebob/miniredis/v2"
-	"github.com/gorilla/websocket"
-	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 func testManagerConfig() config.ManagerConfig {
@@ -27,610 +19,240 @@ func testManagerConfig() config.ManagerConfig {
 		PongWait:    60 * time.Second,
 		PingPeriod:  54 * time.Second,
 		IdleTimeout: 5 * time.Minute,
-		MaxLength:   10000,
 	}
 }
 
-type staticSequenceFloorStore struct {
-	seq int64
+type fakeSubscription struct {
+	unsubscribed bool
 }
 
-func (s staticSequenceFloorStore) Get(_ context.Context, _ string) (int64, error) {
-	return s.seq, nil
-}
-
-func (s staticSequenceFloorStore) SetMax(_ context.Context, _ string, _ int64) error {
+func (f *fakeSubscription) Unsubscribe() error {
+	f.unsubscribed = true
 	return nil
 }
 
-type recordingSequenceFloorStore struct {
-	seq    int64
-	setSeq atomic.Int64
+type fakeBus struct {
+	mu sync.Mutex
+
+	published []Envelope
+	events    []RoomEvent
+	roomSubs  map[string]func(Envelope)
+	eventSub  func(RoomEvent)
+
+	subscribeErr error
+	publishErr   error
+	connected    bool
 }
 
-func (s *recordingSequenceFloorStore) Get(_ context.Context, _ string) (int64, error) {
-	return s.seq, nil
+func newFakeBus() *fakeBus {
+	return &fakeBus{roomSubs: make(map[string]func(Envelope)), connected: true}
 }
 
-func (s *recordingSequenceFloorStore) SetMax(_ context.Context, _ string, seq int64) error {
-	s.setSeq.Store(seq)
+func (f *fakeBus) PublishMessage(_ context.Context, env Envelope) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.publishErr != nil {
+		return f.publishErr
+	}
+	f.published = append(f.published, env)
 	return nil
 }
 
-type errorSequenceFloorStore struct{}
-
-func (s errorSequenceFloorStore) Get(_ context.Context, _ string) (int64, error) {
-	return 0, assert.AnError
+func (f *fakeBus) SubscribeRoom(_ context.Context, roomID string, deliver func(Envelope)) (Subscription, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.subscribeErr != nil {
+		return nil, f.subscribeErr
+	}
+	f.roomSubs[roomID] = deliver
+	return &fakeSubscription{}, nil
 }
 
-func (s errorSequenceFloorStore) SetMax(_ context.Context, _ string, _ int64) error {
+func (f *fakeBus) PublishEvent(_ context.Context, ev RoomEvent) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.publishErr != nil {
+		return f.publishErr
+	}
+	f.events = append(f.events, ev)
 	return nil
 }
 
-func TestManager_NewManager(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Success: 매니저 인스턴스 정상 생성", func(t *testing.T) {
-		t.Parallel()
-		manager := NewManager(testManagerConfig(), config.RateLimitConfig{}, nil)
-		assert.NotNil(t, manager)
-	})
+func (f *fakeBus) SubscribeEvents(deliver func(RoomEvent)) (Subscription, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.subscribeErr != nil {
+		return nil, f.subscribeErr
+	}
+	f.eventSub = deliver
+	return &fakeSubscription{}, nil
 }
 
-func TestManager_PrepareRegisterReleasesLeaseWhenSequenceInitializationFails(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name  string
-		store MessageStore
-		floor SequenceFloorStore
-	}{
-		{
-			name:  "DB sequence lookup fails",
-			store: &errStore{},
-		},
-		{
-			name:  "Redis sequence floor lookup fails",
-			store: &mockStore{lastSeq: 10},
-			floor: errorSequenceFloorStore{},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			srv := miniredis.RunT(t)
-			client := redis.NewClient(&redis.Options{Addr: srv.Addr()})
-			t.Cleanup(func() { require.NoError(t, client.Close()) })
-
-			leaseStore := roomlease.NewStore(client, "wss:room:lease:", "10.0.0.1:8081", 30*time.Second)
-			manager := NewManager(testManagerConfig(), config.RateLimitConfig{}, tt.store, 100*time.Millisecond)
-			manager.SetRoomLeaseStore(leaseStore)
-			if tt.floor != nil {
-				manager.SetSequenceFloorStore(tt.floor)
-			}
-
-			runCtx, stop := context.WithCancel(context.Background())
-			done := make(chan struct{})
-			go func() {
-				defer close(done)
-				manager.Run(runCtx)
-			}()
-			t.Cleanup(func() {
-				stop()
-				<-done
-			})
-
-			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-			defer cancel()
-			registration, err := manager.PrepareRegister(ctx, "room-1")
-
-			require.Nil(t, registration)
-			require.ErrorIs(t, err, ErrRoomSequenceUnavailable)
-			require.False(t, srv.Exists("wss:room:lease:room-1"))
-			require.Empty(t, manager.snapshotLeases())
-		})
-	}
+func (f *fakeBus) Connected() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.connected
 }
 
-func TestHub_Functional(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Success: 다수 세션의 등록 및 메시지 브로드캐스트", func(t *testing.T) {
-		t.Parallel()
-		h := newHub("room1", testSessionConfig(), time.Minute, nil, nil, time.Second, nil)
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-		go h.run(ctx)
-
-		client1 := registerTestSession(t, h, "user1")
-		client2 := registerTestSession(t, h, "user2")
-
-		msg := &Message{
-			ID:       "msg1",
-			RoomID:   "test-room",
-			SenderID: "user1",
-			Content:  "hello world",
-			Type:     "chat",
-		}
-		h.broadcast(ctx, msg)
-
-		for _, cc := range []*websocket.Conn{client1, client2} {
-			cc.SetReadDeadline(time.Now().Add(1 * time.Second))
-			_, data, err := cc.ReadMessage()
-			require.NoError(t, err)
-			var received Message
-			err = json.Unmarshal(data, &received)
-			assert.NoError(t, err)
-			assert.Equal(t, "hello world", received.Content)
-		}
-	})
-
-	t.Run("Success: 동일 유저 중복 등록 시 이전 세션 강제 종료(Conflict)", func(t *testing.T) {
-		t.Parallel()
-		h := newHub("conflict-room", testSessionConfig(), 5*time.Minute, nil, nil, time.Second, nil)
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-		go h.run(ctx)
-
-		client1 := registerTestSession(t, h, "user1")
-		_ = registerTestSession(t, h, "user1")
-
-		client1.SetReadDeadline(time.Now().Add(1 * time.Second))
-		_, data, err := client1.ReadMessage()
-		require.NoError(t, err)
-
-		var msg Message
-		err = json.Unmarshal(data, &msg)
-		require.NoError(t, err)
-		assert.Equal(t, "conflict", msg.Type, "previous session should receive conflict message")
-
-		_, _, err = client1.ReadMessage()
-		assert.Error(t, err, "previous session connection should be closed")
-	})
+func (f *fakeBus) publishedEnvelopes() []Envelope {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]Envelope(nil), f.published...)
 }
 
-func TestManager_Broadcast(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name      string
-		setup     func(t *testing.T, m *Manager)
-		expectMsg bool
-	}{
-		{
-			name:      "Success: 존재하지 않는 방에 브로드캐스트 시 무시",
-			setup:     func(t *testing.T, m *Manager) {},
-			expectMsg: false,
-		},
-		{
-			name: "Success: 존재하는 방에 시스템 메시지 브로드캐스트",
-			setup: func(t *testing.T, m *Manager) {
-				serverConn, clientConn := createTestWSPair(t)
-				t.Cleanup(func() { clientConn.Close() })
-				err := m.Register(t.Context(), serverConn, "sys-user", "room-1")
-				require.NoError(t, err)
-			},
-			expectMsg: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			manager := NewManager(testManagerConfig(), config.RateLimitConfig{}, nil)
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			go manager.Run(ctx)
-
-			tt.setup(t, manager)
-
-			msg := &Message{
-				ID:       "sys-1",
-				RoomID:   "room-1",
-				SenderID: "system",
-				Content:  "hello",
-				Type:     "system",
-			}
-			err := manager.Broadcast(t.Context(), msg)
-			assert.NoError(t, err)
-		})
-	}
+func (f *fakeBus) publishedEvents() []RoomEvent {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]RoomEvent(nil), f.events...)
 }
 
-func TestManager_Register(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name        string
-		setup       func(cancelFunc context.CancelFunc)
-		useCanceled bool
-		expectedErr string
-	}{
-		{
-			name: "Success: 정상 세션 등록",
-		},
-		{
-			name:        "Failure: 컨텍스트가 이미 취소된 상태에서의 등록 시도",
-			useCanceled: true,
-		},
-		{
-			name: "Failure: 매니저가 중단된 상태에서의 등록 시도",
-			setup: func(cancel context.CancelFunc) {
-				cancel()
-				time.Sleep(10 * time.Millisecond)
-			},
-			expectedErr: "manager stopped",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			manager := NewManager(testManagerConfig(), config.RateLimitConfig{}, nil)
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			go manager.Run(ctx)
-
-			if tt.setup != nil {
-				tt.setup(cancel)
-			}
-
-			regCtx := t.Context()
-			if tt.useCanceled {
-				c, cnl := context.WithCancel(t.Context())
-				cnl()
-				regCtx = c
-			}
-
-			serverConn, clientConn := createTestWSPair(t)
-			t.Cleanup(func() { clientConn.Close() })
-
-			err := manager.Register(regCtx, serverConn, "u1", "r1")
-			if tt.expectedErr != "" {
-				assert.ErrorContains(t, err, tt.expectedErr)
-			} else if tt.useCanceled {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
+func (f *fakeBus) hasRoomSubscription(roomID string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_, ok := f.roomSubs[roomID]
+	return ok
 }
 
-func TestManager_ForceCloseRoom(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Success: 존재하지 않는 방 강제 종료 시도 (정상 처리)", func(t *testing.T) {
-		t.Parallel()
-		manager := NewManager(testManagerConfig(), config.RateLimitConfig{}, nil)
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-		go manager.Run(ctx)
-
-		closed, err := manager.ForceCloseRoom(t.Context(), "none")
-		assert.NoError(t, err)
-		assert.False(t, closed, "존재하지 않는 방은 close되지 않음")
-	})
-
-	t.Run("Success: 활성화된 방 강제 종료", func(t *testing.T) {
-		t.Parallel()
-		manager := NewManager(testManagerConfig(), config.RateLimitConfig{}, nil)
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-		go manager.Run(ctx)
-
-		_ = manager.Broadcast(t.Context(), &Message{RoomID: "r2", SenderID: "sys", Type: "system"})
-		time.Sleep(50 * time.Millisecond)
-		closed, err := manager.ForceCloseRoom(t.Context(), "r2")
-		assert.NoError(t, err)
-		assert.True(t, closed, "활성 방은 close됨")
-	})
-}
-
-func TestManager_ShutdownStopsTimedOutHubsBeforeClosingPersistenceQueue(t *testing.T) {
-	t.Parallel()
-
-	store := &retryOnlyStore{}
-	manager := NewManager(testManagerConfig(), config.RateLimitConfig{}, store, 20*time.Millisecond)
-	ctx, cancel := context.WithCancel(t.Context())
+func startManager(t *testing.T, m *Manager) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		manager.Run(ctx)
-		close(done)
+		defer close(done)
+		m.Run(ctx)
 	}()
-
-	err := manager.Broadcast(t.Context(), &Message{
-		RoomID:   "retry-room",
-		SenderID: "user-1",
-		Content:  "hello",
-		Type:     "chat",
+	t.Cleanup(func() {
+		cancel()
+		<-done
 	})
-	require.NoError(t, err)
-	require.Eventually(t, func() bool {
-		return store.saveCalls.Load() > 0
-	}, time.Second, 10*time.Millisecond)
-
-	cancel()
-
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("manager should stop even when hub persistence drain times out")
-	}
 }
 
-func TestManager_PrepareRegisterCancelReleasesNewLease(t *testing.T) {
+func newTestManager(t *testing.T, bus MessageBus) *Manager {
+	t.Helper()
+	m := NewManager(testManagerConfig(), config.RateLimitConfig{RPS: 1, Burst: 1, TTL: time.Minute}, bus, "test-pod", 2*time.Second, 100*time.Millisecond)
+	startManager(t, m)
+	return m
+}
+
+func TestManager_PrepareRegisterSubscribesRoom(t *testing.T) {
 	t.Parallel()
 
-	srv := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: srv.Addr()})
-	t.Cleanup(func() { require.NoError(t, client.Close()) })
+	bus := newFakeBus()
+	m := newTestManager(t, bus)
 
-	manager := NewManager(testManagerConfig(), config.RateLimitConfig{}, nil, 100*time.Millisecond)
-	manager.SetRoomLeaseStore(roomlease.NewStore(client, "wss:room:lease:", "10.0.0.1:8081", 30*time.Second))
-
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	go manager.Run(ctx)
-
-	registration, err := manager.PrepareRegister(t.Context(), "room-1")
+	registration, err := m.PrepareRegister(t.Context(), "room-1")
 	require.NoError(t, err)
 	require.NotNil(t, registration)
+	assert.True(t, bus.hasRoomSubscription("room-1"), "구독 반영 뒤에만 등록이 준비된다")
 
 	registration.Cancel()
-
-	require.Eventually(t, func() bool {
-		return !srv.Exists("wss:room:lease:room-1")
-	}, time.Second, 10*time.Millisecond)
 }
 
-func TestManager_ShutdownHubsClosesSessionsWithHandoffCode(t *testing.T) {
+func TestManager_PrepareRegisterFailsWhenSubscribeFails(t *testing.T) {
 	t.Parallel()
 
-	manager := NewManager(testManagerConfig(), config.RateLimitConfig{}, nil, 100*time.Millisecond)
-	h := newHub("room-1", testSessionConfig(), time.Minute, nil, nil, time.Second, nil)
+	bus := newFakeBus()
+	bus.subscribeErr = errors.New("flush timeout")
+	m := newTestManager(t, bus)
 
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	go h.run(ctx)
+	registration, err := m.PrepareRegister(t.Context(), "room-1")
 
-	clientConn := registerTestSession(t, h, "user-1")
-	defer clientConn.Close()
-
-	manager.shutdownHubs(t.Context(), map[string]*Hub{h.roomID: h})
-
-	clientConn.SetReadDeadline(time.Now().Add(time.Second))
-	_, _, err := clientConn.ReadMessage()
-	var closeErr *websocket.CloseError
-	require.True(t, errors.As(err, &closeErr), "expected websocket close error, got %v", err)
-	require.Equal(t, handoffCloseCode, closeErr.Code)
-	require.Equal(t, handoffCloseReason, closeErr.Text)
+	require.Nil(t, registration)
+	require.ErrorIs(t, err, ErrRoomUnavailable)
 }
 
-func TestManager_ReleaseLeaseDefersUntilDrainComplete(t *testing.T) {
+func TestManager_PrepareRegisterFailsWhenBusDisconnected(t *testing.T) {
 	t.Parallel()
 
-	srv := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: srv.Addr()})
-	t.Cleanup(func() { require.NoError(t, client.Close()) })
+	bus := newFakeBus()
+	bus.connected = false
+	m := newTestManager(t, bus)
 
-	leaseStore := roomlease.NewStore(client, "wss:room:lease:", "10.0.0.1:8081", 30*time.Second)
-	manager := NewManager(testManagerConfig(), config.RateLimitConfig{}, nil, 100*time.Millisecond)
-	manager.SetRoomLeaseStore(leaseStore)
+	registration, err := m.PrepareRegister(t.Context(), "room-1")
 
-	lease, err := leaseStore.Acquire(t.Context(), "room-1")
-	require.NoError(t, err)
-	manager.trackLease(lease)
-
-	h := newHub("room-1", testSessionConfig(), time.Minute, nil, nil, time.Second, nil)
-	h.pendingPersist.Store(1)
-
-	manager.releaseLease(t.Context(), "room-1", h)
-
-	require.True(t, srv.Exists("wss:room:lease:room-1"))
-	require.Len(t, manager.snapshotLeases(), 1)
-
-	manager.releaseAllLeases(t.Context(), map[string]*Hub{})
-
-	require.True(t, srv.Exists("wss:room:lease:room-1"))
-	require.Len(t, manager.snapshotLeases(), 1)
-
-	h.pendingPersist.Store(0)
-	h.notifyPersistDone()
-
-	require.Eventually(t, func() bool {
-		return !srv.Exists("wss:room:lease:room-1") && len(manager.snapshotLeases()) == 0
-	}, time.Second, 10*time.Millisecond)
+	require.Nil(t, registration)
+	require.ErrorIs(t, err, ErrBusUnavailable)
 }
 
-func TestManager_ReleaseLeaseRecordsSequenceFloorWhenPersistFailed(t *testing.T) {
+func TestManager_PublishMessage(t *testing.T) {
 	t.Parallel()
-
-	srv := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: srv.Addr()})
-	t.Cleanup(func() { require.NoError(t, client.Close()) })
-
-	leaseStore := roomlease.NewStore(client, "wss:room:lease:", "10.0.0.1:8081", 30*time.Second)
-	floorStore := roomseq.NewStore(client, "wss:room:seqfloor:")
-	manager := NewManager(testManagerConfig(), config.RateLimitConfig{}, nil, 100*time.Millisecond)
-	manager.SetRoomLeaseStore(leaseStore)
-	manager.SetSequenceFloorStore(floorStore)
-
-	lease, err := leaseStore.Acquire(t.Context(), "room-1")
-	require.NoError(t, err)
-	manager.trackLease(lease)
-
-	h := newHub("room-1", testSessionConfig(), time.Minute, nil, nil, time.Second, nil)
-	h.lastSequence.Store(43)
-	h.persistFailed.Store(true)
-
-	manager.releaseLease(t.Context(), "room-1", h)
-
-	require.False(t, srv.Exists("wss:room:lease:room-1"))
-	require.Empty(t, manager.snapshotLeases())
-
-	manager.releaseAllLeases(t.Context(), map[string]*Hub{})
-
-	require.False(t, srv.Exists("wss:room:lease:room-1"))
-	require.Empty(t, manager.snapshotLeases())
-
-	floor, err := floorStore.Get(t.Context(), "room-1")
-	require.NoError(t, err)
-	require.Equal(t, int64(43), floor)
-}
-
-func TestManager_ReleaseLeaseDeletesWhenDrainComplete(t *testing.T) {
-	t.Parallel()
-
-	srv := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: srv.Addr()})
-	t.Cleanup(func() { require.NoError(t, client.Close()) })
-
-	leaseStore := roomlease.NewStore(client, "wss:room:lease:", "10.0.0.1:8081", 30*time.Second)
-	manager := NewManager(testManagerConfig(), config.RateLimitConfig{}, nil, 100*time.Millisecond)
-	manager.SetRoomLeaseStore(leaseStore)
-
-	lease, err := leaseStore.Acquire(t.Context(), "room-1")
-	require.NoError(t, err)
-	manager.trackLease(lease)
-
-	h := newHub("room-1", testSessionConfig(), time.Minute, nil, nil, time.Second, nil)
-
-	manager.releaseLease(t.Context(), "room-1", h)
-
-	require.False(t, srv.Exists("wss:room:lease:room-1"))
-	require.Empty(t, manager.snapshotLeases())
-}
-
-func TestSequenceFloorMessageStoreGetLastSequenceNumberUsesFloor(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name    string
-		dbSeq   int64
-		floor   int64
-		wantSeq int64
-	}{
-		{
-			name:    "floor is higher than DB",
-			dbSeq:   10,
-			floor:   13,
-			wantSeq: 13,
-		},
-		{
-			name:    "DB is higher than floor",
-			dbSeq:   20,
-			floor:   13,
-			wantSeq: 20,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			store := &sequenceFloorMessageStore{
-				base:  &mockStore{lastSeq: tt.dbSeq},
-				floor: staticSequenceFloorStore{seq: tt.floor},
-			}
-
-			seq, err := store.GetLastSequenceNumber(t.Context(), "room-1")
-			require.NoError(t, err)
-			require.Equal(t, tt.wantSeq, seq)
-		})
-	}
-}
-
-func TestManager_ReleaseManagedLeaseKeepsLeaseOnRedisError(t *testing.T) {
-	t.Parallel()
-
-	client := redis.NewClient(&redis.Options{
-		Addr:         "127.0.0.1:1",
-		DialTimeout:  10 * time.Millisecond,
-		ReadTimeout:  10 * time.Millisecond,
-		WriteTimeout: 10 * time.Millisecond,
-		MaxRetries:   0,
+	t.Run("Success: system event fan-out", func(t *testing.T) {
+		t.Parallel()
+		bus := newFakeBus()
+		m := newTestManager(t, bus)
+		require.NoError(t, m.PublishSystemMessage(t.Context(), "room-1", "hello"))
+		published := bus.publishedEnvelopes()
+		require.Len(t, published, 1)
+		assert.NotEmpty(t, published[0].MessageID)
+		assert.Contains(t, string(published[0].Payload), `"content":"hello"`)
 	})
-	t.Cleanup(func() { require.NoError(t, client.Close()) })
-
-	manager := NewManager(testManagerConfig(), config.RateLimitConfig{}, nil, 100*time.Millisecond)
-	manager.SetRoomLeaseStore(roomlease.NewStore(client, "wss:room:lease:", "10.0.0.1:8081", 30*time.Second))
-	lease := &roomlease.Lease{
-		RoomID:    "room-1",
-		OwnerAddr: "10.0.0.1:8081",
-		Token:     "token-1",
-	}
-	manager.trackLease(lease)
-
-	manager.leasesMu.RLock()
-	managed := manager.leases["room-1"]
-	manager.leasesMu.RUnlock()
-
-	released := manager.releaseManagedLease(t.Context(), "room-1", managed, hubLeaseState{})
-
-	require.False(t, released)
-	require.Len(t, manager.snapshotLeases(), 1)
+	t.Run("Failure: Core bus unavailable", func(t *testing.T) {
+		t.Parallel()
+		bus := newFakeBus()
+		bus.publishErr = errors.New("disconnected")
+		m := newTestManager(t, bus)
+		require.ErrorIs(t, m.PublishSystemMessage(t.Context(), "room-1", "hello"), ErrBusUnavailable)
+	})
 }
 
-func TestManager_ReleaseLeaseAfterPersistFailureKeepsLeaseWhenReleaseFails(t *testing.T) {
+func TestManager_PublishSystemMessage(t *testing.T) {
 	t.Parallel()
 
-	client := redis.NewClient(&redis.Options{
-		Addr:         "127.0.0.1:1",
-		DialTimeout:  10 * time.Millisecond,
-		ReadTimeout:  10 * time.Millisecond,
-		WriteTimeout: 10 * time.Millisecond,
-		MaxRetries:   0,
-	})
-	t.Cleanup(func() { require.NoError(t, client.Close()) })
+	bus := newFakeBus()
+	m := newTestManager(t, bus)
 
-	floorStore := &recordingSequenceFloorStore{}
-	manager := NewManager(testManagerConfig(), config.RateLimitConfig{}, nil, 100*time.Millisecond)
-	manager.SetRoomLeaseStore(roomlease.NewStore(client, "wss:room:lease:", "10.0.0.1:8081", 30*time.Second))
-	manager.SetSequenceFloorStore(floorStore)
-	lease := &roomlease.Lease{
-		RoomID:    "room-1",
-		OwnerAddr: "10.0.0.1:8081",
-		Token:     "token-1",
+	require.NoError(t, m.PublishSystemMessage(t.Context(), "room-1", "alice님이 들어왔습니다."))
+
+	published := bus.publishedEnvelopes()
+	require.Len(t, published, 1)
+	assert.Equal(t, systemSenderID, published[0].SenderID)
+	assert.Contains(t, string(published[0].Payload), "들어왔습니다")
+}
+
+func TestManager_CloseRoomSessionsPublishesEvent(t *testing.T) {
+	t.Parallel()
+
+	bus := newFakeBus()
+	m := newTestManager(t, bus)
+
+	require.NoError(t, m.CloseRoomSessions(t.Context(), "room-1"))
+
+	events := bus.publishedEvents()
+	require.Len(t, events, 1)
+	assert.Equal(t, EventRoomClosed, events[0].Type)
+	assert.Equal(t, "room-1", events[0].RoomID)
+}
+
+func TestManager_BusObserver(t *testing.T) {
+	t.Parallel()
+
+	bus := newFakeBus()
+	m := newTestManager(t, bus)
+	releaseClose := make(chan struct{})
+	m.sessionCloseDelay = func() time.Duration {
+		<-releaseClose
+		return 0
 	}
-	manager.trackLease(lease)
 
-	manager.leasesMu.RLock()
-	managed := manager.leases["room-1"]
-	manager.leasesMu.RUnlock()
+	assert.True(t, m.BusConnected())
 
-	released := manager.releaseLeaseAfterPersistFailure(t.Context(), "room-1", managed, hubLeaseState{
-		lastSequence:  43,
-		persistFailed: true,
-	})
+	m.OnDisconnected()
+	assert.False(t, m.BusConnected(), "끊기면 readiness가 실패해야 한다")
 
-	require.False(t, released)
-	require.Equal(t, int64(43), floorStore.setSeq.Load())
-	require.Len(t, manager.snapshotLeases(), 1)
+	m.OnReconnected()
+	assert.False(t, m.BusConnected(), "기존 세션을 닫기 전에는 새 연결을 받지 않아야 한다")
+	close(releaseClose)
+	require.Eventually(t, m.BusConnected, time.Second, 10*time.Millisecond)
 }
 
 func TestNewSystemMessage(t *testing.T) {
 	t.Parallel()
 
-	t.Run("Success: 시스템 메시지 구조체 정상 생성", func(t *testing.T) {
-		t.Parallel()
-		msg, err := NewSystemMessage("test-room", "hello")
-		assert.NoError(t, err)
-		assert.Equal(t, "test-room", msg.RoomID)
-		assert.Equal(t, "hello", msg.Content)
-		assert.Equal(t, "system", msg.Type)
-		assert.Equal(t, systemSenderID, msg.SenderID)
-	})
-}
-
-type retryOnlyStore struct {
-	mockStore
-	saveCalls atomic.Int64
-}
-
-func (s *retryOnlyStore) SaveMany(_ context.Context, _ []*Message) error {
-	s.saveCalls.Add(1)
-	return status.Error(codes.Unavailable, "temporary outage")
+	msg, err := NewSystemMessage("test-room", "hello")
+	require.NoError(t, err)
+	assert.Equal(t, "test-room", msg.RoomID)
+	assert.Equal(t, "hello", msg.Content)
+	assert.Equal(t, msgTypeSystem, msg.Type)
+	assert.Equal(t, systemSenderID, msg.SenderID)
+	assert.NotEmpty(t, msg.ClientMsgID)
 }

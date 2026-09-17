@@ -69,7 +69,7 @@ spec:
           readinessProbe:
             grpc:
               port: 50052
-              service: chat.v1.ChatService
+              service: chat.v1.ChatCommand
             periodSeconds: 5
             timeoutSeconds: 5
             failureThreshold: 3

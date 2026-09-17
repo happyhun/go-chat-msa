@@ -1,0 +1,9 @@
+[
+  {
+    "createIndexes": "messages",
+    "indexes": [
+      {"key": {"roomId": 1, "clientMsgId": 1}, "name": "unique_room_client_msg", "unique": true}
+    ]
+  },
+  {"dropIndexes": "messages", "index": "unique_room_sender_client_msg"}
+]

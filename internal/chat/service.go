@@ -2,21 +2,15 @@ package chat
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"time"
-	"unicode/utf8"
 
 	pb "go-chat-msa/api/proto/chat/v1"
 	"go-chat-msa/internal/shared/config"
 
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
-
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -31,72 +25,6 @@ func NewService(repo Repository, config config.ChatConfig) *Service {
 		config: config,
 		repo:   repo,
 	}
-}
-
-func (s *Service) BatchCreateMessages(ctx context.Context, req *pb.BatchCreateMessagesRequest) (*emptypb.Empty, error) {
-	if len(req.Requests) == 0 {
-		return &emptypb.Empty{}, nil
-	}
-
-	msgs := make([]*Message, 0, len(req.Requests))
-	for _, r := range req.Requests {
-		if r.RoomId == "" || r.SenderId == "" || r.Content == "" {
-			return nil, status.Error(codes.InvalidArgument, "room_id, sender_id, and content are required")
-		}
-		msg, err := s.messageFromRequest(ctx, r)
-		if err != nil {
-			return nil, err
-		}
-		msgs = append(msgs, msg)
-	}
-
-	if err := s.repo.SaveMany(ctx, msgs); err != nil {
-		if errors.Is(err, ErrSequenceConflict) {
-			slog.ErrorContext(ctx, "sequence number conflict while saving messages", "count", len(msgs), "error", err)
-			chatMessagesSavedTotal.Add(ctx, int64(len(msgs)), metric.WithAttributes(attribute.String("status", "sequence_conflict")))
-			return nil, status.Error(codes.Aborted, "sequence number conflict")
-		}
-		slog.ErrorContext(ctx, "failed to batch save messages", "count", len(msgs), "error", err)
-		chatMessagesSavedTotal.Add(ctx, int64(len(msgs)), metric.WithAttributes(attribute.String("status", "error")))
-		return nil, status.Errorf(codes.Internal, "failed to batch save messages: %v", err)
-	}
-	chatMessagesSavedTotal.Add(ctx, int64(len(msgs)), metric.WithAttributes(attribute.String("status", "ok")))
-
-	return &emptypb.Empty{}, nil
-}
-
-func (s *Service) messageFromRequest(ctx context.Context, req *pb.CreateMessageRequest) (*Message, error) {
-	if utf8.RuneCountInString(req.Content) > s.config.Message.MaxLength {
-		return nil, status.Errorf(codes.InvalidArgument, "content exceeds max length of %d characters", s.config.Message.MaxLength)
-	}
-
-	var msgID uuid.UUID
-	var err error
-	if req.MessageId != "" {
-		msgID, err = uuid.Parse(req.MessageId)
-	} else {
-		msgID, err = uuid.NewV7()
-	}
-	if err != nil {
-		slog.ErrorContext(ctx, "failed to handle message uuid", "error", err)
-		return nil, status.Error(codes.Internal, "failed to handle message uuid")
-	}
-
-	createdAt := time.Now()
-	if msgID.Version() == 7 {
-		createdAt = time.Unix(msgID.Time().UnixTime())
-	}
-
-	return &Message{
-		ID:             msgID.String(),
-		RoomID:         req.RoomId,
-		SenderID:       req.SenderId,
-		Content:        req.Content,
-		Type:           req.Type,
-		ClientMsgID:    req.ClientMsgId,
-		SequenceNumber: req.SequenceNumber,
-		CreatedAt:      createdAt,
-	}, nil
 }
 
 func (s *Service) ListMessages(ctx context.Context, req *pb.ListMessagesRequest) (*pb.ListMessagesResponse, error) {
@@ -116,35 +44,30 @@ func (s *Service) ListMessages(ctx context.Context, req *pb.ListMessagesRequest)
 		joinedAt = req.JoinedAt.AsTime()
 	}
 
-	messages, err := s.repo.GetHistory(ctx, req.RoomId, limit, joinedAt)
+	messages, err := s.repo.GetHistory(ctx, req.RoomId, limit+1, joinedAt)
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to get history", "error", err)
-		return nil, status.Errorf(codes.Internal, "failed to get history: %v", err)
+		return nil, status.Error(codes.Unavailable, "message history unavailable")
 	}
 
-	pbMessages := make([]*pb.Message, 0, len(messages))
-	for _, m := range messages {
-		pbMessages = append(pbMessages, &pb.Message{
-			Id:             m.ID,
-			RoomId:         m.RoomID,
-			SenderId:       m.SenderID,
-			Content:        m.Content,
-			ClientMsgId:    m.ClientMsgID,
-			Type:           m.Type,
-			SequenceNumber: m.SequenceNumber,
-			Timestamp:      timestamppb.New(m.CreatedAt),
-		})
-	}
+	messages, hasMore := trimToLimit(messages, limit)
+	pbMessages := messagesToProto(messages)
 
 	chatHistoryFetchedMessages.Record(ctx, float64(len(pbMessages)))
 	return &pb.ListMessagesResponse{
 		Messages: pbMessages,
+		HasMore:  hasMore,
 	}, nil
 }
 
 func (s *Service) SyncMessages(ctx context.Context, req *pb.SyncMessagesRequest) (*pb.SyncMessagesResponse, error) {
 	if req.RoomId == "" {
 		return nil, status.Error(codes.InvalidArgument, "room_id is required")
+	}
+	if req.AfterMessageId != "" {
+		if _, err := uuid.Parse(req.AfterMessageId); err != nil {
+			return nil, status.Error(codes.InvalidArgument, "after_message_id must be a uuid")
+		}
 	}
 
 	limit := int64(req.Limit)
@@ -159,44 +82,41 @@ func (s *Service) SyncMessages(ctx context.Context, req *pb.SyncMessagesRequest)
 		joinedAt = req.JoinedAt.AsTime()
 	}
 
-	messages, err := s.repo.SyncMessages(ctx, req.RoomId, req.LastSequenceNumber, limit, joinedAt)
+	messages, err := s.repo.SyncMessages(ctx, req.RoomId, req.AfterMessageId, limit+1, joinedAt)
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to sync messages", "error", err)
-		return nil, status.Errorf(codes.Internal, "failed to sync messages: %v", err)
+		return nil, status.Error(codes.Unavailable, "message sync unavailable")
 	}
 
-	pbMessages := make([]*pb.Message, 0, len(messages))
-	for _, m := range messages {
-		pbMessages = append(pbMessages, &pb.Message{
-			Id:             m.ID,
-			RoomId:         m.RoomID,
-			SenderId:       m.SenderID,
-			Content:        m.Content,
-			ClientMsgId:    m.ClientMsgID,
-			Type:           m.Type,
-			SequenceNumber: m.SequenceNumber,
-			Timestamp:      timestamppb.New(m.CreatedAt),
-		})
-	}
+	messages, hasMore := trimToLimit(messages, limit)
+	pbMessages := messagesToProto(messages)
 
 	chatHistoryFetchedMessages.Record(ctx, float64(len(pbMessages)))
 	return &pb.SyncMessagesResponse{
 		Messages: pbMessages,
+		HasMore:  hasMore,
 	}, nil
 }
 
-func (s *Service) GetLastSequenceNumber(ctx context.Context, req *pb.GetLastSequenceNumberRequest) (*pb.GetLastSequenceNumberResponse, error) {
-	if req.RoomId == "" {
-		return nil, status.Error(codes.InvalidArgument, "room_id is required")
+func trimToLimit(messages []*Message, limit int64) ([]*Message, bool) {
+	if int64(len(messages)) <= limit {
+		return messages, false
 	}
+	return messages[:limit], true
+}
 
-	seq, err := s.repo.GetLastSequenceNumber(ctx, req.RoomId)
-	if err != nil {
-		slog.ErrorContext(ctx, "failed to get last sequence number", "error", err)
-		return nil, status.Errorf(codes.Internal, "failed to get last sequence number: %v", err)
+func messagesToProto(messages []*Message) []*pb.Message {
+	pbMessages := make([]*pb.Message, 0, len(messages))
+	for _, m := range messages {
+		pbMessages = append(pbMessages, &pb.Message{
+			Id:          m.ID,
+			RoomId:      m.RoomID,
+			SenderId:    m.SenderID,
+			Content:     m.Content,
+			ClientMsgId: m.ClientMsgID,
+			Type:        m.Type,
+			Timestamp:   timestamppb.New(m.CreatedAt),
+		})
 	}
-
-	return &pb.GetLastSequenceNumberResponse{
-		SequenceNumber: seq,
-	}, nil
+	return pbMessages
 }

@@ -32,9 +32,15 @@ create_env_configmap() {
   local args=(
     "$(literal_arg API_HOST "api-gateway")"
     "$(literal_arg API_PORT "8080")"
-    "$(literal_arg WS_HOST "ws-gateway")"
-    "$(literal_arg WS_PORT "8088")"
+    "$(literal_arg WS_HOST "websocket-service")"
+    "$(literal_arg WS_PORT "8081")"
   )
+  local key
+  for key in K6_WORKER_VUS K6_RAMP_DURATION K6_PLATEAU_DURATION K6_RAMP_DOWN_DURATION; do
+    if [[ -n "${!key:-}" ]]; then
+      args+=("$(literal_arg "${key}" "${!key}")")
+    fi
+  done
 
   log "creating configmap/k6-load-env"
   kubectl -n "${NAMESPACE}" create configmap k6-load-env \
@@ -150,6 +156,7 @@ main() {
       --follow \
       --all-containers=true \
       --prefix=true \
+      --tail=-1 \
       "--max-log-requests=${MAX_LOG_REQUESTS}" || true
   fi
 

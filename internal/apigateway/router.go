@@ -14,6 +14,7 @@ import (
 	"go-chat-msa/internal/shared/httpio"
 	"go-chat-msa/internal/shared/middleware"
 	"go-chat-msa/internal/shared/ratelimit"
+	"go-chat-msa/internal/shared/wsticket"
 
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc/health/grpc_health_v1"
@@ -48,13 +49,21 @@ type Router struct {
 	httpClient  *http.Client
 	redisClient *redis.Client
 
+	ticketStore          *wsticket.Store
 	publicLimiter        *ratelimit.RedisLimiter
 	authenticatedLimiter *ratelimit.RedisLimiter
+	wsTicketLimiter      *ratelimit.RedisLimiter
 
 	wg sync.WaitGroup
 }
 
-func NewRouter(cfg *Config, userClient userpb.UserServiceClient, chatClient chatpb.ChatServiceClient, redisClient *redis.Client, opts ...RouterOption) *Router {
+func NewRouter(
+	cfg *Config,
+	userClient userpb.UserServiceClient,
+	chatClient chatpb.ChatServiceClient,
+	redisClient *redis.Client,
+	opts ...RouterOption,
+) *Router {
 	options := routerOptions{}
 	for _, opt := range opts {
 		opt(&options)
@@ -77,6 +86,7 @@ func NewRouter(cfg *Config, userClient userpb.UserServiceClient, chatClient chat
 			Timeout:   cfg.APIGateway.HTTPClient.Timeout,
 		},
 		redisClient: redisClient,
+		ticketStore: wsticket.NewStore(redisClient),
 		publicLimiter: ratelimit.NewRedis(
 			redisClient,
 			int(math.Ceil(cfg.APIGateway.RateLimit.Public.RPS)),
@@ -87,6 +97,11 @@ func NewRouter(cfg *Config, userClient userpb.UserServiceClient, chatClient chat
 			int(math.Ceil(cfg.APIGateway.RateLimit.Authenticated.RPS)),
 			cfg.APIGateway.RateLimit.Authenticated.Burst,
 		),
+		wsTicketLimiter: ratelimit.NewRedis(
+			redisClient,
+			int(math.Ceil(cfg.APIGateway.RateLimit.WSTicket.RPS)),
+			cfg.APIGateway.RateLimit.WSTicket.Burst,
+		),
 	}
 
 	r.registerRoutes()
@@ -96,9 +111,6 @@ func NewRouter(cfg *Config, userClient userpb.UserServiceClient, chatClient chat
 
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	r.mux.ServeHTTP(w, req)
-}
-
-func (r *Router) Stop() {
 }
 
 func (r *Router) Wait() {
@@ -123,6 +135,12 @@ func (r *Router) registerRoutes() {
 		middleware.BearerAuthMiddleware(r.jwtSecret),
 		middleware.RateLimitMiddleware(r.authenticatedLimiter, middleware.ContextKeyFunc(middleware.UserIDKey)),
 	}
+
+	ticketMws := []func(http.Handler) http.Handler{
+		middleware.BearerAuthMiddleware(r.jwtSecret),
+		middleware.RateLimitMiddleware(r.wsTicketLimiter, middleware.ContextKeyFunc(middleware.UserIDKey)),
+	}
+	r.mux.Handle("POST /auth/ws-ticket", middleware.ChainMiddleware(r.handleCreateWSTicket, ticketMws...))
 
 	r.mux.Handle("DELETE /me", middleware.ChainMiddleware(r.handleDeleteUser, authMws...))
 	r.mux.Handle("GET /users", middleware.ChainMiddleware(r.handleBatchGetUsers, authMws...))
@@ -162,7 +180,7 @@ func (r *Router) readinessFailures(ctx context.Context) []string {
 	if err := checkGRPCHealth(ctx, r.userHealth, "user.v1.UserService"); err != nil {
 		failures = append(failures, fmt.Sprintf("user-service health failed: %v", err))
 	}
-	if err := checkGRPCHealth(ctx, r.chatHealth, "chat.v1.ChatService"); err != nil {
+	if err := checkGRPCHealth(ctx, r.chatHealth, "chat.v1.ChatCommand"); err != nil {
 		failures = append(failures, fmt.Sprintf("chat-service health failed: %v", err))
 	}
 

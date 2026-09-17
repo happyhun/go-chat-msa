@@ -157,7 +157,6 @@ restart_edge_apps() {
   log "restarting edge deployments after backend rollout"
   kubectl -n "${NAMESPACE}" rollout restart \
     deployment/api-gateway \
-    deployment/ws-gateway \
     deployment/frontend \
     deployment/swagger-ui
 }
@@ -173,6 +172,7 @@ main() {
   ensure_namespace
   apply_kustomize "${OVERLAY_DIR}/foundation"
   wait_rollout postgres mongo redis
+  kubectl -n "${NAMESPACE}" rollout status statefulset/nats --timeout="${TIMEOUT}"
 
   create_observability_configmaps
   apply_file_if_exists "${OVERLAY_DIR}/observability/prometheus-adapter-auth-reader.yaml"
@@ -190,7 +190,7 @@ main() {
   apply_kustomize "${OVERLAY_DIR}/apps"
   restart_backend_apps
   restart_edge_apps
-  wait_rollout api-gateway ws-gateway frontend swagger-ui
+  wait_rollout api-gateway frontend swagger-ui
 
   log "${K8S_ENV} Kubernetes bootstrap completed"
   log "Frontend: http://${K8S_HOST}:30080/"

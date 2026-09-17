@@ -1,3 +1,7 @@
+---
+config:
+  layout: elk
+---
 flowchart TB
     subgraph External ["외부"]
         direction LR
@@ -7,13 +11,7 @@ flowchart TB
     subgraph K8s ["Kubernetes 환경"]
         direction TB
 
-        Ingress["Ingress"]
-
-        subgraph PublicUI ["화면 · 문서"]
-            direction LR
-            FE["Frontend"]
-            Docs["Swagger UI"]
-        end
+        Ingress["Ingress nginx"]
 
         subgraph Runtime ["서비스 런타임"]
             direction TB
@@ -24,15 +22,20 @@ flowchart TB
                 subgraph Gateway ["진입 계층"]
                     direction LR
                     AGW["API Gateway"]
-                    WSGW["WS Gateway"]
+                    WSS["WebSocket Service"]
                 end
 
                 subgraph Domain ["도메인 계층"]
                     direction LR
                     US["User Service"]
                     CS["Chat Service"]
-                    WSS["WebSocket Service"]
                 end
+            end
+
+            subgraph NATS ["NATS"]
+                direction TB
+                Core["Core Pub/Sub"]
+                JS[("JetStream")]
             end
 
             subgraph State ["상태 저장소"]
@@ -54,49 +57,49 @@ flowchart TB
         subgraph Observability ["관측성"]
             direction LR
             Alloy["Alloy"]
+            NATSExporter["NATS exporter"]
+            K8sMetrics["kube-state-metrics · cAdvisor"]
             Prometheus[("Prometheus")]
             Loki[("Loki")]
             Tempo[("Tempo")]
             Pyroscope[("Pyroscope")]
             Grafana["Grafana"]
         end
-
-        subgraph Verification ["검증 리소스"]
-            direction LR
-            Load["C10K k6 Job"]
-            HPAProbe["HPA k6 Job"]
-        end
     end
 
     Client == "HTTP / WebSocket" ==> Ingress
-    Ingress -- "화면" --> FE
-    Ingress -- "REST" --> AGW
-    Ingress -- "WebSocket" --> WSGW
-    Ingress -- "API 문서" --> Docs
-    Ingress -- "대시보드" --> Grafana
+    Ingress -- "/api · REST 요청" --> AGW
+    Ingress <-->|"/ws · WebSocket 송수신"| WSS
+    Ingress -- "/grafana · 대시보드 요청" --> Grafana
 
-    AGW -- "사용자 · 방" --> US
-    AGW -- "메시지 조회" --> CS
-    WSGW -- "방 기준 라우팅" --> WSS
-    WSS -- "멤버십 확인" --> US
-    WSS -- "메시지 저장 · 순번 조회" --> CS
+    AGW -- "gRPC · 사용자·방 관리" --> US
+    AGW -- "gRPC · 메시지 조회" --> CS
+    AGW -- "내부 HTTP · 참여·나가기 알림, 방 종료" --> WSS
+    WSS -- "gRPC · 멤버십 확인" --> US
 
-    US --> PG
-    US --> RD
-    CS --> MG
-    AGW --> RD
-    WSGW --> RD
-    WSS --> RD
-    %% 상태 저장소 내부의 영속 저장소와 Redis를 좌우로 유지하기 위한 Mermaid 레이아웃 힌트
+    WSS <-->|"채팅 발행 · PubAck"| JS
+    JS -- "기록 후 RePublish" --> Core
+    WSS <-->|"시스템 알림·방 종료 발행 / 채팅·이벤트 구독"| Core
+    CS <-->|"durable Pull · 메시지 전달·ACK·NAK·DLQ"| JS
+
+    US -- "사용자·방·멤버십 저장·조회" --> PG
+    US -- "refresh token 관리" --> RD
+    CS -- "메시지 배치 저장·조회" --> MG
+    AGW -- "티켓 발급·요청 제한" --> RD
+    WSS -- "티켓 소비·연결 제한" --> RD
     MG ~~~ RD
 
-    PublicUI -. "Pod 로그" .-> Alloy
-    Services -. "로그 · 메트릭 · 트레이스" .-> Alloy
-    Services -. "프로파일" .-> Pyroscope
-    Alloy --> Prometheus
-    Alloy --> Loki
-    Alloy --> Tempo
-    Prometheus --> Grafana
-    Loki --> Grafana
-    Tempo --> Grafana
-    Pyroscope --> Grafana
+    Services -. "OTLP 메트릭·트레이스 push<br/>Pod 로그 수집" .-> Alloy
+    State -. "Pod 로그 수집" .-> Alloy
+    NATS -. "Pod 로그 수집" .-> Alloy
+    Services -. "프로파일 push" .-> Pyroscope
+    NATS -. "모니터링 API 응답" .-> NATSExporter
+    NATSExporter -. "메트릭 수집" .-> Alloy
+    K8sMetrics -. "메트릭 수집" .-> Alloy
+    Alloy -- "메트릭 전송" --> Prometheus
+    Alloy -- "로그 전송" --> Loki
+    Alloy -- "트레이스 전송" --> Tempo
+    Grafana -- "메트릭 조회" --> Prometheus
+    Grafana -- "로그 조회" --> Loki
+    Grafana -- "트레이스 조회" --> Tempo
+    Grafana -- "프로파일 조회" --> Pyroscope

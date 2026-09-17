@@ -7,15 +7,13 @@ info:
     url: https://choosealicense.com/no-permission/
   description: |
     Go Chat MSA 프로젝트의 REST API 명세서입니다.
-    - 에러 응답은 모두 RFC 9457 (Problem Details) 형식을 따릅니다.
+    - REST API 에러는 RFC 9457 (Problem Details) 형식을 따릅니다. WebSocket 업그레이드 검증 오류는 일반 HTTP 오류 본문일 수 있습니다.
     - 보안을 위해 JWT(Access Token)와 HttpOnly Cookie(Refresh Token)를 혼합하여 사용합니다.
     - 웹소켓 연결은 1회용 단기 티켓 기반으로 수행됩니다.
 
 servers:
   - url: /api
     description: Kubernetes Ingress를 통한 API Gateway 경로
-  - url: /ws-api
-    description: Kubernetes Ingress를 통한 WebSocket Gateway 티켓 API 경로
 
 tags:
   - name: System
@@ -37,7 +35,7 @@ paths:
       tags:
         - System
       summary: 시스템 상태 점검 (Liveness Probe)
-      description: API Gateway와 WebSocket Gateway의 정상 구동 여부를 확인합니다.
+      description: API Gateway 프로세스의 생존 여부를 확인합니다. 의존성 준비 상태는 /ready에서 확인합니다.
       operationId: checkHealth
       security: []
       responses:
@@ -51,15 +49,13 @@ paths:
                   status:
                     type: string
                     example: "healthy"
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
 
   /ready:
     get:
       tags:
         - System
       summary: 트래픽 수신 준비 상태 점검 (Readiness Probe)
-      description: 서비스 의존성 연결과 내부 준비 상태를 확인합니다.
+      description: API Gateway의 Redis 연결, user-service health, chat-service의 ChatCommand health를 확인합니다. MongoDB 조회 가능 여부와 stream 여유 용량은 보장하지 않습니다.
       operationId: checkReadiness
       security: []
       responses:
@@ -509,8 +505,8 @@ paths:
       summary: 메시지 내역 조회 및 동기화
       description: |
         채팅방의 메시지를 가져옵니다. 본인이 방에 참여한 시점 이후의 메시지만 조회됩니다.
-        - 과거 내역 조회: `last_seq` 파라미터 없이 호출하면 가장 최근 메시지부터 역순으로 반환합니다.
-        - 누락분 동기화: `last_seq` 파라미터를 포함해 호출하면 해당 번호 이후의 메시지를 정순으로 반환합니다.
+        - 과거 내역 조회: `after_id` 없이 호출하면 가장 최근 메시지부터 id 역순으로 반환합니다.
+        - 누락분 동기화: `after_id`를 포함하면 해당 id 이후를 id 정순으로 반환합니다.
       operationId: listMessages
       security:
         - bearerAuth: []
@@ -522,17 +518,23 @@ paths:
           schema:
             type: string
             format: uuid
-        - name: last_seq
+        - name: after_id
           in: query
-          description: 동기화를 위해 클라이언트가 마지막으로 받은 메시지의 시퀀스 번호
+          description: 이 id보다 큰 메시지를 id 정순으로 반환. 빈 값은 참여 시점 이후 전체 동기화. 저장 지연 때문에 빈 응답은 누락 없음의 증거가 아님
+          allowEmptyValue: true
           schema:
-            type: integer
-            format: int64
+            anyOf:
+              - type: string
+                format: uuid
+              - type: string
+                enum: ['']
         - name: limit
           in: query
-          description: 가져올 메시지 수 (기본 조회 시 100, 동기화 시 50)
+          description: 가져올 메시지 수. 생략 시 과거 조회 100개, 동기화 50개. 1000을 넘으면 1000개로 제한합니다.
           schema:
             type: integer
+            format: int32
+            minimum: 1
       responses:
         '200':
           description: 메시지 조회 성공
@@ -540,11 +542,15 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [messages, has_more]
                 properties:
                   messages:
                     type: array
                     items:
                       $ref: '#/components/schemas/MessageInfo'
+                  has_more:
+                    type: boolean
+                    description: 이 응답 뒤에 더 받을 메시지가 있는지 여부
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -553,8 +559,20 @@ paths:
           $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '503':
+          description: 메시지 조회를 처리할 수 없음. MongoDB 장애 중에도 WebSocket 송신은 가능할 수 있습니다.
+          headers:
+            Retry-After:
+              description: 재시도 전 대기 시간 (초)
+              schema:
+                type: integer
+                example: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
 
-  /ws/ticket:
+  /auth/ws-ticket:
     post:
       tags:
         - WebSocket
@@ -565,9 +583,6 @@ paths:
       operationId: createWSTicket
       security:
         - bearerAuth: []
-      servers:
-        - url: /ws-api
-          description: Kubernetes Ingress를 통한 WebSocket Gateway 경로
       responses:
         '200':
           description: 티켓 발급 성공
@@ -575,6 +590,7 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [ticket]
                 properties:
                   ticket:
                     type: string
@@ -590,8 +606,25 @@ paths:
         - WebSocket
       summary: 웹소켓 핸드셰이크 (연결 요청)
       description: |
-        발급받은 티켓을 사용하여 채팅방과 양방향 실시간 연결을 맺습니다.
+        발급받은 티켓을 소비하고 방 멤버십과 NATS 방 구독을 확인한 뒤 채팅 송수신 연결을 맺습니다.
+        연결에 실패했거나 재연결할 때는 새 티켓을 발급받아야 합니다.
         `ws://` 또는 `wss://` 프로토콜을 사용해야 합니다.
+
+        클라이언트는 JSON frame으로 `content`와 소문자 canonical UUID인 `client_msg_id`를 보냅니다.
+        `type`은 생략하거나 `chat`으로 지정합니다. 본문은 비어 있을 수 없고 기본 최대 길이는 10,000자입니다.
+        같은 방·발신자의 동일 요청 재시도에는 원래 `client_msg_id`와 본문을 유지합니다.
+        JSON 해석 후 형식·본문 길이·메시지 처리율 제한 위반은 해당 세션에 system frame으로 알립니다.
+        JSON 메시지 전체 크기가 64KiB를 넘으면 연결을 종료합니다.
+
+        채팅은 JetStream에 기록한 뒤 Core NATS로 같은 방의 세션에 전달하며 발신자도 echo를 받습니다.
+        서버 frame은 메시지 ID, 방·발신자 ID, 본문, 종류, 시각과 연결별 `frame_no`를 포함합니다.
+        채팅 echo에는 `client_msg_id`도 포함됩니다. 로컬 오류 알림에는 메시지 ID가 없을 수 있습니다.
+        `frame_no`는 방 전체의 순번이 아니며, 메시지는 여러 Pod 사이에서 순서가 바뀌거나 중복될 수 있습니다.
+        클라이언트는 ID와 방·발신자·`client_msg_id`로 중복을 제거하고 ID로 정렬합니다.
+
+        echo는 MongoDB 저장 완료를 뜻하지 않으며 별도의 수락 ACK frame은 없습니다.
+        발행 오류는 세션을 종료합니다. 발행 timeout에서는 저장·echo 여부가 모호할 수 있습니다.
+        재연결이나 프레임 누락 시 REST 메시지 조회로 저장된 이력을 보충합니다.
       operationId: connectWS
       security:
         - wsTicket: []
@@ -617,9 +650,32 @@ paths:
         '101':
           description: 연결 성공 (프로토콜 전환)
         '400':
-          description: 필수 파라미터가 누락됨
+          description: room_id 누락·UUID 형식 오류 또는 잘못된 WebSocket 업그레이드 요청
         '401':
           description: 인증 실패 (잘못되었거나 만료된 티켓)
+        '403':
+          description: 방 멤버가 아니거나 허용되지 않은 Origin
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          description: NATS 연결·방 구독·세션 등록 준비 불가. 업그레이드 후 등록에 실패하면 HTTP 오류 대신 연결을 닫습니다.
+          headers:
+            Retry-After:
+              description: 재시도 전 대기 시간 (초)
+              schema:
+                type: integer
+                example: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+        '500':
+          description: 방 멤버십 확인 중 내부 오류 또는 예상하지 못한 세션 등록 준비 오류
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
 
 components:
   securitySchemes:
@@ -800,16 +856,18 @@ components:
     # Message
     MessageInfo:
       type: object
+      required: [id, room_id, sender_id, content, type, timestamp]
       properties:
         id:
           type: string
-          description: 메시지 고유 식별자 (UUID v7)
+          format: uuid
+          description: 메시지 고유 식별자 (UUID v7). 사전순으로 정렬하며 Pod 간 인과 순서나 도착 순서를 보장하지 않음
         room_id:
           type: string
           format: uuid
         sender_id:
           type: string
-          format: uuid
+          description: 작성자 user id. 시스템 메시지는 `system`
         content:
           type: string
         client_msg_id:
@@ -818,13 +876,10 @@ components:
         type:
           type: string
           description: "메시지 종류 ('chat' 또는 'system')"
-        sequence_number:
+        timestamp:
           type: integer
           format: int64
-          description: "방 내부에서의 순서를 보장하는 고유 번호"
-        timestamp:
-          type: string
-          format: date-time
+          description: 작성 시각 (Unix 초)
 
     # Common
     ProblemDetails:

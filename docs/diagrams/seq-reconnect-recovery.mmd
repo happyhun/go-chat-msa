@@ -1,0 +1,49 @@
+sequenceDiagram
+    autonumber
+    participant C as 클라이언트
+    participant Old as 종료할 WS Pod
+    participant API as api-gateway
+    participant New as 새 연결 WS Pod
+    participant JS as NATS JetStream / Core
+    participant Chat as chat-service
+    participant DB as MongoDB
+
+    C->>Old: 사용자 chat frame
+    Old->>JS: chat.persist.roomID 발행
+    par 발행 응답
+        JS-->>Old: PubAck
+    and 실시간 전달
+        JS-->>Old: room.msg.roomID RePublish
+        Old-->>C: echo · frame_no
+    end
+    Note over Old: scale-in 또는 Pod 재시작
+    Old-->>C: 연결 종료 · shutdown
+    Old->>JS: 방 구독 해제
+    Note over C: jitter backoff·새 연결 시도
+    C->>API: POST /api/auth/ws-ticket
+    API-->>C: 새 ticket
+    C->>New: /ws 연결 · Ingress 경유
+    New->>New: 티켓 소비·멤버십 확인
+    New->>JS: 방 구독 + Flush
+    New-->>C: Upgrade·세션 등록
+    C->>C: 고정 recovery anchor · 2초 되감기
+    par 비동기 저장 · 연결 종료와 독립적으로 진행
+        Chat->>JS: shared durable consumer pull
+        JS-->>Chat: 저장 대기 메시지
+        Chat->>DB: worker 배치 저장
+        DB-->>Chat: 성공
+        Chat->>JS: 원본 ACK
+    and 복구 조회
+        loop 최대 60초 · 매 반복은 같은 anchor에서 시작
+            C->>API: GET /api/rooms/roomID/messages?after_id=cursor
+            Note over API: user-service에서 가입 시각 확인
+            API->>Chat: SyncMessages
+            Chat->>DB: 가입 시각 이후·ID 오름차순 조회
+            DB-->>Chat: 저장된 메시지
+            Chat-->>API: messages + has_more
+            API-->>C: messages + has_more
+            C->>C: ID·클라이언트 키로 중복 제거·정렬
+            Note over C: has_more이면 페이지 cursor만 전진<br/>마지막 페이지 뒤 jitter backoff·anchor부터 재조회
+        end
+    end
+    Note over C,DB: 빈 응답으로 anchor를 전진시키지 않음<br/>별도로 30초마다 최근 cursor sync<br/>재시도 기간 밖의 완전성은 보장하지 않음

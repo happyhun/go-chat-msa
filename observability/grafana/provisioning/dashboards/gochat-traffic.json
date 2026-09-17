@@ -480,7 +480,7 @@
       },
       "targets": [
         {
-          "expr": "sum by(service,method,code) (rate(gochat_grpc_requests_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\",code=~\"Internal|Unknown|DataLoss|Unavailable\"}[$__rate_interval])) or on() vector(0)",
+          "expr": "sum by(service,method,code) (rate(gochat_grpc_requests_total{namespace=~\"$namespace\",service=~\"$service\",pod=~\"$pod\",code=~\"Internal|Unknown|DataLoss|Unavailable\"}[$__rate_interval]))",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
@@ -1188,7 +1188,7 @@
         "refresh": 1,
         "sort": 1,
         "includeAll": true,
-        "allValue": "api-gateway|ws-gateway|websocket-service|user-service|chat-service|frontend",
+        "allValue": "api-gateway|websocket-service|user-service|chat-service|frontend",
         "current": {
           "selected": true,
           "text": "All",

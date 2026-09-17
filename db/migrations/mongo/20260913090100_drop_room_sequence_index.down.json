@@ -1,0 +1,15 @@
+[
+  {
+    "createIndexes": "messages",
+    "indexes": [
+      {
+        "key": {
+          "roomId": 1,
+          "sequenceNumber": 1
+        },
+        "name": "unique_room_sequence",
+        "unique": true
+      }
+    ]
+  }
+]

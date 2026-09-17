@@ -10,10 +10,10 @@ TELEMETRY:
 # Ports
 PORT:
   API_GATEWAY: "8080"
-  WS_GATEWAY: "8088"
   WEBSOCKET: "8081"
   USER_GRPC: "50051"
   CHAT_GRPC: "50052"
+  NATS: "4222"
 
 # Service Registry
 REGISTRY:
@@ -21,8 +21,10 @@ REGISTRY:
     HOST: "user-service"
   CHAT_SERVICE:
     HOST: "chat-service"
-  WS_GATEWAY:
-    HOST: "ws-gateway"
+  WEBSOCKET:
+    HOST: "websocket-service"
+  NATS:
+    HOST: "nats"
 
 # Security
 JWT:
@@ -55,6 +57,7 @@ API_GATEWAY:
     KEEPALIVE:
       TIME: "20s"
       TIMEOUT: "5s"
+  TICKET_TTL: "30s"
   RATE_LIMIT:
     PUBLIC:
       RPS: 5
@@ -64,29 +67,13 @@ API_GATEWAY:
       RPS: 10
       BURST: 20
       TTL: "1h"
-
-# WebSocket Gateway
-WS_GATEWAY:
-  SERVER:
-    READ_HEADER_TIMEOUT: "10s"
-  HTTP_CLIENT:
-    TIMEOUT: "3s"
-    MAX_IDLE_CONNS: 10000
-    MAX_IDLE_CONNS_PER_HOST: 10000
-  TICKET_TTL: "30s"
-  RATE_LIMIT:
-    PUBLIC:
-      RPS: 5
-      BURST: 10
-      TTL: "10m"
-    WS_ESTABLISH:
+    WS_TICKET:
       RPS: 2
       BURST: 5
       TTL: "1h"
 
 # WebSocket Service
 WEBSOCKET:
-  ADVERTISED_ADDR: "" # 오버라이드 필수
   SERVER:
     READ_HEADER_TIMEOUT: "10s"
   MANAGER:
@@ -100,11 +87,21 @@ WEBSOCKET:
     KEEPALIVE:
       TIME: "20s"
       TIMEOUT: "5s"
+  ALLOWED_ORIGINS: []
   RATE_LIMIT:
     WS_MESSAGE:
       RPS: 2
       BURST: 5
       TTL: "1h"
+    WS_CONNECT:
+      RPS: 5
+      BURST: 10
+      TTL: "10m"
+  NATS:
+    FLUSH_TIMEOUT: "2s"
+    MAX_DELIVERY_LAG: "2s"
+    SUB_PENDING_MSGS: 1000
+    SUB_PENDING_BYTES: 8388608
 
 # User Service
 USER_SERVICE:
@@ -130,9 +127,20 @@ USER_SERVICE:
       MIN_TIME: "5s"
 
 # Chat Service
+PERSISTENCE:
+  WORKERS: 1
+  MAX_BYTES: 1073741824
+  DLQ_MAX_BYTES: 134217728
+  MAX_ACK_PENDING: 8000
+  WRITE_TIMEOUT: "5s"
+  ACK_WAIT: "30s"
+
 CHAT_SERVICE:
-  MESSAGE:
-    MAX_LENGTH: 10000
+  GRPC_CLIENT:
+    TIMEOUT: "2s"
+    KEEPALIVE:
+      TIME: "20s"
+      TIMEOUT: "5s"
   HISTORY:
     DEFAULT_LIMIT: 100
     MAX_LIMIT: 1000

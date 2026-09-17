@@ -11,7 +11,6 @@ import (
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
-	emptypb "google.golang.org/protobuf/types/known/emptypb"
 )
 
 // This is a compile-time assertion to ensure that this generated file
@@ -20,20 +19,16 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	ChatService_BatchCreateMessages_FullMethodName   = "/chat.v1.ChatService/BatchCreateMessages"
-	ChatService_ListMessages_FullMethodName          = "/chat.v1.ChatService/ListMessages"
-	ChatService_SyncMessages_FullMethodName          = "/chat.v1.ChatService/SyncMessages"
-	ChatService_GetLastSequenceNumber_FullMethodName = "/chat.v1.ChatService/GetLastSequenceNumber"
+	ChatService_ListMessages_FullMethodName = "/chat.v1.ChatService/ListMessages"
+	ChatService_SyncMessages_FullMethodName = "/chat.v1.ChatService/SyncMessages"
 )
 
 // ChatServiceClient is the client API for ChatService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type ChatServiceClient interface {
-	BatchCreateMessages(ctx context.Context, in *BatchCreateMessagesRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	ListMessages(ctx context.Context, in *ListMessagesRequest, opts ...grpc.CallOption) (*ListMessagesResponse, error)
 	SyncMessages(ctx context.Context, in *SyncMessagesRequest, opts ...grpc.CallOption) (*SyncMessagesResponse, error)
-	GetLastSequenceNumber(ctx context.Context, in *GetLastSequenceNumberRequest, opts ...grpc.CallOption) (*GetLastSequenceNumberResponse, error)
 }
 
 type chatServiceClient struct {
@@ -42,16 +37,6 @@ type chatServiceClient struct {
 
 func NewChatServiceClient(cc grpc.ClientConnInterface) ChatServiceClient {
 	return &chatServiceClient{cc}
-}
-
-func (c *chatServiceClient) BatchCreateMessages(ctx context.Context, in *BatchCreateMessagesRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(emptypb.Empty)
-	err := c.cc.Invoke(ctx, ChatService_BatchCreateMessages_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
 }
 
 func (c *chatServiceClient) ListMessages(ctx context.Context, in *ListMessagesRequest, opts ...grpc.CallOption) (*ListMessagesResponse, error) {
@@ -74,24 +59,12 @@ func (c *chatServiceClient) SyncMessages(ctx context.Context, in *SyncMessagesRe
 	return out, nil
 }
 
-func (c *chatServiceClient) GetLastSequenceNumber(ctx context.Context, in *GetLastSequenceNumberRequest, opts ...grpc.CallOption) (*GetLastSequenceNumberResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(GetLastSequenceNumberResponse)
-	err := c.cc.Invoke(ctx, ChatService_GetLastSequenceNumber_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 // ChatServiceServer is the server API for ChatService service.
 // All implementations must embed UnimplementedChatServiceServer
 // for forward compatibility.
 type ChatServiceServer interface {
-	BatchCreateMessages(context.Context, *BatchCreateMessagesRequest) (*emptypb.Empty, error)
 	ListMessages(context.Context, *ListMessagesRequest) (*ListMessagesResponse, error)
 	SyncMessages(context.Context, *SyncMessagesRequest) (*SyncMessagesResponse, error)
-	GetLastSequenceNumber(context.Context, *GetLastSequenceNumberRequest) (*GetLastSequenceNumberResponse, error)
 	mustEmbedUnimplementedChatServiceServer()
 }
 
@@ -102,17 +75,11 @@ type ChatServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedChatServiceServer struct{}
 
-func (UnimplementedChatServiceServer) BatchCreateMessages(context.Context, *BatchCreateMessagesRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method BatchCreateMessages not implemented")
-}
 func (UnimplementedChatServiceServer) ListMessages(context.Context, *ListMessagesRequest) (*ListMessagesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListMessages not implemented")
 }
 func (UnimplementedChatServiceServer) SyncMessages(context.Context, *SyncMessagesRequest) (*SyncMessagesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SyncMessages not implemented")
-}
-func (UnimplementedChatServiceServer) GetLastSequenceNumber(context.Context, *GetLastSequenceNumberRequest) (*GetLastSequenceNumberResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method GetLastSequenceNumber not implemented")
 }
 func (UnimplementedChatServiceServer) mustEmbedUnimplementedChatServiceServer() {}
 func (UnimplementedChatServiceServer) testEmbeddedByValue()                     {}
@@ -133,24 +100,6 @@ func RegisterChatServiceServer(s grpc.ServiceRegistrar, srv ChatServiceServer) {
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&ChatService_ServiceDesc, srv)
-}
-
-func _ChatService_BatchCreateMessages_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(BatchCreateMessagesRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(ChatServiceServer).BatchCreateMessages(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: ChatService_BatchCreateMessages_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ChatServiceServer).BatchCreateMessages(ctx, req.(*BatchCreateMessagesRequest))
-	}
-	return interceptor(ctx, in, info, handler)
 }
 
 func _ChatService_ListMessages_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -189,24 +138,6 @@ func _ChatService_SyncMessages_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
-func _ChatService_GetLastSequenceNumber_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetLastSequenceNumberRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(ChatServiceServer).GetLastSequenceNumber(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: ChatService_GetLastSequenceNumber_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ChatServiceServer).GetLastSequenceNumber(ctx, req.(*GetLastSequenceNumberRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 // ChatService_ServiceDesc is the grpc.ServiceDesc for ChatService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -215,20 +146,12 @@ var ChatService_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*ChatServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "BatchCreateMessages",
-			Handler:    _ChatService_BatchCreateMessages_Handler,
-		},
-		{
 			MethodName: "ListMessages",
 			Handler:    _ChatService_ListMessages_Handler,
 		},
 		{
 			MethodName: "SyncMessages",
 			Handler:    _ChatService_SyncMessages_Handler,
-		},
-		{
-			MethodName: "GetLastSequenceNumber",
-			Handler:    _ChatService_GetLastSequenceNumber_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

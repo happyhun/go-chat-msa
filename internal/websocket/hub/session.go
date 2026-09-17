@@ -1,24 +1,30 @@
 package hub
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
 	"time"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
 
 const (
 	maxMessageSize = 65536
 	sendBufferSize = 250
+
+	transientUnavailableMsg = "message temporarily unavailable, please retry"
 )
 
 type egressPacket struct {
 	data       []byte
+	frameNo    int64
 	senderID   string
 	receivedAt time.Time
 }
@@ -31,6 +37,7 @@ type sessionConfig struct {
 }
 
 type session struct {
+	id       string
 	config   sessionConfig
 	senderID string
 	roomID   string
@@ -38,9 +45,12 @@ type session struct {
 	conn *websocket.Conn
 
 	unregisterCh chan<- *session
-	publishFunc  func(context.Context, *Message) bool
+	publishFunc  publishFunc
 	sendCh       chan egressPacket
 	allowFunc    func(userID, roomID string) bool
+
+	frameNo  int64
+	frameBuf []byte
 
 	mu          sync.RWMutex
 	closed      bool
@@ -49,20 +59,22 @@ type session struct {
 }
 
 func newSession(
+	id string,
 	cfg sessionConfig,
 	conn *websocket.Conn,
 	senderID, roomID string,
 	unregisterCh chan<- *session,
-	publishFunc func(context.Context, *Message) bool,
+	publish publishFunc,
 	allowFunc func(userID, roomID string) bool,
 ) *session {
 	return &session{
+		id:           id,
 		config:       cfg,
 		senderID:     senderID,
 		roomID:       roomID,
 		conn:         conn,
 		unregisterCh: unregisterCh,
-		publishFunc:  publishFunc,
+		publishFunc:  publish,
 		sendCh:       make(chan egressPacket, sendBufferSize),
 		allowFunc:    allowFunc,
 	}
@@ -81,7 +93,7 @@ func (s *session) run(ctx context.Context) {
 	go func() {
 		defer wg.Done()
 		s.writePump(connCtx)
-		s.conn.Close()
+		_ = s.conn.Close()
 	}()
 
 	wg.Wait()
@@ -94,29 +106,23 @@ func (s *session) run(ctx context.Context) {
 
 func (s *session) readPump(ctx context.Context) {
 	s.conn.SetReadLimit(maxMessageSize)
-	s.conn.SetReadDeadline(time.Now().Add(s.config.pongWait))
+	if err := s.conn.SetReadDeadline(time.Now().Add(s.config.pongWait)); err != nil {
+		return
+	}
 	s.conn.SetPongHandler(func(string) error {
-		s.conn.SetReadDeadline(time.Now().Add(s.config.pongWait))
-		return nil
+		return s.conn.SetReadDeadline(time.Now().Add(s.config.pongWait))
 	})
-
 	for {
 		_, data, err := s.conn.ReadMessage()
 		if err != nil {
-			if websocket.IsUnexpectedCloseError(err,
-				websocket.CloseNormalClosure,
-				websocket.CloseGoingAway,
-				websocket.CloseAbnormalClosure,
-			) {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				slog.WarnContext(ctx, "WebSocket unexpected close", "sender_id", s.senderID, "error", err)
 			}
 			return
 		}
 
 		messagesReceivedTotal.Add(ctx, 1)
-
 		if s.allowFunc != nil && !s.allowFunc(s.senderID, s.roomID) {
-			slog.WarnContext(ctx, "Rate limit exceeded for session (WS_MESSAGE Spam Protection)", "sender_id", s.senderID, "room_id", s.roomID)
 			messagesRateLimitedTotal.Add(ctx, 1)
 			s.sendSystemMessage(ctx, "rate limit exceeded: do not spam")
 			continue
@@ -124,34 +130,35 @@ func (s *session) readPump(ctx context.Context) {
 
 		var req incomingRequest
 		if err := json.Unmarshal(data, &req); err != nil {
-			slog.WarnContext(ctx, "Invalid JSON message", "error", err, "sender_id", s.senderID, "msg_len", len(data))
 			s.sendSystemMessage(ctx, "invalid message format")
 			continue
 		}
-
 		if req.Content == "" || req.ClientMsgID == "" {
-			slog.WarnContext(ctx, "Message validation failed: missing required fields",
-				"sender_id", s.senderID, "content_len", len(req.Content))
 			s.sendSystemMessage(ctx, "missing required fields: content, client_msg_id")
 			continue
 		}
-
+		clientMsgID, err := uuid.Parse(req.ClientMsgID)
+		if err != nil || clientMsgID.String() != req.ClientMsgID {
+			s.sendSystemMessage(ctx, "client_msg_id must be a canonical UUID")
+			continue
+		}
 		if s.config.maxLength > 0 && utf8.RuneCountInString(req.Content) > s.config.maxLength {
-			slog.WarnContext(ctx, "Message content too long",
-				"sender_id", s.senderID, "rune_count", utf8.RuneCountInString(req.Content), "max", s.config.maxLength)
 			s.sendSystemMessage(ctx, fmt.Sprintf("message too long: max %d characters", s.config.maxLength))
 			continue
 		}
-
 		if req.Type == "" {
 			req.Type = msgTypeChat
 		}
-
-		now := time.Now()
+		if req.Type != msgTypeChat {
+			s.sendSystemMessage(ctx, "invalid message type")
+			continue
+		}
 		if s.publishFunc == nil {
 			return
 		}
-		if !s.publishFunc(ctx, &Message{
+
+		now := time.Now()
+		err = s.publishFunc(ctx, &Message{
 			RoomID:      s.roomID,
 			SenderID:    s.senderID,
 			Content:     req.Content,
@@ -159,10 +166,25 @@ func (s *session) readPump(ctx context.Context) {
 			Type:        req.Type,
 			Timestamp:   now.Unix(),
 			ReceivedAt:  now,
-		}) {
+		})
+		if err == nil {
+			continue
+		}
+		if errors.Is(err, ErrBusUnavailable) {
+			s.sendSystemMessage(ctx, transientUnavailableMsg)
 			return
 		}
+		return
 	}
+}
+
+func (s *session) sendSystemMessage(ctx context.Context, content string) {
+	msg := &Message{RoomID: s.roomID, SenderID: systemSenderID, Content: content, Type: msgTypeSystem, Timestamp: time.Now().Unix()}
+	data, err := msg.toRawJSON()
+	if err != nil {
+		return
+	}
+	s.send(ctx, egressPacket{data: data, senderID: systemSenderID})
 }
 
 func (s *session) writePump(ctx context.Context) {
@@ -172,9 +194,11 @@ func (s *session) writePump(ctx context.Context) {
 	for {
 		select {
 		case packet, ok := <-s.sendCh:
-			s.conn.SetWriteDeadline(time.Now().Add(s.config.writeWait))
+			if err := s.conn.SetWriteDeadline(time.Now().Add(s.config.writeWait)); err != nil {
+				return
+			}
 			if !ok {
-				s.conn.WriteMessage(websocket.CloseMessage, s.closeMessage())
+				_ = s.conn.WriteMessage(websocket.CloseMessage, s.closeMessage())
 				return
 			}
 
@@ -182,20 +206,24 @@ func (s *session) writePump(ctx context.Context) {
 				observeEgress(ctx, packet.receivedAt)
 			}
 
-			if err := s.conn.WriteMessage(websocket.TextMessage, packet.data); err != nil {
+			if err := s.writeFrame(packet); err != nil {
 				return
 			}
 			messagesSentTotal.Add(ctx, 1)
 
 		case <-ticker.C:
-			s.conn.SetWriteDeadline(time.Now().Add(s.config.writeWait))
+			if err := s.conn.SetWriteDeadline(time.Now().Add(s.config.writeWait)); err != nil {
+				return
+			}
 			if err := s.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
 			}
 
 		case <-ctx.Done():
 			if s.isClosed() {
-				s.conn.SetWriteDeadline(time.Now().Add(s.config.writeWait))
+				if err := s.conn.SetWriteDeadline(time.Now().Add(s.config.writeWait)); err != nil {
+					return
+				}
 				_ = s.conn.WriteMessage(websocket.CloseMessage, s.closeMessage())
 			}
 			return
@@ -203,40 +231,36 @@ func (s *session) writePump(ctx context.Context) {
 	}
 }
 
-func (s *session) sendSystemMessage(ctx context.Context, content string) {
-	msg := &Message{
-		Type:      msgTypeSystem,
-		SenderID:  systemSenderID,
-		RoomID:    s.roomID,
-		Content:   content,
-		Timestamp: time.Now().Unix(),
+func (s *session) writeFrame(packet egressPacket) error {
+	end := bytes.LastIndexByte(packet.data, '}')
+	if end < 0 {
+		return s.conn.WriteMessage(websocket.TextMessage, packet.data)
 	}
-	rawData, err := msg.toRawJSON()
-	if err != nil {
-		slog.ErrorContext(ctx, "failed to marshal system message", "error", err)
-		return
-	}
-	s.send(ctx, rawData)
+
+	s.frameBuf = appendFrameNoSuffix(append(s.frameBuf[:0], packet.data[:end]...), packet.frameNo)
+	return s.conn.WriteMessage(websocket.TextMessage, s.frameBuf)
 }
 
-func (s *session) send(ctx context.Context, data []byte) {
-	s.sendWithMeta(ctx, data, "", time.Time{})
-}
-
-func (s *session) sendWithMeta(ctx context.Context, data []byte, senderID string, receivedAt time.Time) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
+func (s *session) send(ctx context.Context, packet egressPacket) {
+	s.mu.Lock()
 	if s.closed {
+		s.mu.Unlock()
 		return
 	}
+	s.frameNo++
+	packet.frameNo = s.frameNo
+	dropped := false
 
 	select {
-	case s.sendCh <- egressPacket{data: data, senderID: senderID, receivedAt: receivedAt}:
-		observeFanout(ctx, receivedAt)
+	case s.sendCh <- packet:
 	default:
+		dropped = true
+	}
+	s.mu.Unlock()
+
+	if dropped {
 		sendQueueDroppedTotal.Add(ctx, 1)
-		slog.WarnContext(ctx, "Send queue full - dropping message", "sender_id", s.senderID)
+		slog.WarnContext(ctx, "Send queue full - dropping frame", "sender_id", s.senderID, "session_id", s.id)
 	}
 }
 

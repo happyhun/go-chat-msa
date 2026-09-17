@@ -66,8 +66,6 @@ patches:
 images:
   - name: go-chat-msa/api-gateway
     newTag: test
-  - name: go-chat-msa/ws-gateway
-    newTag: test
   - name: go-chat-msa/websocket-service
     newTag: test
   - name: go-chat-msa/user-service

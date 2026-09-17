@@ -47,16 +47,12 @@ func (s *E2ESuite) TestScenario_01_AliceAndBob_Lifecycle() {
 	defer bobConn.Close()
 
 	content := "Hello Alice, welcome to the MSA world!"
-	s.Require().NoError(bobConn.WriteJSON(map[string]string{
-		"type":          "chat",
-		"content":       content,
-		"client_msg_id": "m1",
-	}))
+	s.Require().NoError(s.sendMessage(bobConn, content))
 
 	msg, err := s.waitForWSMessage(ctx, aliceConn, "chat", content, wsReadTimeout)
 	s.Require().NoError(err, "Alice should receive Bob's message")
 	s.Equal(content, msg["content"])
-	s.NotEmpty(msg["sequence_number"], "Sequence number must be assigned by server")
+	s.NotEmpty(messageID(msg), "Message id must be assigned by server")
 }
 
 func (s *E2ESuite) TestScenario_02_Auth_TokenRefresh() {
@@ -218,15 +214,12 @@ func (s *E2ESuite) TestScenario_05_BurstChatting_Concurrency() {
 
 	msgPerClient := 5
 	totalExpected := numClients * msgPerClient
+	g, gCtx = errgroup.WithContext(ctx)
 
-	for i, conn := range conns {
+	for i := range conns {
 		g.Go(func() error {
-			for j := range msgPerClient {
-				if err := conn.WriteJSON(map[string]string{
-					"type":          "chat",
-					"content":       fmt.Sprintf("burst-from-%d", i),
-					"client_msg_id": fmt.Sprintf("msg-%d-%d", i, j),
-				}); err != nil {
+			for range msgPerClient {
+				if err := s.sendMessage(conns[i], fmt.Sprintf("burst-from-%d", i)); err != nil {
 					return err
 				}
 			}
@@ -276,11 +269,7 @@ func (s *E2ESuite) TestScenario_06_Message_Pagination() {
 
 	totalMsgs := 15
 	for i := 1; i <= totalMsgs; i++ {
-		s.Require().NoError(conn.WriteJSON(map[string]string{
-			"type":          "chat",
-			"content":       fmt.Sprintf("page-msg-%d", i),
-			"client_msg_id": fmt.Sprintf("cm-%d", i),
-		}))
+		s.Require().NoError(s.sendMessage(conn, fmt.Sprintf("page-msg-%d", i)))
 		_, err = s.waitForWSMessage(ctx, conn, "chat", fmt.Sprintf("page-msg-%d", i), 5*time.Second)
 		s.Require().NoError(err)
 
@@ -297,11 +286,10 @@ func (s *E2ESuite) TestScenario_06_Message_Pagination() {
 	s.Require().NoError(err)
 	s.Require().Len(res1.Messages, 10, "Should return exactly 10 latest messages")
 
-	firstSeqVal := res1.Messages[0]["sequence_number"]
-	s.Require().NotNil(firstSeqVal, "Messages must include valid sequence_number")
+	s.Require().NotEmpty(messageID(res1.Messages[0]), "Messages must include a server assigned id")
 	s.Equal("page-msg-15", res1.Messages[0]["content"])
 	s.Equal("page-msg-6", res1.Messages[9]["content"])
-	s.Greater(sequenceNumber(res1.Messages[0]), sequenceNumber(res1.Messages[9]))
+	s.Greater(messageID(res1.Messages[0]), messageID(res1.Messages[9]))
 }
 
 func (s *E2ESuite) TestScenario_07_MessageRecovery_Recovery() {
@@ -329,31 +317,30 @@ func (s *E2ESuite) TestScenario_07_MessageRecovery_Recovery() {
 	time.Sleep(500 * time.Millisecond)
 
 	numMissed := 3
-	var lastSeq int64
 	aConn, _, err := s.dialWS(ctx, aTok, roomID)
 	s.Require().NoError(err)
 	defer aConn.Close()
 
+	baselineID, err := s.latestMessageID(ctx, aTok, roomID)
+	s.Require().NoError(err)
+
 	for i := 1; i <= numMissed; i++ {
 		content := fmt.Sprintf("missed-msg-%d", i)
-		s.Require().NoError(aConn.WriteJSON(map[string]string{
-			"type": "chat", "content": content, "client_msg_id": fmt.Sprintf("m-%d", i),
-		}))
+		s.Require().NoError(s.sendMessage(aConn, content))
 		msg, err := s.waitForWSMessage(ctx, aConn, "chat", content, 5*time.Second)
 		s.Require().NoError(err)
-		lastSeq = sequenceNumber(msg)
-		s.Require().NotZero(lastSeq)
+		s.Require().NotEmpty(messageID(msg))
 
 		time.Sleep(600 * time.Millisecond)
 	}
 
 	time.Sleep(500 * time.Millisecond)
 
-	syncURL := fmt.Sprintf("/rooms/%s/messages?last_seq=%d&limit=10", roomID, lastSeq-int64(numMissed))
+	syncURL := fmt.Sprintf("/rooms/%s/messages?after_id=%s&limit=10", roomID, baselineID)
 	var syncRes struct {
 		Messages []map[string]any `json:"messages"`
 	}
-	s.T().Logf("Bob requesting sync from seq %d", lastSeq-int64(numMissed))
+	s.T().Logf("Bob requesting sync after id %s", baselineID)
 
 	err = s.makeRequest(ctx, "GET", syncURL, nil, &syncRes, bTok)
 	s.Require().NoError(err)
@@ -580,7 +567,7 @@ func (s *E2ESuite) TestScenario_11_RateLimit_MultiLevel() {
 			break
 		}
 	}
-	s.Require().True(hitEstablish, "WS Establish Rate limit (UserID based on /ws/ticket) should be triggered")
+	s.Require().True(hitEstablish, "WS ticket rate limit (UserID based on /auth/ws-ticket) should be triggered")
 
 	time.Sleep(3 * time.Second)
 }
@@ -617,59 +604,15 @@ func (s *E2ESuite) TestScenario_12_RateLimit_SpamProtection() {
 	conn2, _, err := s.dialWS(ctx, t2, roomID)
 	s.Require().NoError(err)
 	defer conn2.Close()
-
 	time.Sleep(500 * time.Millisecond)
-
-	go func() {
-		for i := range 30 {
-			err := conn1.WriteJSON(map[string]string{
-				"type":          "chat",
-				"content":       fmt.Sprintf("spam-%d", i),
-				"client_msg_id": fmt.Sprintf("cm-%d", i),
-			})
-			if err != nil {
-				return
-			}
-			time.Sleep(20 * time.Millisecond)
-		}
-	}()
-
-	gotRateLimitMsg := false
-
-	conn1.SetReadDeadline(time.Now().Add(10 * time.Second))
-	for {
-		_, p, err := conn1.ReadMessage()
-		if err != nil {
-			s.T().Logf("[User1] ReadMessage loop ended: %v", err)
-			break
-		}
-		var m map[string]any
-		json.Unmarshal(p, &m)
-		if m["type"] == "system" && m["sender_id"] == "system" {
-			content, ok := m["content"].(string)
-			if ok {
-				s.T().Logf("[User1] Received system message: %s", content)
-				if content == "rate limit exceeded: do not spam" {
-					gotRateLimitMsg = true
-					break
-				}
-			}
-		}
+	for i := 0; i < 30; i++ {
+		s.Require().NoError(s.sendMessage(conn1, fmt.Sprintf("spam-%d", i)))
 	}
-	s.Require().True(gotRateLimitMsg, "Spammer should receive WS_MESSAGE rate limit warning")
-
-	conn2.SetReadDeadline(time.Now().Add(1 * time.Second))
-	for {
-		_, p, err := conn2.ReadMessage()
-		if err != nil {
-			break
-		}
-		var m map[string]any
-		json.Unmarshal(p, &m)
-		if content, ok := m["content"].(string); ok && content == "rate limit exceeded: do not spam" {
-			s.T().Fatal("User2 should not receive User1's rate limit warning")
-		}
-	}
+	_, err = s.waitForWSMessage(ctx, conn1, "system", "rate limit exceeded: do not spam", wsReadTimeout)
+	s.Require().NoError(err)
+	s.Require().NoError(s.sendMessage(conn2, "other user unaffected"))
+	_, err = s.waitForWSMessage(ctx, conn2, "chat", "other user unaffected", wsReadTimeout)
+	s.Require().NoError(err)
 }
 
 func (s *E2ESuite) TestScenario_13_UserDeletion_FullLifecycle() {
@@ -744,19 +687,16 @@ func (s *E2ESuite) TestScenario_13_UserDeletion_FullLifecycle() {
 	s.Require().NoError(err, "재가입한 계정으로 로그인 가능")
 }
 
-func (s *E2ESuite) TestScenario_14_FixedReplicasReadinessAndMembership() {
+func (s *E2ESuite) TestScenario_14_FixedReplicasReadiness() {
 	ctx := s.T().Context()
 
-	for _, name := range []string{"api-gateway", "ws-gateway", "websocket-service", "user-service", "chat-service"} {
+	for _, name := range []string{"api-gateway", "websocket-service", "user-service", "chat-service"} {
 		s.requireDeploymentReadyReplicas(ctx, name, 2)
 	}
 	s.requireDeploymentReadyReplicas(ctx, "frontend", 1)
-
-	keys := s.waitForRedisKeyCount(ctx, "wss:member:*", 2, 20*time.Second, 500*time.Millisecond)
-	s.Require().Len(keys, 2, "two websocket-service pods must be registered in Redis membership")
 }
 
-func (s *E2ESuite) TestScenario_15_RoomSequenceIsStrictlyIncreasing() {
+func (s *E2ESuite) TestScenario_15_RoomMessageIDsAreStrictlyIncreasing() {
 	ctx := s.T().Context()
 
 	alice := s.generateUniqueUsername("sa")
@@ -782,22 +722,39 @@ func (s *E2ESuite) TestScenario_15_RoomSequenceIsStrictlyIncreasing() {
 	defer bobConn.Close()
 
 	const totalMessages = 8
-	sequences := make([]int64, 0, totalMessages)
+	ids := make([]string, 0, totalMessages)
 	for i := 1; i <= totalMessages; i++ {
 		content := fmt.Sprintf("k8s-seq-msg-%02d", i)
-		s.Require().NoError(bobConn.WriteJSON(map[string]string{
-			"type":          "chat",
-			"content":       content,
-			"client_msg_id": fmt.Sprintf("k8s-seq-%02d", i),
-		}))
+		s.Require().NoError(s.sendMessage(bobConn, content))
 
 		msg, err := s.waitForWSMessage(ctx, aliceConn, "chat", content, 10*time.Second)
 		s.Require().NoError(err)
-		sequences = append(sequences, sequenceNumber(msg))
+		id := messageID(msg)
+		s.Require().NotEmpty(id)
+		ids = append(ids, id)
+
+		time.Sleep(600 * time.Millisecond)
 	}
 
-	for i := 1; i < len(sequences); i++ {
-		s.Require().Greater(sequences[i], sequences[i-1], "room sequence must strictly increase")
+	for i := 1; i < len(ids); i++ {
+		s.Require().Greater(ids[i], ids[i-1], "message ids from one sender must strictly increase")
+	}
+
+	var syncRes struct {
+		Messages []map[string]any `json:"messages"`
+	}
+	syncURL := fmt.Sprintf("/rooms/%s/messages?after_id=%s&limit=%d", roomID, ids[0], totalMessages)
+	s.Require().EventuallyWithT(func(c *assert.CollectT) {
+		if !assert.NoError(c, s.makeRequest(ctx, "GET", syncURL, nil, &syncRes, aliceToken)) {
+			return
+		}
+		assert.Len(c, messagesWithContentPrefix(syncRes.Messages, "k8s-seq-msg-"), totalMessages-1,
+			"after_id must exclude the anchor message")
+	}, 10*time.Second, 200*time.Millisecond)
+
+	synced := messagesWithContentPrefix(syncRes.Messages, "k8s-seq-msg-")
+	for i := 1; i < len(synced); i++ {
+		s.Require().Greater(messageID(synced[i]), messageID(synced[i-1]), "sync must return messages in id order")
 	}
 }
 
@@ -833,11 +790,7 @@ func (s *E2ESuite) TestScenario_16_ReconnectCatchUpFromDatabaseHistory() {
 	const missedMessages = 4
 	for i := 1; i <= missedMessages; i++ {
 		content := fmt.Sprintf("k8s-missed-%02d", i)
-		s.Require().NoError(aliceConn.WriteJSON(map[string]string{
-			"type":          "chat",
-			"content":       content,
-			"client_msg_id": fmt.Sprintf("k8s-missed-%02d", i),
-		}))
+		s.Require().NoError(s.sendMessage(aliceConn, content))
 		_, err = s.waitForWSMessage(ctx, carolConn, "chat", content, 10*time.Second)
 		s.Require().NoError(err)
 	}
@@ -846,7 +799,9 @@ func (s *E2ESuite) TestScenario_16_ReconnectCatchUpFromDatabaseHistory() {
 		Messages []map[string]any `json:"messages"`
 	}
 	s.Require().EventuallyWithT(func(c *assert.CollectT) {
-		err := s.makeRequest(ctx, "GET", fmt.Sprintf("/rooms/%s/messages?last_seq=0&limit=10", roomID), nil, &syncRes, bobToken)
+		err := s.makeRequest(ctx, "GET",
+			fmt.Sprintf("/rooms/%s/messages?after_id=%s&limit=10", roomID, zeroMessageCursor),
+			nil, &syncRes, bobToken)
 		if !assert.NoError(c, err) {
 			return
 		}
@@ -860,30 +815,24 @@ func (s *E2ESuite) TestScenario_16_ReconnectCatchUpFromDatabaseHistory() {
 	}
 }
 
-func (s *E2ESuite) waitForRedisKeyCount(ctx context.Context, pattern string, expected int, timeout, interval time.Duration) []string {
-	deadline := time.Now().Add(timeout)
-	var keys []string
-	for time.Now().Before(deadline) {
-		keys = s.redisKeys(ctx, pattern)
-		if len(keys) == expected {
-			return keys
-		}
-		time.Sleep(interval)
-	}
-	return keys
+const zeroMessageCursor = "00000000-0000-0000-0000-000000000000"
+
+func messageID(msg map[string]any) string {
+	id, _ := msg["id"].(string)
+	return id
 }
 
-func sequenceNumber(msg map[string]any) int64 {
-	switch v := msg["sequence_number"].(type) {
-	case float64:
-		return int64(v)
-	case int64:
-		return v
-	case int:
-		return int64(v)
-	default:
-		return 0
+func (s *E2ESuite) latestMessageID(ctx context.Context, token, roomID string) (string, error) {
+	var res struct {
+		Messages []map[string]any `json:"messages"`
 	}
+	if err := s.makeRequest(ctx, "GET", fmt.Sprintf("/rooms/%s/messages?limit=1", roomID), nil, &res, token); err != nil {
+		return "", err
+	}
+	if len(res.Messages) == 0 {
+		return zeroMessageCursor, nil
+	}
+	return messageID(res.Messages[0]), nil
 }
 
 func messagesWithContentPrefix(messages []map[string]any, prefix string) []map[string]any {

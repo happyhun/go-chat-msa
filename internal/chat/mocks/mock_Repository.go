@@ -85,113 +85,58 @@ func (_c *MockRepository_GetHistory_Call) RunAndReturn(run func(context.Context,
 	return _c
 }
 
-// GetLastSequenceNumber provides a mock function with given fields: ctx, roomID
-func (_m *MockRepository) GetLastSequenceNumber(ctx context.Context, roomID string) (int64, error) {
-	ret := _m.Called(ctx, roomID)
-
-	if len(ret) == 0 {
-		panic("no return value specified for GetLastSequenceNumber")
-	}
-
-	var r0 int64
-	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, string) (int64, error)); ok {
-		return rf(ctx, roomID)
-	}
-	if rf, ok := ret.Get(0).(func(context.Context, string) int64); ok {
-		r0 = rf(ctx, roomID)
-	} else {
-		r0 = ret.Get(0).(int64)
-	}
-
-	if rf, ok := ret.Get(1).(func(context.Context, string) error); ok {
-		r1 = rf(ctx, roomID)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
-// MockRepository_GetLastSequenceNumber_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetLastSequenceNumber'
-type MockRepository_GetLastSequenceNumber_Call struct {
-	*mock.Call
-}
-
-// GetLastSequenceNumber is a helper method to define mock.On call
-//   - ctx context.Context
-//   - roomID string
-func (_e *MockRepository_Expecter) GetLastSequenceNumber(ctx interface{}, roomID interface{}) *MockRepository_GetLastSequenceNumber_Call {
-	return &MockRepository_GetLastSequenceNumber_Call{Call: _e.mock.On("GetLastSequenceNumber", ctx, roomID)}
-}
-
-func (_c *MockRepository_GetLastSequenceNumber_Call) Run(run func(ctx context.Context, roomID string)) *MockRepository_GetLastSequenceNumber_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string))
-	})
-	return _c
-}
-
-func (_c *MockRepository_GetLastSequenceNumber_Call) Return(_a0 int64, _a1 error) *MockRepository_GetLastSequenceNumber_Call {
-	_c.Call.Return(_a0, _a1)
-	return _c
-}
-
-func (_c *MockRepository_GetLastSequenceNumber_Call) RunAndReturn(run func(context.Context, string) (int64, error)) *MockRepository_GetLastSequenceNumber_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// SaveMany provides a mock function with given fields: ctx, msgs
-func (_m *MockRepository) SaveMany(ctx context.Context, msgs []*chat.Message) error {
+// SaveBatch provides a mock function with given fields: ctx, msgs
+func (_m *MockRepository) SaveBatch(ctx context.Context, msgs []*chat.Message) []error {
 	ret := _m.Called(ctx, msgs)
 
 	if len(ret) == 0 {
-		panic("no return value specified for SaveMany")
+		panic("no return value specified for SaveBatch")
 	}
 
-	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, []*chat.Message) error); ok {
+	var r0 []error
+	if rf, ok := ret.Get(0).(func(context.Context, []*chat.Message) []error); ok {
 		r0 = rf(ctx, msgs)
 	} else {
-		r0 = ret.Error(0)
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]error)
+		}
 	}
 
 	return r0
 }
 
-// MockRepository_SaveMany_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SaveMany'
-type MockRepository_SaveMany_Call struct {
+// MockRepository_SaveBatch_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SaveBatch'
+type MockRepository_SaveBatch_Call struct {
 	*mock.Call
 }
 
-// SaveMany is a helper method to define mock.On call
+// SaveBatch is a helper method to define mock.On call
 //   - ctx context.Context
 //   - msgs []*chat.Message
-func (_e *MockRepository_Expecter) SaveMany(ctx interface{}, msgs interface{}) *MockRepository_SaveMany_Call {
-	return &MockRepository_SaveMany_Call{Call: _e.mock.On("SaveMany", ctx, msgs)}
+func (_e *MockRepository_Expecter) SaveBatch(ctx interface{}, msgs interface{}) *MockRepository_SaveBatch_Call {
+	return &MockRepository_SaveBatch_Call{Call: _e.mock.On("SaveBatch", ctx, msgs)}
 }
 
-func (_c *MockRepository_SaveMany_Call) Run(run func(ctx context.Context, msgs []*chat.Message)) *MockRepository_SaveMany_Call {
+func (_c *MockRepository_SaveBatch_Call) Run(run func(ctx context.Context, msgs []*chat.Message)) *MockRepository_SaveBatch_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		run(args[0].(context.Context), args[1].([]*chat.Message))
 	})
 	return _c
 }
 
-func (_c *MockRepository_SaveMany_Call) Return(_a0 error) *MockRepository_SaveMany_Call {
+func (_c *MockRepository_SaveBatch_Call) Return(_a0 []error) *MockRepository_SaveBatch_Call {
 	_c.Call.Return(_a0)
 	return _c
 }
 
-func (_c *MockRepository_SaveMany_Call) RunAndReturn(run func(context.Context, []*chat.Message) error) *MockRepository_SaveMany_Call {
+func (_c *MockRepository_SaveBatch_Call) RunAndReturn(run func(context.Context, []*chat.Message) []error) *MockRepository_SaveBatch_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
-// SyncMessages provides a mock function with given fields: ctx, roomID, lastSeq, limit, joinedAt
-func (_m *MockRepository) SyncMessages(ctx context.Context, roomID string, lastSeq int64, limit int64, joinedAt time.Time) ([]*chat.Message, error) {
-	ret := _m.Called(ctx, roomID, lastSeq, limit, joinedAt)
+// SyncMessages provides a mock function with given fields: ctx, roomID, afterID, limit, joinedAt
+func (_m *MockRepository) SyncMessages(ctx context.Context, roomID string, afterID string, limit int64, joinedAt time.Time) ([]*chat.Message, error) {
+	ret := _m.Called(ctx, roomID, afterID, limit, joinedAt)
 
 	if len(ret) == 0 {
 		panic("no return value specified for SyncMessages")
@@ -199,19 +144,19 @@ func (_m *MockRepository) SyncMessages(ctx context.Context, roomID string, lastS
 
 	var r0 []*chat.Message
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, int64, int64, time.Time) ([]*chat.Message, error)); ok {
-		return rf(ctx, roomID, lastSeq, limit, joinedAt)
+	if rf, ok := ret.Get(0).(func(context.Context, string, string, int64, time.Time) ([]*chat.Message, error)); ok {
+		return rf(ctx, roomID, afterID, limit, joinedAt)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, string, int64, int64, time.Time) []*chat.Message); ok {
-		r0 = rf(ctx, roomID, lastSeq, limit, joinedAt)
+	if rf, ok := ret.Get(0).(func(context.Context, string, string, int64, time.Time) []*chat.Message); ok {
+		r0 = rf(ctx, roomID, afterID, limit, joinedAt)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).([]*chat.Message)
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, string, int64, int64, time.Time) error); ok {
-		r1 = rf(ctx, roomID, lastSeq, limit, joinedAt)
+	if rf, ok := ret.Get(1).(func(context.Context, string, string, int64, time.Time) error); ok {
+		r1 = rf(ctx, roomID, afterID, limit, joinedAt)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -227,16 +172,16 @@ type MockRepository_SyncMessages_Call struct {
 // SyncMessages is a helper method to define mock.On call
 //   - ctx context.Context
 //   - roomID string
-//   - lastSeq int64
+//   - afterID string
 //   - limit int64
 //   - joinedAt time.Time
-func (_e *MockRepository_Expecter) SyncMessages(ctx interface{}, roomID interface{}, lastSeq interface{}, limit interface{}, joinedAt interface{}) *MockRepository_SyncMessages_Call {
-	return &MockRepository_SyncMessages_Call{Call: _e.mock.On("SyncMessages", ctx, roomID, lastSeq, limit, joinedAt)}
+func (_e *MockRepository_Expecter) SyncMessages(ctx interface{}, roomID interface{}, afterID interface{}, limit interface{}, joinedAt interface{}) *MockRepository_SyncMessages_Call {
+	return &MockRepository_SyncMessages_Call{Call: _e.mock.On("SyncMessages", ctx, roomID, afterID, limit, joinedAt)}
 }
 
-func (_c *MockRepository_SyncMessages_Call) Run(run func(ctx context.Context, roomID string, lastSeq int64, limit int64, joinedAt time.Time)) *MockRepository_SyncMessages_Call {
+func (_c *MockRepository_SyncMessages_Call) Run(run func(ctx context.Context, roomID string, afterID string, limit int64, joinedAt time.Time)) *MockRepository_SyncMessages_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string), args[2].(int64), args[3].(int64), args[4].(time.Time))
+		run(args[0].(context.Context), args[1].(string), args[2].(string), args[3].(int64), args[4].(time.Time))
 	})
 	return _c
 }
@@ -246,7 +191,7 @@ func (_c *MockRepository_SyncMessages_Call) Return(_a0 []*chat.Message, _a1 erro
 	return _c
 }
 
-func (_c *MockRepository_SyncMessages_Call) RunAndReturn(run func(context.Context, string, int64, int64, time.Time) ([]*chat.Message, error)) *MockRepository_SyncMessages_Call {
+func (_c *MockRepository_SyncMessages_Call) RunAndReturn(run func(context.Context, string, string, int64, time.Time) ([]*chat.Message, error)) *MockRepository_SyncMessages_Call {
 	_c.Call.Return(run)
 	return _c
 }

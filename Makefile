@@ -9,7 +9,7 @@ K6_LOAD_TIMEOUT ?= 30m
 K6_FOLLOW_LOGS ?= true
 K6_MAX_LOG_REQUESTS ?= 4
 
-GO_SERVICES := api-gateway ws-gateway websocket-service user-service chat-service
+GO_SERVICES := api-gateway websocket-service user-service chat-service
 K8S_KUSTOMIZE_TARGETS := \
 	deploy/k8s/base \
 	deploy/k8s/base/foundation \
@@ -186,6 +186,9 @@ test-down:
 
 .PHONY: qa-down
 qa-down:
+	kubectl delete apiservice v1beta1.custom.metrics.k8s.io --ignore-not-found=true
+	kubectl delete clusterrole gochat-prometheus-adapter --ignore-not-found=true
+	kubectl delete clusterrolebinding gochat-prometheus-adapter gochat-prometheus-adapter-auth-delegator --ignore-not-found=true
 	kubectl delete namespace go-chat-qa --ignore-not-found=true
 
 .PHONY: kind-delete

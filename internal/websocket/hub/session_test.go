@@ -2,115 +2,106 @@ package hub
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func publishToChannel(ch chan<- *Message) func(context.Context, *Message) bool {
-	return func(ctx context.Context, msg *Message) bool {
-		select {
-		case ch <- msg:
-			return true
-		case <-ctx.Done():
-			return false
-		}
-	}
+func newTestSession(conn *websocket.Conn, senderID, roomID string, unregisterCh chan<- *session) *session {
+	return newSession(uuid.NewString(), sessionConfig{
+		writeWait: 10 * time.Second, pongWait: 60 * time.Second, pingPeriod: 54 * time.Second,
+	}, conn, senderID, roomID, unregisterCh, nil, nil)
 }
-
 func TestSession_ReadPump(t *testing.T) {
 	t.Parallel()
-
-	tests := []struct {
-		name          string
-		payload       any
-		isRaw         bool
-		expectMessage bool
-	}{
-		{
-			name: "Success: 유효한 채팅 메시지 수신 및 브로드캐스트 전달",
-			payload: map[string]string{
-				"content":       "Hello World",
-				"client_msg_id": "client-1",
-				"type":          "chat",
-			},
-			expectMessage: true,
-		},
-		{
-			name:          "Failure: 잘못된 JSON 형식 메시지 수신",
-			payload:       "{invalid-json",
-			isRaw:         true,
-			expectMessage: false,
-		},
-		{
-			name: "Failure: 필수 필드(content) 누락 메시지 무시",
-			payload: map[string]string{
-				"client_msg_id": "client-2",
-			},
-			expectMessage: false,
-		},
+	serverConn, clientConn := createTestWSPair(t)
+	defer func() { _ = clientConn.Close() }()
+	published := make(chan *Message, 1)
+	s := newSession(uuid.NewString(), sessionConfig{writeWait: 10 * time.Second, pongWait: 60 * time.Second, pingPeriod: 54 * time.Second}, serverConn, "user", "room", make(chan *session, 1), func(_ context.Context, msg *Message) error {
+		published <- msg
+		return nil
+	}, nil)
+	go s.readPump(t.Context())
+	require.NoError(t, clientConn.WriteJSON(map[string]string{"content": "hello", "client_msg_id": uuid.NewString()}))
+	select {
+	case msg := <-published:
+		assert.Equal(t, "hello", msg.Content)
+		assert.Equal(t, msgTypeChat, msg.Type)
+	case <-time.After(time.Second):
+		t.Fatal("message was not published")
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			serverConn, clientConn := createTestWSPair(t)
-			t.Cleanup(func() { clientConn.Close() })
-
-			unregisterCh := make(chan *session, 1)
-			broadcastCh := make(chan *Message, 1)
-
-			cfg := sessionConfig{
-				writeWait:  10 * time.Second,
-				pongWait:   60 * time.Second,
-				pingPeriod: 54 * time.Second,
-			}
-
-			s := newSession(cfg, serverConn, "user1", "room1", unregisterCh, publishToChannel(broadcastCh), nil)
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-
-			go s.readPump(ctx)
-
-			var err error
-			if tt.isRaw {
-				err = clientConn.WriteMessage(websocket.TextMessage, []byte(tt.payload.(string)))
-			} else {
-				err = clientConn.WriteJSON(tt.payload)
-			}
-			require.NoError(t, err)
-
-			if tt.expectMessage {
-				select {
-				case msg := <-broadcastCh:
-					assert.NotEmpty(t, msg.Content)
-				case <-time.After(500 * time.Millisecond):
-					t.Fatal("timeout waiting for broadcast message")
-				}
-			} else {
-				select {
-				case <-broadcastCh:
-					t.Fatal("message should not have been broadcasted")
-				case <-time.After(100 * time.Millisecond):
-
-				}
-			}
-		})
-	}
-
 }
 
 func TestSession_ReadPump_Unregister(t *testing.T) {
 	t.Parallel()
 
+	serverConn, clientConn := createTestWSPair(t)
+	unregisterCh := make(chan *session, 1)
+	s := newTestSession(serverConn, "user1", "room1", unregisterCh)
+
+	go s.run(t.Context())
+
+	require.NoError(t, clientConn.Close())
+
+	select {
+	case closed := <-unregisterCh:
+		assert.Equal(t, s, closed)
+	case <-time.After(time.Second):
+		t.Fatal("unregister should be called after connection close")
+	}
+}
+
+func TestSession_FrameNumbering(t *testing.T) {
+	t.Parallel()
+
+	serverConn, clientConn := createTestWSPair(t)
+	defer func() { _ = clientConn.Close() }()
+
+	s := newTestSession(serverConn, "user2", "room2", nil)
+	go s.writePump(context.Background())
+
+	for want := 1; want <= 3; want++ {
+		s.send(context.Background(), egressPacket{data: []byte(`{"content":"hi"}`)})
+
+		require.NoError(t, clientConn.SetReadDeadline(time.Now().Add(time.Second)))
+		_, data, err := clientConn.ReadMessage()
+		require.NoError(t, err)
+
+		var frame struct {
+			Content string `json:"content"`
+			FrameNo int64  `json:"frame_no"`
+		}
+		require.NoError(t, json.Unmarshal(data, &frame))
+		assert.Equal(t, "hi", frame.Content)
+		assert.Equal(t, int64(want), frame.FrameNo, "frame_no must increase by one per frame")
+	}
+}
+
+func TestSession_WriteFrame(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
-		name string
+		name    string
+		payload string
+		frameNo int64
+		want    string
 	}{
 		{
-			name: "Success: 클라이언트 연결 종료 시 Unregister 트리거",
+			name:    "Success: 객체 끝에 frame_no 추가",
+			payload: `{"id":"m1","content":"hi"}`,
+			frameNo: 7,
+			want:    `{"id":"m1","content":"hi","frame_no":7}`,
+		},
+		{
+			name:    "Success: 중괄호가 없으면 원본 유지",
+			payload: `not-json`,
+			frameNo: 3,
+			want:    `not-json`,
 		},
 	}
 
@@ -118,158 +109,106 @@ func TestSession_ReadPump_Unregister(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			serverConn, clientConn := createTestWSPair(t)
-			unregisterCh := make(chan *session, 1)
-			cfg := sessionConfig{
-				writeWait:  10 * time.Second,
-				pongWait:   60 * time.Second,
-				pingPeriod: 54 * time.Second,
-			}
-			s := newSession(cfg, serverConn, "user1", "room1", unregisterCh, publishToChannel(make(chan *Message, 1)), nil)
+			defer func() { _ = clientConn.Close() }()
 
-			go s.run(t.Context())
+			payload := []byte(tt.payload)
+			s := newTestSession(serverConn, "user", "room", nil)
+			require.NoError(t, s.writeFrame(egressPacket{data: payload, frameNo: tt.frameNo}))
 
-			clientConn.Close()
-
-			select {
-			case session := <-unregisterCh:
-				assert.Equal(t, s, session)
-			case <-time.After(1 * time.Second):
-				t.Fatal("unregister should be called after connection close")
-			}
+			require.NoError(t, clientConn.SetReadDeadline(time.Now().Add(time.Second)))
+			_, data, err := clientConn.ReadMessage()
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, string(data))
+			assert.Equal(t, tt.payload, string(payload), "shared payload must not be modified")
 		})
 	}
 }
 
-func TestSession_WritePumpAndSend(t *testing.T) {
+func TestSession_SendDropsFrameWhenBufferFull(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name string
-		run  func(t *testing.T, s *session, clientConn *websocket.Conn)
-	}{
-		{
-			name: "Success: 메시지 전송 및 클라이언트 수신 확인",
-			run: func(t *testing.T, s *session, clientConn *websocket.Conn) {
-				s.send(context.Background(), []byte(`{"test":true}`))
+	serverConn, clientConn := createTestWSPair(t)
+	defer func() { _ = clientConn.Close() }()
 
-				clientConn.SetReadDeadline(time.Now().Add(1 * time.Second))
-				msgType, data, err := clientConn.ReadMessage()
-				require.NoError(t, err)
-				assert.Equal(t, websocket.TextMessage, msgType)
-				assert.JSONEq(t, `{"test":true}`, string(data))
-			},
-		},
-		{
-			name: "Success: 정기적인 Ping 메시지 전송 확인",
-			run: func(t *testing.T, s *session, clientConn *websocket.Conn) {
-				clientConn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
-				var receivedPing bool
-				clientConn.SetPingHandler(func(appData string) error {
-					receivedPing = true
-					return nil
-				})
+	s := newTestSession(serverConn, "user3", "room3", nil)
 
-				clientConn.ReadMessage()
-				assert.True(t, receivedPing, "ping message should be received")
-			},
-		},
-		{
-			name: "Success: 버퍼 초과 상황에서의 세션 정상 종료",
-			run: func(t *testing.T, s *session, clientConn *websocket.Conn) {
-				for range sendBufferSize + 10 {
-					s.send(context.Background(), []byte(`"spam"`))
-				}
-
-				s.close()
-
-				deadline := time.Now().Add(3 * time.Second)
-				var err error
-				for time.Now().Before(deadline) {
-					clientConn.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
-					_, _, err = clientConn.ReadMessage()
-					if err != nil {
-						break
-					}
-				}
-				assert.Error(t, err)
-			},
-		},
+	for range sendBufferSize + 10 {
+		s.send(context.Background(), egressPacket{data: []byte(`{"content":"spam"}`)})
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			serverConn, clientConn := createTestWSPair(t)
-			defer clientConn.Close()
+	assert.False(t, s.isClosed(), "session must stay open when frames are dropped")
+	assert.Len(t, s.sendCh, sendBufferSize)
+	assert.Equal(t, int64(sendBufferSize+10), s.frameNo, "dropped frames still consume a frame number")
+}
 
-			cfg := sessionConfig{
-				writeWait:  10 * time.Second,
-				pongWait:   60 * time.Second,
-				pingPeriod: 50 * time.Millisecond,
-			}
+func TestSession_WritePumpPing(t *testing.T) {
+	t.Parallel()
 
-			s := newSession(cfg, serverConn, "user2", "room2", nil, nil, nil)
-			go s.writePump(context.Background())
+	serverConn, clientConn := createTestWSPair(t)
+	defer func() { _ = clientConn.Close() }()
 
-			tt.run(t, s, clientConn)
-		})
-	}
+	s := newSession(uuid.NewString(), sessionConfig{
+		writeWait:  10 * time.Second,
+		pongWait:   60 * time.Second,
+		pingPeriod: 50 * time.Millisecond,
+	}, serverConn, "user4", "room4", nil, nil, nil)
+	go s.writePump(context.Background())
+
+	var receivedPing bool
+	clientConn.SetPingHandler(func(string) error {
+		receivedPing = true
+		return nil
+	})
+	require.NoError(t, clientConn.SetReadDeadline(time.Now().Add(500*time.Millisecond)))
+	_, _, err := clientConn.ReadMessage()
+	assert.Error(t, err, "read should end at the deadline after handling the ping")
+
+	assert.True(t, receivedPing, "ping message should be received")
 }
 
 func TestSession_Run(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name string
-		run  func(t *testing.T, s *session, clientConn *websocket.Conn, cancel context.CancelFunc, done <-chan struct{})
-	}{
-		{
-			name: "Success: Run 루프 활성화 중 메시지 전송",
-			run: func(t *testing.T, s *session, clientConn *websocket.Conn, cancel context.CancelFunc, done <-chan struct{}) {
-				s.send(context.Background(), []byte("hello"))
-				_, data, err := clientConn.ReadMessage()
-				require.NoError(t, err)
-				assert.Equal(t, "hello", string(data))
-			},
-		},
-		{
-			name: "Success: 컨텍스트 취소 시 세션 리소스 정리",
-			run: func(t *testing.T, s *session, clientConn *websocket.Conn, cancel context.CancelFunc, done <-chan struct{}) {
-				cancel()
+	t.Run("Success: Run 루프 활성화 중 메시지 전송", func(t *testing.T) {
+		t.Parallel()
+		serverConn, clientConn := createTestWSPair(t)
+		defer func() { _ = clientConn.Close() }()
 
-				select {
-				case <-done:
-				case <-time.After(1 * time.Second):
-					t.Fatal("session.run should return after context cancel")
-				}
-			},
-		},
-	}
+		unregisterCh := make(chan *session, 1)
+		s := newTestSession(serverConn, "u3", "r3", unregisterCh)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			serverConn, clientConn := createTestWSPair(t)
-			defer clientConn.Close()
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		go s.run(ctx)
 
-			cfg := sessionConfig{
-				writeWait:  10 * time.Second,
-				pongWait:   60 * time.Second,
-				pingPeriod: 54 * time.Second,
-			}
+		s.send(context.Background(), egressPacket{data: []byte(`{"content":"hello"}`)})
+		require.NoError(t, clientConn.SetReadDeadline(time.Now().Add(time.Second)))
+		_, data, err := clientConn.ReadMessage()
+		require.NoError(t, err)
+		assert.Contains(t, string(data), `"content":"hello"`)
+	})
 
-			unregisterCh := make(chan *session, 1)
-			s := newSession(cfg, serverConn, "u3", "r3", unregisterCh, publishToChannel(make(chan *Message, 10)), nil)
+	t.Run("Success: 컨텍스트 취소 시 세션 리소스 정리", func(t *testing.T) {
+		t.Parallel()
+		serverConn, clientConn := createTestWSPair(t)
+		defer func() { _ = clientConn.Close() }()
 
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
+		unregisterCh := make(chan *session, 1)
+		s := newTestSession(serverConn, "u4", "r4", unregisterCh)
 
-			done := make(chan struct{})
-			go func() {
-				s.run(ctx)
-				close(done)
-			}()
-			tt.run(t, s, clientConn, cancel, done)
-		})
-	}
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan struct{})
+		go func() {
+			s.run(ctx)
+			close(done)
+		}()
+
+		cancel()
+
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("session.run should return after context cancel")
+		}
+	})
 }

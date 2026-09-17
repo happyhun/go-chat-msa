@@ -65,16 +65,6 @@ patches:
             - name: net.core.somaxconn
               value: "65535"
   - target:
-      kind: Deployment
-      name: ws-gateway
-    patch: |-
-      - op: add
-        path: /spec/template/spec/securityContext
-        value:
-          sysctls:
-            - name: net.core.somaxconn
-              value: "65535"
-  - target:
       kind: Ingress
     patch: |-
       - op: add
@@ -83,8 +73,6 @@ patches:
 
 images:
   - name: go-chat-msa/api-gateway
-    newTag: dev
-  - name: go-chat-msa/ws-gateway
     newTag: dev
   - name: go-chat-msa/websocket-service
     newTag: dev

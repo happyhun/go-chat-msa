@@ -1,46 +1,23 @@
 flowchart TB
-    Client["클라이언트"]
+    Client[클라이언트<br/>client_msg_id 유지] --> Validate[Session<br/>제한·형식·본문 검증]
+    Validate --> Publish[Manager<br/>UUIDv7 생성·동기 발행]
+    Publish --> JS[(CHAT_PERSIST<br/>chat.persist.roomID)]
+    JS -->|PubAck| Accepted[서버 수락 확인]
+    JS -->|stream write 후 RePublish| Core[Core NATS<br/>room.msg.roomID]
+    Core --> Hubs[구독한 모든 Pod<br/>로컬 Hub fan-out]
+    Hubs --> Frame[세션 큐<br/>frame_no 포함]
+    Frame --> Merge[프론트엔드<br/>중복 제거·UUIDv7 정렬]
 
-    subgraph WSS ["WebSocket Service"]
-        direction TB
-        Session["Session"]
-        Validate(["메시지 검증 · 도배 제한"])
-        Hub["Hub"]
-        Dedup{"중복 메시지?"}
-        Drop(["중복 메시지 폐기"])
-        Capacity{"저장 큐 등록 가능?"}
-        Reject(["일시 오류 반환"])
-        Sequence(["방 순번 발급"])
-        Persist(["저장 작업 등록"])
-        Fanout(["브로드캐스트"])
+    JS -->|shared durable pull| Worker[chat-service worker<br/>최대 500개 / 100ms]
+    Worker -->|유효한 chat| Mongo[(MongoDB InsertMany<br/>unordered · w:1 j:true)]
+    Mongo -->|성공·같은 내용의 중복| Ack[원본 ACK]
+    Mongo -->|일시 오류·결과 불명| Retry[delayed NAK<br/>연속 실패 시 pull 중단·probe]
+    Mongo -->|영구 충돌·검증 오류| DLQ[DLQ publish]
+    Worker -->|파싱·검증 실패| DLQ
+    DLQ -->|DLQ PubAck 성공| Ack
+    DLQ -->|발행 실패| DLQRetry[30초 delayed NAK<br/>원본 유지]
 
-        subgraph Persistence ["비동기 저장 파이프라인"]
-            direction TB
-            Worker["Persistence Worker"]
-            RetryWorker["Retry Worker"]
-        end
-    end
-
-    subgraph ExternalServices ["외부 서비스"]
-        direction LR
-        ChatSvc["Chat Service"]
-    end
-
-    Client == "메시지 송신" ==> Session
-    Session ==> Validate
-    Validate ==> Hub
-    Hub ==> Dedup
-    Dedup -- "예" --> Drop
-    Dedup == "아니오" ==> Capacity
-    Capacity -- "아니오" --> Reject
-    Reject --> Client
-    Capacity == "예" ==> Sequence
-    Sequence ==> Persist
-    Persist ==> Fanout
-    Fanout ==> Session
-    Session == "메시지 수신" ==> Client
-    Persist -.-> Worker
-    Worker --> ChatSvc
-
-    Worker -- "일시 실패" --> RetryWorker
-    RetryWorker --> ChatSvc
+    Trigger[reconnect · frame gap<br/>focus · 수동 복구] --> Recovery[고정 anchor · 2초 되감기<br/>최대 60초 REST 반복 조회]
+    Recovery --> Query[api-gateway → chat-service<br/>MongoDB 이력 조회]
+    Query --> Merge
+    System[참여·나가기 시스템 알림] -->|Core 발행 · 저장 제외| Core

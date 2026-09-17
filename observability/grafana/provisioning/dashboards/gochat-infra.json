@@ -175,7 +175,7 @@
       },
       "targets": [
         {
-          "expr": "sum by(pod,container) (increase(kube_pod_container_status_restarts_total{namespace=~\"$namespace\",pod=~\"$pod\"}[$__range])) or on() vector(0)",
+          "expr": "sum by(pod,container) (increase(kube_pod_container_status_restarts_total{namespace=~\"$namespace\",pod=~\"$pod\"}[$__range]))",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
@@ -556,7 +556,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "legendFormat": "{{service}} {{pod}}"
+          "legendFormat": "{{pod}}"
         }
       ],
       "fieldConfig": {
@@ -662,7 +662,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "legendFormat": "{{service}} {{pod}}"
+          "legendFormat": "{{pod}}"
         }
       ],
       "fieldConfig": {
@@ -715,7 +715,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "legendFormat": "{{service}} {{pod}}"
+          "legendFormat": "{{pod}}"
         }
       ],
       "fieldConfig": {
@@ -790,7 +790,7 @@
         "refresh": 1,
         "sort": 1,
         "includeAll": true,
-        "allValue": "api-gateway|ws-gateway|websocket-service|user-service|chat-service|frontend",
+        "allValue": "api-gateway|websocket-service|user-service|chat-service|frontend",
         "current": {
           "selected": true,
           "text": "All",

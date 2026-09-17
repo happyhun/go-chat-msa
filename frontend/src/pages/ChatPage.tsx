@@ -3,49 +3,23 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { batchGetUsers, listMessages, listRoomMembers, listJoinedRooms, ApiError } from '../api/client'
 import { useAuth } from '../context/auth'
 import { useWebSocket, type WebSocketStopReason } from '../hooks/useWebSocket'
+import { useMessageSync } from '../hooks/useMessageSync'
+import {
+  compareMessages,
+  insertSorted,
+  lastMessageId,
+  mergeSorted,
+} from '../messages'
 import type { MessageInfo, WsOutgoing } from '../types'
+
+const SEND_CONFIRM_TIMEOUT_MS = 10000
 
 function formatTime(unix: number) {
   const d = new Date(unix * 1000)
   return d.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
 }
 
-function insertSorted(prev: MessageInfo[], msg: MessageInfo): MessageInfo[] {
-  if (prev.some((m) => isSameMessage(m, msg))) return prev
-  if (prev.length === 0 || msg.sequence_number >= prev[prev.length - 1].sequence_number) {
-    return [...prev, msg]
-  }
-  let lo = 0
-  let hi = prev.length
-  while (lo < hi) {
-    const mid = (lo + hi) >>> 1
-    if (prev[mid].sequence_number < msg.sequence_number) lo = mid + 1
-    else hi = mid
-  }
-  const result = [...prev]
-  result.splice(lo, 0, msg)
-  return result
-}
-
-function isSameMessage(a: MessageInfo, b: MessageInfo): boolean {
-  if (a.id && b.id && a.id === b.id) return true
-  return Boolean(a.client_msg_id && b.client_msg_id && a.client_msg_id === b.client_msg_id)
-}
-
-function mergeSorted(prev: MessageInfo[], batch: MessageInfo[]): MessageInfo[] {
-  if (batch.length === 0) return prev
-  const ids = new Set(prev.map((m) => m.id).filter(Boolean))
-  const clientMsgIds = new Set(prev.map((m) => m.client_msg_id).filter(Boolean))
-  const newOnes = batch.filter((m) => {
-    if (m.id && ids.has(m.id)) return false
-    if (m.client_msg_id && clientMsgIds.has(m.client_msg_id)) return false
-    return true
-  })
-  if (newOnes.length === 0) return prev
-  return [...prev, ...newOnes].sort((a, b) => a.sequence_number - b.sequence_number)
-}
-
-function toMessageInfo(msg: WsOutgoing): MessageInfo {
+function toMessageInfo(msg: WsOutgoing | MessageInfo): MessageInfo {
   return {
     id: msg.id,
     room_id: msg.room_id,
@@ -53,28 +27,15 @@ function toMessageInfo(msg: WsOutgoing): MessageInfo {
     content: msg.content,
     client_msg_id: msg.client_msg_id,
     type: msg.type,
-    sequence_number: msg.sequence_number,
     timestamp: msg.timestamp,
+    status: 'status' in msg ? msg.status : undefined,
   }
 }
 
-const SYNC_GAP_RETRY_ATTEMPTS = 3
-const SYNC_GAP_RETRY_MIN_MS = 500
-const SYNC_GAP_RETRY_MAX_MS = 3500
-
 type DisconnectReason =
-  | 'conflict'
   | 'room_unavailable'
   | Exclude<WebSocketStopReason, 'auth'>
   | null
-
-function syncRetryDelayMs() {
-  return SYNC_GAP_RETRY_MIN_MS + Math.random() * (SYNC_GAP_RETRY_MAX_MS - SYNC_GAP_RETRY_MIN_MS)
-}
-
-function delay(ms: number) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms))
-}
 
 export default function ChatPage() {
   const { roomId } = useParams<{ roomId: string }>()
@@ -102,15 +63,30 @@ export default function ChatPage() {
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const maxSeqRef = useRef<number>(0)
-  const lastSyncRef = useRef<number>(0)
+  const lastIdRef = useRef<string>('')
+  const pendingCursors = useRef(new Map<string, string>())
   const autoScrollRef = useRef(true)
 
-  const updateMaxSeq = (msgs: MessageInfo[]) => {
-    if (msgs.length === 0) return
-    const last = msgs[msgs.length - 1].sequence_number
-    if (last > maxSeqRef.current) maxSeqRef.current = last
-  }
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const now = Date.now() / 1000
+      setMessages((previous) => {
+        let changed = false
+        const next = previous.map((message) => {
+          if (message.status !== 'sending' || now - message.timestamp < SEND_CONFIRM_TIMEOUT_MS / 1000) return message
+          changed = true
+          return { ...message, status: 'failed' as const }
+        })
+        return changed ? next : previous
+      })
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [])
+
+  const updateLastId = useCallback((msgs: MessageInfo[]) => {
+    const last = lastMessageId(msgs)
+    if (last > lastIdRef.current) lastIdRef.current = last
+  }, [])
 
   const handleScroll = () => {
     const el = scrollContainerRef.current
@@ -136,7 +112,7 @@ export default function ChatPage() {
         return next
       })
     } catch {
-      // non-critical
+      return
     }
   }, [roomId])
 
@@ -173,118 +149,71 @@ export default function ChatPage() {
         setManagerId(room.manager_id)
       }
     } catch {
-      // non-critical
+      return
     }
   }, [roomId, stateRoomName])
 
-  const syncMissed = useCallback(async (
-    required = false,
-    fromSeq = maxSeqRef.current,
-    retryGap = false,
-  ): Promise<Set<string>> => {
-    const caughtUpClientMsgIds = new Set<string>()
-    if (!roomId) return caughtUpClientMsgIds
-    const expectedSeq = fromSeq + 1
-    const attempts = retryGap ? SYNC_GAP_RETRY_ATTEMPTS + 1 : 1
-
-    for (let attempt = 0; attempt < attempts; attempt++) {
-      try {
-        const data = await listMessages(roomId, fromSeq)
-        const syncMsgs = (data.messages ?? []) as MessageInfo[]
-        for (const msg of syncMsgs) {
-          if (msg.client_msg_id) caughtUpClientMsgIds.add(msg.client_msg_id)
-        }
-        if (syncMsgs.length > 0) {
-          ensureSendersLoaded(syncMsgs)
-          setMessages((prev) => {
-            const merged = mergeSorted(prev, syncMsgs)
-            updateMaxSeq(merged)
-            return merged
-          })
-        }
-        if (!retryGap || syncMsgs.some((msg) => msg.sequence_number === expectedSeq)) {
-          break
-        }
-      } catch (err) {
-        if (required && attempt + 1 >= attempts) throw err
-      }
-
-      if (attempt + 1 < attempts) {
-        await delay(syncRetryDelayMs())
-      }
-    }
-    return caughtUpClientMsgIds
-  }, [roomId, ensureSendersLoaded])
-
-  const syncMissedThrottled = useCallback((fromSeq = maxSeqRef.current) => {
-    const now = Date.now()
-    if (now - lastSyncRef.current < 1000) return
-    lastSyncRef.current = now
-    syncMissed(false, fromSeq, true)
-  }, [syncMissed])
-
-  const onMessage = useCallback((msg: WsOutgoing) => {
+  const onMessage = useCallback((msg: WsOutgoing | MessageInfo) => {
     const m = toMessageInfo(msg)
+    if (!m.status && m.sender_id === userId && m.room_id === roomId && m.client_msg_id) {
+      pendingCursors.current.delete(m.client_msg_id)
+    }
     if (m.type === 'system') {
       fetchMembers()
-    } else {
-      const lastSeenSeq = maxSeqRef.current
-      if (lastSeenSeq > 0 && m.sequence_number > lastSeenSeq + 1) {
-        syncMissedThrottled(lastSeenSeq)
-      }
-      if (!userMapRef.current.has(m.sender_id)) {
-        ensureSendersLoaded([m])
-      }
+    } else if (!userMapRef.current.has(m.sender_id)) {
+      ensureSendersLoaded([m])
     }
     setMessages((prev) => {
       const next = insertSorted(prev, m)
-      if (next !== prev && m.sequence_number > maxSeqRef.current) {
-        maxSeqRef.current = m.sequence_number
-      }
+      updateLastId(next)
       return next
     })
-  }, [fetchMembers, ensureSendersLoaded, syncMissedThrottled])
+  }, [fetchMembers, ensureSendersLoaded, updateLastId, userId, roomId])
 
-  const onConflict = useCallback(() => {
-    setDisconnectReason('conflict')
-  }, [])
+  const onSyncMessages = useCallback((incoming: MessageInfo[]) => {
+    for (const message of incoming) {
+      if (message.sender_id === userId && message.room_id === roomId && message.client_msg_id) {
+        pendingCursors.current.delete(message.client_msg_id)
+      }
+    }
+    ensureSendersLoaded(incoming)
+    setMessages((previous) => {
+      const merged = mergeSorted(previous, incoming)
+      updateLastId(merged)
+      return merged
+    })
+  }, [ensureSendersLoaded, updateLastId, userId, roomId])
+  const { recover, exhausted } = useMessageSync(roomId!, userId ?? '', lastIdRef, onSyncMessages)
 
-  const onReconnected = useCallback(async () => {
-    const caughtUpClientMsgIds = await syncMissed(true)
+  const onReconnected = useCallback(() => {
+    recover()
     fetchMembers()
-    return caughtUpClientMsgIds
-  }, [syncMissed, fetchMembers])
+  }, [recover, fetchMembers])
 
-  const onGaveUp = useCallback((reason: WebSocketStopReason) => {
+  const onGaveUp = useCallback(async (reason: WebSocketStopReason) => {
     if (reason === 'auth') {
       navigate('/login', { replace: true })
       return
     }
 
-    if (reason === 'connection_failed' || reason === 'service_unavailable' || reason === 'ticket_failed') {
-      void (async () => {
-        if (!roomId) {
-          setDisconnectReason(reason)
-          return
-        }
-        try {
-          const data = await listJoinedRooms()
-          const stillJoined = (data.rooms ?? []).some((room) => room.id === roomId)
-          setDisconnectReason(stillJoined ? reason : 'room_unavailable')
-        } catch {
-          setDisconnectReason(reason)
-        }
-      })()
+    if (reason !== 'connection_failed' || !roomId) {
+      setDisconnectReason(reason)
       return
     }
 
-    setDisconnectReason(reason)
+    try {
+      const data = await listJoinedRooms()
+      const stillJoined = (data.rooms ?? []).some((room) => room.id === roomId)
+      setDisconnectReason(stillJoined ? reason : 'room_unavailable')
+    } catch {
+      setDisconnectReason(reason)
+    }
   }, [navigate, roomId])
 
-  const { connected, reconnecting, queuedCount, connect, disconnect, send } = useWebSocket({
+  const { connected, reconnecting, connect, disconnect, send } = useWebSocket({
     roomId: roomId!,
     onMessage,
-    onConflict,
+    onFrameGap: recover,
     onReconnected,
     onGaveUp,
   })
@@ -303,46 +232,32 @@ export default function ChatPage() {
     setMemberIds([])
     setManagerId(null)
     setRoomName(stateRoomName)
-    maxSeqRef.current = 0
-    lastSyncRef.current = 0
+    lastIdRef.current = ''
+    pendingCursors.current.clear()
     autoScrollRef.current = true
 
     async function init() {
       try {
         const [msgData] = await Promise.all([
-          listMessages(roomId!),
+          listMessages(roomId!).catch((error: unknown) => {
+            if (error instanceof ApiError && error.status === 503) return { messages: [], has_more: false }
+            throw error
+          }),
           fetchMembers(),
           fetchRoomInfo(),
         ])
         if (cancelled) return
-        const msgs = (msgData.messages ?? []).sort(
-          (a, b) => a.sequence_number - b.sequence_number,
-        )
+        const msgs = (msgData.messages ?? []).sort(compareMessages)
         ensureSendersLoaded(msgs)
         setMessages(msgs)
-        updateMaxSeq(msgs)
+        updateLastId(msgs)
         setLoading(false)
 
         await connect()
         if (cancelled) return
 
-        if (maxSeqRef.current > 0) {
-          try {
-            const sync = await listMessages(roomId!, maxSeqRef.current)
-            if (cancelled) return
-            const syncMsgs = (sync.messages ?? []) as MessageInfo[]
-            if (syncMsgs.length > 0) {
-              ensureSendersLoaded(syncMsgs)
-              setMessages((prev) => {
-                const merged = mergeSorted(prev, syncMsgs)
-                updateMaxSeq(merged)
-                return merged
-              })
-            }
-          } catch {
-            // non-critical
-          }
-        }
+        const fromId = lastIdRef.current
+        recover(fromId)
       } catch (err) {
         if (cancelled) return
         setLoading(false)
@@ -385,10 +300,6 @@ export default function ChatPage() {
   }, [connected, reconnecting, disconnectReason, loading, loadError])
 
   useEffect(() => {
-    if (queuedCount === 0) setSendError('')
-  }, [queuedCount])
-
-  useEffect(() => {
     if (!showMembers) return
     const handleKey = (e: globalThis.KeyboardEvent) => {
       if (e.key === 'Escape') setShowMembers(false)
@@ -397,7 +308,6 @@ export default function ChatPage() {
     return () => document.removeEventListener('keydown', handleKey)
   }, [showMembers])
 
-  // Auto-resize textarea
   useLayoutEffect(() => {
     const el = textareaRef.current
     if (!el) return
@@ -409,13 +319,36 @@ export default function ChatPage() {
     e?.preventDefault()
     const text = input.trim()
     if (!text || loadError) return
-    const result = send(text)
-    if (!result.ok) {
-      setSendError('전송 대기 메시지가 너무 많습니다. 연결이 복구된 뒤 다시 보내 주세요.')
+    const clientMsgId = crypto.randomUUID()
+    if (!send(text, clientMsgId)) {
+      setSendError('연결이 복구된 뒤 다시 보내 주세요.')
       return
     }
+    pendingCursors.current.set(clientMsgId, lastIdRef.current)
+    onMessage({
+      id: `pending:${clientMsgId}`,
+      room_id: roomId!,
+      sender_id: userId!,
+      content: text,
+      client_msg_id: clientMsgId,
+      type: 'chat',
+      timestamp: Date.now() / 1000,
+      status: 'sending',
+    })
     setSendError('')
     setInput('')
+  }
+
+  const retryMessage = (message: MessageInfo) => {
+    if (!message.client_msg_id || !send(message.content, message.client_msg_id)) {
+      setSendError('연결이 복구된 뒤 다시 보내 주세요.')
+      return
+    }
+    setMessages((previous) => previous.map((current) =>
+      current === message ? { ...current, status: 'sending', timestamp: Date.now() / 1000 } : current,
+    ))
+    setSendError('')
+    recover(pendingCursors.current.get(message.client_msg_id) ?? '')
   }
 
   const getUsername = (senderId: string) => userMap.get(senderId) ?? '(탈퇴한 사용자)'
@@ -423,12 +356,6 @@ export default function ChatPage() {
   if (disconnectReason) {
     const info = (() => {
       switch (disconnectReason) {
-        case 'conflict':
-          return {
-            title: '연결 충돌',
-            desc: '다른 탭에서 같은 채팅방에 접속하여 이 연결이 종료되었습니다.',
-            retry: false,
-          }
         case 'room_unavailable':
           return {
             title: '채팅방을 이용할 수 없습니다',
@@ -439,12 +366,6 @@ export default function ChatPage() {
           return {
             title: '연결 요청이 너무 많습니다',
             desc: '잠시 후 다시 연결해 주세요.',
-            retry: true,
-          }
-        case 'service_unavailable':
-          return {
-            title: '채팅 서버가 일시적으로 불안정합니다',
-            desc: '서버 상태가 회복되면 다시 연결할 수 있습니다.',
             retry: true,
           }
         default:
@@ -488,7 +409,6 @@ export default function ChatPage() {
 
   return (
     <div className="h-screen flex flex-col bg-gray-50">
-      {/* Header */}
       <header className="bg-white border-b border-gray-200 shrink-0">
         <div className="max-w-4xl mx-auto px-4 h-14 flex items-center gap-3">
           <button
@@ -536,7 +456,6 @@ export default function ChatPage() {
         </div>
       )}
 
-      {/* Member drawer */}
       {showMembers && (
         <div className="fixed inset-0 z-50 flex justify-end" onClick={() => setShowMembers(false)}>
           <div className="absolute inset-0 bg-black/30" />
@@ -579,7 +498,6 @@ export default function ChatPage() {
         </div>
       )}
 
-      {/* Messages */}
       <div ref={scrollContainerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto overscroll-contain bg-gray-50">
         <div className="max-w-4xl mx-auto px-4 py-4">
           {!loadError && !loading && (
@@ -659,10 +577,16 @@ export default function ChatPage() {
                     >
                       {msg.content}
                     </div>
-                    {showTime && (
+                    {(showTime || msg.status) && (
                       <span className="text-xs text-gray-400 mt-0.5 px-1">
                         {formatTime(msg.timestamp)}
+                        {msg.status && ` · ${msg.status === 'sending' ? '전송 중' : msg.status === 'accepted' ? '접수' : '결과 확인 필요'}`}
                       </span>
+                    )}
+                    {isMine && msg.status === 'failed' && (
+                      <button className="text-xs text-indigo-600 underline mt-1" onClick={() => retryMessage(msg)}>
+                        같은 메시지 다시 보내기
+                      </button>
                     )}
                   </div>
                 </div>
@@ -673,22 +597,18 @@ export default function ChatPage() {
         </div>
       </div>
 
-      {/* Input */}
       <div className="bg-white border-t border-gray-200 shrink-0">
         <div className="max-w-4xl mx-auto px-4 py-3">
-          {(queuedCount > 0 || sendError) && (
+          {sendError && (
             <div
-              role={sendError ? 'alert' : 'status'}
+              role="alert"
               aria-live="polite"
-              className={`mb-2 rounded-lg px-3 py-2 text-xs ${
-                sendError
-                  ? 'bg-red-50 text-red-700'
-                  : 'bg-amber-50 text-amber-800'
-              }`}
+              className="mb-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700"
             >
-              {sendError || `전송 대기 중인 메시지 ${queuedCount}개가 있습니다. 연결이 복구되면 자동으로 전송됩니다.`}
+              {sendError}
             </div>
           )}
+          {exhausted && <button className="mb-2 text-xs text-amber-700 underline" onClick={() => recover()}>저장된 메시지 다시 확인</button>}
           <div className="flex items-end gap-2">
             <textarea
               ref={textareaRef}
@@ -708,7 +628,7 @@ export default function ChatPage() {
                   ? '채팅방을 불러온 후 메시지를 보낼 수 있습니다'
                   : connected
                     ? '메시지를 입력하세요...'
-                    : '재연결 후 전송 대기열에 추가됩니다...'
+                    : '실시간 연결과 관계없이 메시지를 보낼 수 있습니다...'
               }
               disabled={Boolean(loadError)}
               className="flex-1 px-4 py-2.5 bg-gray-100 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none overflow-y-auto leading-5"

@@ -14,21 +14,16 @@ API_GATEWAY:
       RPS: 10
       BURST: 30
       TTL: "1h"
-
-WS_GATEWAY:
-  RATE_LIMIT:
-    PUBLIC:
-      RPS: 10
-      BURST: 20
-      TTL: "1h"
-    WS_ESTABLISH:
+    WS_TICKET:
       RPS: 4
       BURST: 10
       TTL: "1h"
 
 WEBSOCKET:
+  ALLOWED_ORIGINS:
+    - "http://test.gochat.localhost:30080"
   RATE_LIMIT:
-    WS_MESSAGE:
-      RPS: 4
-      BURST: 10
+    WS_CONNECT:
+      RPS: 10
+      BURST: 20
       TTL: "1h"

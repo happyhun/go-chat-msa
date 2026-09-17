@@ -359,17 +359,17 @@ export function listRoomMembers(roomId: string) {
 }
 
 // Messages
-export function listMessages(roomId: string, lastSeq?: number, limit?: number) {
+export function listMessages(roomId: string, afterId?: string, limit?: number, signal?: AbortSignal) {
   const params = new URLSearchParams()
-  if (lastSeq !== undefined) params.set('last_seq', String(lastSeq))
+  if (afterId !== undefined) params.set('after_id', afterId)
   if (limit !== undefined) params.set('limit', String(limit))
   const qs = params.toString()
-  return request<{ messages: import('../types').MessageInfo[] }>(
-    `/api/rooms/${roomId}/messages${qs ? `?${qs}` : ''}`,
+  return request<{ messages: import('../types').MessageInfo[]; has_more: boolean }>(
+    `/api/rooms/${roomId}/messages${qs ? `?${qs}` : ''}`, { signal },
   )
 }
 
 // WebSocket ticket
 export function createWsTicket() {
-  return request<{ ticket: string }>('/ws-api/ws/ticket', { method: 'POST' })
+  return request<{ ticket: string }>('/api/auth/ws-ticket', { method: 'POST' })
 }

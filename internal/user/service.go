@@ -615,7 +615,7 @@ func (s *Service) leaveRoomTx(ctx context.Context, qtx db.Querier, roomUUID, use
 		return status.Error(codes.Internal, "failed to leave room")
 	}
 
-	if !(room.ManagerID.Valid && room.ManagerID.Bytes == userUUID.Bytes) {
+	if !room.ManagerID.Valid || room.ManagerID.Bytes != userUUID.Bytes {
 		return nil
 	}
 

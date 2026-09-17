@@ -1,7 +1,6 @@
 package websocket
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,11 +9,7 @@ import (
 	userpb "go-chat-msa/api/proto/user/v1"
 	"go-chat-msa/internal/apigateway/mocks"
 	"go-chat-msa/internal/shared/config"
-	"go-chat-msa/internal/websocket/roomlease"
-	"go-chat-msa/internal/wsgateway/loadbalance"
 
-	"github.com/alicebob/miniredis/v2"
-	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -22,44 +17,61 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-func TestRouter_ServeHTTP(t *testing.T) {
+const testRoomID = "8a1f0c52-3d4e-4b6a-9c7d-1e2f3a4b5c6d"
+
+func TestRouter_ServeWebSocket(t *testing.T) {
 	t.Parallel()
 
 	type mockBehavior func(m *mocks.MockUserServiceClient)
 
 	tests := []struct {
-		name           string
-		queryParams    string
-		userID         string
-		mockBehavior   mockBehavior
-		hashRingAddrs  []string
-		advertisedAddr string
-		expectedCode   int
-		expectedBody   string
+		name         string
+		queryParams  string
+		userID       string
+		mockBehavior mockBehavior
+		expectedCode int
+		expectedBody string
+		disconnected bool
 	}{
 		{
-			name:         "Failure: 유저 식별 헤더(X-User-ID) 누락",
-			queryParams:  "?room_id=room-1",
+			name:         "Failure: 티켓 누락",
+			queryParams:  "?room_id=" + testRoomID,
 			userID:       "",
 			mockBehavior: func(m *mocks.MockUserServiceClient) {},
 			expectedCode: http.StatusUnauthorized,
-			expectedBody: "missing X-User-ID header",
+			expectedBody: "missing ticket",
+		},
+		{
+			name:         "Failure: 존재하지 않는 티켓",
+			queryParams:  "?room_id=" + testRoomID + "&ticket=unknown-ticket",
+			userID:       "",
+			mockBehavior: func(m *mocks.MockUserServiceClient) {},
+			expectedCode: http.StatusUnauthorized,
+			expectedBody: "invalid or expired ticket",
 		},
 		{
 			name:         "Failure: 룸 ID 쿼리 파라미터 누락",
-			queryParams:  "",
+			queryParams:  "?",
 			userID:       "user-1",
 			mockBehavior: func(m *mocks.MockUserServiceClient) {},
 			expectedCode: http.StatusBadRequest,
 			expectedBody: "missing room_id query parameter",
 		},
 		{
+			name:         "Failure: 룸 ID가 UUID 형식이 아님",
+			queryParams:  "?room_id=room-1",
+			userID:       "user-1",
+			mockBehavior: func(m *mocks.MockUserServiceClient) {},
+			expectedCode: http.StatusBadRequest,
+			expectedBody: "room_id must be a canonical uuid",
+		},
+		{
 			name:        "Failure: 채팅방 멤버가 아닌 경우 (Forbidden)",
-			queryParams: "?room_id=room-1",
+			queryParams: "?room_id=" + testRoomID,
 			userID:      "user-1",
 			mockBehavior: func(m *mocks.MockUserServiceClient) {
 				m.EXPECT().VerifyRoomMember(mock.Anything, &userpb.VerifyRoomMemberRequest{
-					RoomId: "room-1",
+					RoomId: testRoomID,
 					UserId: "user-1",
 				}).Return(nil, status.Error(codes.NotFound, "not a member of the room"))
 			},
@@ -68,7 +80,7 @@ func TestRouter_ServeHTTP(t *testing.T) {
 		},
 		{
 			name:        "Failure: 유저 서비스 내부 에러 발생 (Internal)",
-			queryParams: "?room_id=room-1",
+			queryParams: "?room_id=" + testRoomID,
 			userID:      "user-1",
 			mockBehavior: func(m *mocks.MockUserServiceClient) {
 				m.EXPECT().VerifyRoomMember(mock.Anything, mock.Anything).
@@ -78,16 +90,15 @@ func TestRouter_ServeHTTP(t *testing.T) {
 			expectedBody: "failed to verify room membership",
 		},
 		{
-			name:        "Failure: 룸 owner가 아닌 경우 self-check 거절 (421)",
-			queryParams: "?room_id=room-1",
+			name:        "Failure: NATS 연결 끊김",
+			queryParams: "?room_id=" + testRoomID,
 			userID:      "user-1",
 			mockBehavior: func(m *mocks.MockUserServiceClient) {
-				m.EXPECT().VerifyRoomMember(mock.Anything, mock.Anything).Return(nil, nil)
+				m.EXPECT().VerifyRoomMember(mock.Anything, mock.Anything).Return(&userpb.VerifyRoomMemberResponse{}, nil)
 			},
-			hashRingAddrs:  []string{"other-wss:8081"},
-			advertisedAddr: "me-wss:8081",
-			expectedCode:   http.StatusMisdirectedRequest,
-			expectedBody:   "not the owner of this room",
+			expectedCode: http.StatusServiceUnavailable,
+			expectedBody: "room temporarily unavailable",
+			disconnected: true,
 		},
 	}
 
@@ -95,20 +106,20 @@ func TestRouter_ServeHTTP(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			mockChatClient := mocks.NewMockChatServiceClient(t)
 			mockUserClient := mocks.NewMockUserServiceClient(t)
 			tt.mockBehavior(mockUserClient)
 
-			cfg := createTestConfig()
-			cfg.AdvertisedAddr = tt.advertisedAddr
-			router := NewRouter(mockChatClient, mockUserClient, cfg, loadbalance.New(tt.hashRingAddrs))
+			redisClient := newTestRedis(t)
+			router := NewRouter(mockUserClient, createTestConfig(), &fakeBus{connected: !tt.disconnected},
+				WithPodName("test-pod"), WithRedisClient(redisClient))
 
-			req, err := http.NewRequest("GET", "/ws"+tt.queryParams, nil)
+			url := "/ws" + tt.queryParams
+			if tt.userID != "" {
+				url += "&ticket=" + issueTicket(t, redisClient, tt.userID)
+			}
+			req, err := http.NewRequest("GET", url, nil)
 			require.NoError(t, err)
 
-			if tt.userID != "" {
-				req.Header.Set("X-User-ID", tt.userID)
-			}
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
 
@@ -120,52 +131,23 @@ func TestRouter_ServeHTTP(t *testing.T) {
 	}
 }
 
-func TestRouter_ServeWebSocketLeaseBusy(t *testing.T) {
+func TestRouter_ServeWebSocket_ConnectRateLimit(t *testing.T) {
 	t.Parallel()
 
-	srv := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: srv.Addr()})
-	t.Cleanup(func() { require.NoError(t, client.Close()) })
-
-	ownerA := roomlease.NewStore(client, "wss:room:lease:", "10.0.0.1:8081", 30*time.Second)
-	_, err := ownerA.Acquire(t.Context(), "room-1")
-	require.NoError(t, err)
-
-	mockChatClient := mocks.NewMockChatServiceClient(t)
-	mockUserClient := mocks.NewMockUserServiceClient(t)
-	mockUserClient.EXPECT().VerifyRoomMember(mock.Anything, &userpb.VerifyRoomMemberRequest{
-		RoomId: "room-1",
-		UserId: "user-1",
-	}).Return(nil, nil)
-
 	cfg := createTestConfig()
-	cfg.AdvertisedAddr = "10.0.0.2:8081"
-	router := NewRouter(mockChatClient, mockUserClient, cfg, loadbalance.New([]string{cfg.AdvertisedAddr}),
-		WithRoomLeaseStore(roomlease.NewStore(client, "wss:room:lease:", cfg.AdvertisedAddr, 30*time.Second)))
+	cfg.RateLimit.WSConnect = config.RateLimitConfig{RPS: 1, Burst: 1, TTL: time.Minute}
+	router := NewRouter(mocks.NewMockUserServiceClient(t), cfg, &fakeBus{connected: true},
+		WithPodName("test-pod"), WithRedisClient(newTestRedis(t)))
 
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	go router.RunManager(ctx)
-
-	req, err := http.NewRequest("GET", "/ws?room_id=room-1", nil)
-	require.NoError(t, err)
-	req.Header.Set("X-User-ID", "user-1")
-
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-	assert.Equal(t, "1", w.Header().Get("Retry-After"))
-	assert.Contains(t, w.Body.String(), "room temporarily unavailable, please retry")
-}
-
-func createTestConfig() WebSocketConfig {
-	return WebSocketConfig{
-		Manager: config.ManagerConfig{
-			WriteWait:   10 * time.Second,
-			PongWait:    60 * time.Second,
-			PingPeriod:  54 * time.Second,
-			IdleTimeout: 5 * time.Minute,
-		},
+	statuses := make([]int, 0, 2)
+	for range 2 {
+		req := httptest.NewRequest(http.MethodGet, "/ws?room_id="+testRoomID, nil)
+		req.Header.Set("X-Forwarded-For", "10.0.0.1")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		statuses = append(statuses, w.Code)
 	}
+
+	assert.Equal(t, []int{http.StatusUnauthorized, http.StatusTooManyRequests}, statuses,
+		"same IP must be limited before the ticket is checked")
 }

@@ -21,8 +21,6 @@ import (
 	"github.com/stretchr/testify/suite"
 	"github.com/testcontainers/testcontainers-go/modules/mongodb"
 	"go.mongodb.org/mongo-driver/mongo"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -107,112 +105,69 @@ func (s *ChatSuite) runMigrations() {
 	}
 }
 
-func (s *ChatSuite) TestBatchCreateMessages_Success() {
-	req := &pb.BatchCreateMessagesRequest{
-		Requests: []*pb.CreateMessageRequest{{
-			RoomId:      "room_integration_1",
-			SenderId:    "user_1",
-			Content:     "Hello Integration",
-			ClientMsgId: "msg_int_1",
-		}},
-	}
-
-	_, err := s.client.BatchCreateMessages(s.T().Context(), req)
-
-	s.Require().NoError(err)
+func (s *ChatSuite) TestSaveBatch_Success() {
+	s.Require().NoError(sendHelper(s, "room_integration_1", "user_1", "Hello Integration", "msg_int_1"))
 }
 
-func (s *ChatSuite) TestBatchCreateMessages_DuplicateIdempotent() {
-	req := &pb.BatchCreateMessagesRequest{
-		Requests: []*pb.CreateMessageRequest{{
-			RoomId:         "room_integration_1",
-			SenderId:       "user_1",
-			Content:        "Duplicate Content",
-			ClientMsgId:    "msg_int_dup",
-			SequenceNumber: 1,
-		}},
+func (s *ChatSuite) TestSaveBatch_DuplicateIdempotent() {
+	for range 2 {
+		s.Require().NoError(sendHelper(s, "room_integration_1", "user_1", "Duplicate Content", "msg_int_dup"))
 	}
-
-	_, err := s.client.BatchCreateMessages(s.T().Context(), req)
+	res, err := s.client.ListMessages(s.T().Context(), &pb.ListMessagesRequest{RoomId: "room_integration_1", Limit: 10})
 	s.Require().NoError(err)
-
-	_, err = s.client.BatchCreateMessages(s.T().Context(), req)
-	s.Require().NoError(err)
+	s.Len(res.Messages, 1)
 }
 
-func (s *ChatSuite) TestListMessages_DescSort() {
+func (s *ChatSuite) TestListMessages_IDDescSort() {
 	roomID := "room_history_sort"
-	s.Require().NoError(sendHelperWithSeq(s, roomID, "u1", "First", "m1", 1))
-	s.Require().NoError(sendHelperWithSeq(s, roomID, "u2", "Second", "m2", 2))
+	s.Require().NoError(sendHelper(s, roomID, "u1", "First", "m1"))
+	time.Sleep(5 * time.Millisecond)
+	s.Require().NoError(sendHelper(s, roomID, "u2", "Second", "m2"))
 
-	req := &pb.ListMessagesRequest{
-		RoomId: roomID,
-		Limit:  10,
-	}
-
-	res, err := s.client.ListMessages(s.T().Context(), req)
+	res, err := s.client.ListMessages(s.T().Context(), &pb.ListMessagesRequest{RoomId: roomID, Limit: 10})
 
 	s.Require().NoError(err)
 	s.Require().Len(res.Messages, 2)
-	s.Equal(int64(2), res.Messages[0].SequenceNumber)
 	s.Equal("Second", res.Messages[0].Content)
-	s.Equal(int64(1), res.Messages[1].SequenceNumber)
 	s.Equal("First", res.Messages[1].Content)
+	s.Greater(res.Messages[0].Id, res.Messages[1].Id, "id 역순으로 반환한다")
 }
 
-func (s *ChatSuite) TestListMessages_Pagination() {
+func (s *ChatSuite) TestListMessages_PaginationHasMore() {
 	roomID := "room_history_paging"
 	for i := 1; i <= 5; i++ {
-		s.Require().NoError(sendHelperWithSeq(s, roomID, "u1", "Msg "+fmt.Sprint(i), "m"+fmt.Sprint(i), int64(i)))
+		s.Require().NoError(sendHelper(s, roomID, "u1", "Msg "+fmt.Sprint(i), "m"+fmt.Sprint(i)))
+		time.Sleep(2 * time.Millisecond)
 	}
 
-	req := &pb.ListMessagesRequest{
-		RoomId: roomID,
-		Limit:  3,
-	}
-	res, err := s.client.ListMessages(s.T().Context(), req)
+	res, err := s.client.ListMessages(s.T().Context(), &pb.ListMessagesRequest{RoomId: roomID, Limit: 3})
 
 	s.Require().NoError(err)
 	s.Len(res.Messages, 3)
+	s.True(res.HasMore, "남은 분량이 있으면 has_more가 참이다")
 	s.Equal("Msg 5", res.Messages[0].Content)
-	s.Equal("Msg 4", res.Messages[1].Content)
 	s.Equal("Msg 3", res.Messages[2].Content)
+
+	all, err := s.client.ListMessages(s.T().Context(), &pb.ListMessagesRequest{RoomId: roomID, Limit: 10})
+	s.Require().NoError(err)
+	s.False(all.HasMore)
 }
 
 func (s *ChatSuite) TestListMessages_JoinedAtFiltering() {
 	roomID := "room_history_joined"
 	sender := "u1"
 
-	u1, err := uuid.NewV7()
-	s.Require().NoError(err)
-	_, err = s.client.BatchCreateMessages(s.T().Context(), &pb.BatchCreateMessagesRequest{
-		Requests: []*pb.CreateMessageRequest{{
-			RoomId: roomID, SenderId: sender, Content: "Old Msg", ClientMsgId: "m1", SequenceNumber: 1, MessageId: u1.String(),
-		}},
-	})
-	s.Require().NoError(err)
+	s.Require().NoError(sendHelper(s, roomID, sender, "Old Msg", "m1"))
 
 	time.Sleep(10 * time.Millisecond)
-
-	u_ref, err := uuid.NewV7()
+	uRef, err := uuid.NewV7()
 	s.Require().NoError(err)
-	joinedAt := time.Unix(u_ref.Time().UnixTime())
-
+	joinedAt := time.Unix(uRef.Time().UnixTime())
 	time.Sleep(10 * time.Millisecond)
 
-	u2, err := uuid.NewV7()
-	s.Require().NoError(err)
-	_, err = s.client.BatchCreateMessages(s.T().Context(), &pb.BatchCreateMessagesRequest{
-		Requests: []*pb.CreateMessageRequest{{
-			RoomId: roomID, SenderId: sender, Content: "New Msg", ClientMsgId: "m2", SequenceNumber: 2, MessageId: u2.String(),
-		}},
-	})
-	s.Require().NoError(err)
+	s.Require().NoError(sendHelper(s, roomID, sender, "New Msg", "m2"))
 
-	resAll, err := s.client.ListMessages(s.T().Context(), &pb.ListMessagesRequest{
-		RoomId: roomID,
-		Limit:  10,
-	})
+	resAll, err := s.client.ListMessages(s.T().Context(), &pb.ListMessagesRequest{RoomId: roomID, Limit: 10})
 	s.Require().NoError(err)
 	s.Len(resAll.Messages, 2)
 
@@ -226,99 +181,67 @@ func (s *ChatSuite) TestListMessages_JoinedAtFiltering() {
 	s.Equal("New Msg", resFiltered.Messages[0].Content)
 }
 
-func (s *ChatSuite) TestSequence_UniqueConstraint_Conflict() {
-	roomID := "room_unique_seq"
-
-	err := sendHelperWithSeq(s, roomID, "u1", "Msg 1", "m1", 1)
-	s.Require().NoError(err)
-
-	err = sendHelperWithSeq(s, roomID, "u1", "Msg 2", "m2", 1)
-	s.Require().Error(err)
-	s.Equal(codes.Aborted, status.Code(err))
-
-	res, err := s.client.ListMessages(s.T().Context(), &pb.ListMessagesRequest{RoomId: roomID, Limit: 10})
-	s.Require().NoError(err)
-	s.Len(res.Messages, 1)
-}
-
-func (s *ChatSuite) TestGetLastSequenceNumber() {
-	roomID := "room_latest_seq"
-
-	for i := 1; i <= 5; i++ {
-		err := sendHelperWithSeq(s, roomID, "u1", "Msg", "m"+fmt.Sprint(i), int64(i))
-		s.Require().NoError(err)
-	}
-
-	res, err := s.client.GetLastSequenceNumber(s.T().Context(), &pb.GetLastSequenceNumberRequest{RoomId: roomID})
-	s.Require().NoError(err)
-	s.Equal(int64(5), res.SequenceNumber)
-}
-
-func (s *ChatSuite) TestSyncMessages() {
+func (s *ChatSuite) TestSyncMessages_AfterMessageID() {
 	roomID := "room_sync"
 
+	ids := make([]string, 0, 10)
 	for i := 1; i <= 10; i++ {
-		s.Require().NoError(sendHelperWithSeq(s, roomID, "u1", "Content "+fmt.Sprint(i), "id"+fmt.Sprint(i), int64(i)))
+		s.Require().NoError(sendHelper(s, roomID, "u1", "Content "+fmt.Sprint(i), "id"+fmt.Sprint(i)))
+		time.Sleep(2 * time.Millisecond)
 	}
 
-	req := &pb.SyncMessagesRequest{
-		RoomId:             roomID,
-		LastSequenceNumber: 5,
-		Limit:              3,
+	history, err := s.client.ListMessages(s.T().Context(), &pb.ListMessagesRequest{RoomId: roomID, Limit: 10})
+	s.Require().NoError(err)
+	for i := len(history.Messages) - 1; i >= 0; i-- {
+		ids = append(ids, history.Messages[i].Id)
 	}
+	s.Require().Len(ids, 10)
 
-	res, err := s.client.SyncMessages(s.T().Context(), req)
+	res, err := s.client.SyncMessages(s.T().Context(), &pb.SyncMessagesRequest{
+		RoomId:         roomID,
+		AfterMessageId: ids[4],
+		Limit:          3,
+	})
 
 	s.Require().NoError(err)
 	s.Require().Len(res.Messages, 3)
-	s.Equal(int64(6), res.Messages[0].SequenceNumber)
-	s.Equal(int64(7), res.Messages[1].SequenceNumber)
-	s.Equal(int64(8), res.Messages[2].SequenceNumber)
+	s.True(res.HasMore)
+	s.Equal("Content 6", res.Messages[0].Content)
+	s.Equal("Content 7", res.Messages[1].Content)
+	s.Equal("Content 8", res.Messages[2].Content)
+}
+
+func (s *ChatSuite) TestSyncMessages_InvalidAfterMessageID() {
+	_, err := s.client.SyncMessages(s.T().Context(), &pb.SyncMessagesRequest{
+		RoomId:         "room_sync_invalid",
+		AfterMessageId: "not-a-uuid",
+		Limit:          10,
+	})
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "after_message_id")
 }
 
 func (s *ChatSuite) TestSyncMessages_JoinedAtFiltering() {
 	roomID := uuid.New().String()
 	sender := "u1"
 
-	u1, err := uuid.NewV7()
-	s.Require().NoError(err)
-	_, err = s.client.BatchCreateMessages(s.T().Context(), &pb.BatchCreateMessagesRequest{
-		Requests: []*pb.CreateMessageRequest{{
-			RoomId: roomID, SenderId: sender, Content: "Msg 1", ClientMsgId: "m1", SequenceNumber: 1, MessageId: u1.String(),
-		}},
-	})
-	s.Require().NoError(err)
+	s.Require().NoError(sendHelper(s, roomID, sender, "Msg 1", "m1"))
 
 	time.Sleep(10 * time.Millisecond)
-
-	u_ref, err := uuid.NewV7()
+	uRef, err := uuid.NewV7()
 	s.Require().NoError(err)
-	joinedAt := time.Unix(u_ref.Time().UnixTime())
-
+	joinedAt := time.Unix(uRef.Time().UnixTime())
 	time.Sleep(10 * time.Millisecond)
 
-	u2, err := uuid.NewV7()
-	s.Require().NoError(err)
-	_, err = s.client.BatchCreateMessages(s.T().Context(), &pb.BatchCreateMessagesRequest{
-		Requests: []*pb.CreateMessageRequest{{
-			RoomId: roomID, SenderId: sender, Content: "Msg 2", ClientMsgId: "m2", SequenceNumber: 2, MessageId: u2.String(),
-		}},
-	})
-	s.Require().NoError(err)
-	u3, err := uuid.NewV7()
-	s.Require().NoError(err)
-	_, err = s.client.BatchCreateMessages(s.T().Context(), &pb.BatchCreateMessagesRequest{
-		Requests: []*pb.CreateMessageRequest{{
-			RoomId: roomID, SenderId: sender, Content: "Msg 3", ClientMsgId: "m3", SequenceNumber: 3, MessageId: u3.String(),
-		}},
-	})
-	s.Require().NoError(err)
+	s.Require().NoError(sendHelper(s, roomID, sender, "Msg 2", "m2"))
+	time.Sleep(2 * time.Millisecond)
+	s.Require().NoError(sendHelper(s, roomID, sender, "Msg 3", "m3"))
 
 	res, err := s.client.SyncMessages(s.T().Context(), &pb.SyncMessagesRequest{
-		RoomId:             roomID,
-		LastSequenceNumber: 0,
-		Limit:              10,
-		JoinedAt:           timestamppb.New(joinedAt),
+		RoomId:   roomID,
+		Limit:    10,
+		JoinedAt: timestamppb.New(joinedAt),
 	})
 
 	s.Require().NoError(err)
@@ -327,117 +250,35 @@ func (s *ChatSuite) TestSyncMessages_JoinedAtFiltering() {
 	s.Equal("Msg 3", res.Messages[1].Content)
 }
 
-func (s *ChatSuite) TestBatchCreateMessages_MissingRequiredFields() {
-	tests := []struct {
-		name    string
-		roomID  string
-		sender  string
-		content string
-	}{
-		{"room_id 누락", "", "user_1", "Hello"},
-		{"sender_id 누락", "room_1", "", "Hello"},
-		{"content 누락", "room_1", "user_1", ""},
-	}
-
-	for _, tt := range tests {
-		s.Run("Failure: "+tt.name+" (InvalidArgument)", func() {
-			req := &pb.BatchCreateMessagesRequest{
-				Requests: []*pb.CreateMessageRequest{{
-					RoomId:      tt.roomID,
-					SenderId:    tt.sender,
-					Content:     tt.content,
-					ClientMsgId: "msg_fail",
-				}},
-			}
-			_, err := s.client.BatchCreateMessages(s.T().Context(), req)
-			s.Require().Error(err)
-			s.Contains(err.Error(), "required")
-		})
-	}
-}
-
-func (s *ChatSuite) TestBatchCreateMessages_EmptyRequests() {
-	req := &pb.BatchCreateMessagesRequest{Requests: nil}
-
-	_, err := s.client.BatchCreateMessages(s.T().Context(), req)
-
-	s.NoError(err)
+func (s *ChatSuite) TestSaveBatch_EmptyMessages() {
+	s.Empty(s.repo.SaveBatch(s.T().Context(), nil))
 }
 
 func (s *ChatSuite) TestListMessages_EmptyRoomID() {
-	req := &pb.ListMessagesRequest{
-		RoomId: "",
-		Limit:  10,
-	}
-
-	_, err := s.client.ListMessages(s.T().Context(), req)
+	_, err := s.client.ListMessages(s.T().Context(), &pb.ListMessagesRequest{RoomId: "", Limit: 10})
 
 	s.Require().Error(err)
 	s.Contains(err.Error(), "room_id is required")
 }
 
 func (s *ChatSuite) TestListMessages_NoMessages() {
-	req := &pb.ListMessagesRequest{
-		RoomId: "room_nonexistent",
-		Limit:  10,
-	}
-
-	res, err := s.client.ListMessages(s.T().Context(), req)
+	res, err := s.client.ListMessages(s.T().Context(), &pb.ListMessagesRequest{RoomId: "room_nonexistent", Limit: 10})
 
 	s.Require().NoError(err)
 	s.Empty(res.Messages)
+	s.False(res.HasMore)
 }
 
 func (s *ChatSuite) TestSyncMessages_EmptyRoomID() {
-	req := &pb.SyncMessagesRequest{
-		RoomId:             "",
-		LastSequenceNumber: 0,
-		Limit:              10,
-	}
-
-	_, err := s.client.SyncMessages(s.T().Context(), req)
+	_, err := s.client.SyncMessages(s.T().Context(), &pb.SyncMessagesRequest{RoomId: "", Limit: 10})
 
 	s.Require().Error(err)
 	s.Contains(err.Error(), "room_id is required")
 }
 
-func sendHelperWithSeq(s *ChatSuite, roomID, senderID, content, clientMsgID string, seq int64) error {
-	_, err := s.client.BatchCreateMessages(s.T().Context(), &pb.BatchCreateMessagesRequest{
-		Requests: []*pb.CreateMessageRequest{{
-			RoomId:         roomID,
-			SenderId:       senderID,
-			Content:        content,
-			ClientMsgId:    clientMsgID,
-			SequenceNumber: seq,
-		}},
-	})
-	return err
-}
-
-func sendHelper(s *ChatSuite, roomID, senderID, content, msgID string) error {
-	_, err := s.client.BatchCreateMessages(s.T().Context(), &pb.BatchCreateMessagesRequest{
-		Requests: []*pb.CreateMessageRequest{{
-			RoomId:      roomID,
-			SenderId:    senderID,
-			Content:     content,
-			ClientMsgId: msgID,
-		}},
-	})
-	return err
-}
-
-func (s *ChatSuite) TestBatchCreateMessages_TimestampSync() {
-	req := &pb.BatchCreateMessagesRequest{
-		Requests: []*pb.CreateMessageRequest{{
-			RoomId:      "ts-room",
-			SenderId:    "ts-user",
-			Content:     "Timestamp Sync Test",
-			ClientMsgId: "ts-msg-id",
-		}},
-	}
-
+func (s *ChatSuite) TestSaveBatch_TimestampSync() {
 	before := time.Now()
-	_, err := s.client.BatchCreateMessages(s.T().Context(), req)
+	err := sendHelper(s, "ts-room", "ts-user", "Timestamp Sync Test", "ts-msg-id")
 	after := time.Now()
 
 	s.Require().NoError(err)
@@ -458,6 +299,18 @@ func (s *ChatSuite) TestBatchCreateMessages_TimestampSync() {
 
 	s.True(createdAt.After(before.Add(-1 * time.Second)))
 	s.True(createdAt.Before(after.Add(1 * time.Second)))
+}
+
+func sendHelper(s *ChatSuite, roomID, senderID, content, clientMsgID string) error {
+	id, err := uuid.NewV7()
+	if err != nil {
+		return err
+	}
+	sec, nsec := id.Time().UnixTime()
+	results := s.repo.SaveBatch(s.T().Context(), []*chat.Message{{
+		ID: id.String(), RoomID: roomID, SenderID: senderID, Content: content, ClientMsgID: clientMsgID, Type: "chat", CreatedAt: time.Unix(sec, nsec),
+	}})
+	return results[0]
 }
 
 func TestChatSuite(t *testing.T) {

@@ -1,36 +1,30 @@
 sequenceDiagram
     autonumber
+    participant C as 클라이언트
+    participant API as api-gateway
+    participant U as user-service
+    participant PG as PostgreSQL
+    participant R as Redis
+    participant WS as websocket-service
 
-    participant Client as 클라이언트
-    participant AGW as API Gateway
-    participant UserSvc as User Service
-    participant DB as PostgreSQL
-    participant Redis as Redis
-    participant WSGW as WS Gateway
-    participant WSS as WebSocket Service
+    C->>API: POST /api/auth/token
+    API->>U: VerifyUser gRPC
+    U->>PG: 사용자 조회
+    PG-->>U: 비밀번호 해시
+    U->>U: bcrypt 검증
+    U->>R: 해시한 refresh token 상태 저장
+    U-->>API: access token + refresh token
+    API-->>C: access token + HttpOnly cookie
 
-    Note over Client, Redis: 1. 로그인과 토큰 발급
-    Client->>AGW: 로그인 요청
-    AGW->>UserSvc: 사용자 인증 요청
-    UserSvc->>DB: 사용자 조회
-    DB-->>UserSvc: 사용자 정보와 비밀번호 해시
-    UserSvc->>UserSvc: 비밀번호 검증<br/>토큰 생성
-    UserSvc->>Redis: refresh token 등록
-    Redis-->>UserSvc: 등록 완료
-    UserSvc-->>AGW: 사용자 ID와 토큰 반환
-    AGW-->>Client: access token 반환<br/>refresh token 쿠키 설정
-
-    Note over Client, Redis: 2. WebSocket 일회성 티켓 발급
-    Client->>WSGW: 티켓 발급 요청<br/>access token 포함
-    WSGW->>WSGW: access token 검증
-    WSGW->>Redis: 티켓 등록<br/>30초 TTL
-    Redis-->>WSGW: 등록 완료
-    WSGW-->>Client: 티켓 반환
-
-    Note over Client, WSS: 3. 티켓 소비 후 연결 라우팅
-    Client->>WSGW: WebSocket 연결 요청<br/>방 ID, 티켓 포함
-    WSGW->>Redis: 티켓 소비
-    Redis-->>WSGW: 티켓 삭제<br/>사용자 ID 반환
-    WSGW->>WSS: 방 기준 라우팅
-    WSS-->>WSGW: 연결 수락 또는 재시도 응답
-    WSGW-->>Client: 연결 완료 또는 재시도 안내
+    C->>API: POST /api/auth/ws-ticket · Bearer JWT
+    API->>API: JWT 검증·사용자별 요청 제한
+    API->>R: ws:ticket:UUID 저장 · TTL 30초
+    API-->>C: 일회성 ticket
+    C->>WS: GET /ws?room_id=...&ticket=... · Ingress 경유
+    WS->>R: GETDEL ws:ticket:UUID
+    R-->>WS: user_id
+    WS->>U: 방 멤버십 확인
+    U-->>WS: 검증 결과
+    WS->>WS: 방 구독 flush·Hub 준비
+    WS-->>C: 101 Switching Protocols
+    Note over C,WS: 연결 실패·재연결 시 새 티켓 발급

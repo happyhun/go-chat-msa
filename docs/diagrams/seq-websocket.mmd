@@ -1,50 +1,48 @@
 sequenceDiagram
     autonumber
-
-    participant Client as 클라이언트
-    participant WSGW as WS Gateway
-    box WebSocket Service
-    participant Router as Router
-    participant Manager as Manager
-    participant Hub as Hub
-    participant Session as Session
-    end
-    participant UserSvc as User Service
+    participant C as 클라이언트
+    participant I as Ingress / Service
+    participant R as websocket Router
     participant Redis as Redis
-    participant ChatSvc as Chat Service
+    participant U as user-service
+    participant M as Manager
+    participant N as NATS
+    participant H as 로컬 Hub
 
-    Client->>WSGW: WebSocket 연결 요청<br/>티켓 포함
-    WSGW->>Router: 방 기준 라우팅
-    Router->>UserSvc: 방 멤버십 확인
-    UserSvc-->>Router: 참여 여부 반환
-    Router->>Router: 담당 인스턴스 확인
-
-    alt 담당 인스턴스가 아님
-        Router-->>WSGW: 421 Misdirected Request
-        WSGW-->>Client: 새 티켓으로 재시도 안내
-    else 담당 인스턴스가 맞음
-        Router->>Manager: 연결 준비
-        alt 기존 Hub 사용 가능
-            Manager-->>Router: 준비 완료
-        else 새 Hub 필요
-            Manager->>Redis: 방 소유권 확보
-            Redis-->>Manager: 확보 완료
-            Manager->>ChatSvc: 저장된 마지막 순번 조회
-            Manager->>Redis: 순번 기준값 조회
-            Manager->>Hub: 시작 순번 설정 후 Hub 시작
-            Manager-->>Router: 준비 완료
-        else 준비 불가
-            Manager-->>Router: 재시도 필요
-            Router-->>WSGW: 503 Service Unavailable
-            WSGW-->>Client: 새 티켓으로 재시도 안내
+    C->>I: GET /ws?room_id=...&ticket=...
+    I->>R: 준비된 Pod로 연결 분산
+    R->>Redis: IP 제한·티켓 GETDEL
+    Redis-->>R: user_id
+    R->>U: 방 멤버십 확인
+    U-->>R: 가입 정보
+    R->>M: PrepareRegister(room_id)
+    opt 로컬 Hub 없음
+        M->>N: Subscribe room.msg.roomID
+        M->>N: Flush
+        N-->>M: 구독 준비 결과
+    end
+    alt 준비 실패
+        M-->>R: 준비 오류
+        R-->>C: HTTP 오류 · 일시 사용 불가는 503
+    else 준비 성공
+        M->>H: 새 Hub 시작 또는 기존 Hub 재사용
+        M-->>R: Registration
+        R->>R: Origin 검사·WebSocket upgrade
+        alt upgrade 실패
+            R->>M: Cancel
+            R-->>C: HTTP 오류
+        else upgrade 성공
+            R-->>C: 101 Switching Protocols
+            R->>M: Commit(conn, user_id)
+            alt 등록 성공
+                M->>H: 고유 session ID로 등록
+                H->>H: readPump / writePump 시작
+                Note over C,H: 같은 사용자의 여러 연결 허용
+            else 등록 실패
+                M-->>R: 등록 오류
+                R->>M: Cancel
+                R-->>C: 업그레이드된 연결 닫기
+            end
         end
-
-        Router-->>WSGW: WebSocket upgrade 성공
-        WSGW-->>Client: 연결 완료
-        Router->>Manager: 등록 확정
-        Manager->>Hub: Session 등록
-        opt 같은 사용자의 기존 Session 존재
-            Hub->>Hub: 기존 Session 종료
-        end
-        Hub->>Session: read/write pump 시작
+        Note over M,H: Cancel 후 세션·대기 등록이 없는 Hub 정리
     end

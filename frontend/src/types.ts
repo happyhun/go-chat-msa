@@ -26,9 +26,9 @@ export interface MessageInfo {
   sender_id: string
   content: string
   client_msg_id?: string
-  type: 'chat' | 'system' | 'conflict'
-  sequence_number: number
+  type: 'chat' | 'system'
   timestamp: number
+  status?: 'sending' | 'accepted' | 'failed'
 }
 
 export interface WsOutgoing {
@@ -37,7 +37,7 @@ export interface WsOutgoing {
   sender_id: string
   content: string
   client_msg_id?: string
-  type: 'chat' | 'system' | 'conflict'
-  sequence_number: number
+  type: 'chat' | 'system'
   timestamp: number
+  frame_no?: number
 }

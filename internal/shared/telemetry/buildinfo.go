@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"context"
+	"log/slog"
 	"runtime/debug"
 
 	"go.opentelemetry.io/otel"
@@ -31,7 +32,7 @@ func init() {
 		}
 	}
 
-	buildMeter.Float64ObservableGauge("gochat_build_info",
+	_, err := buildMeter.Float64ObservableGauge("gochat_build_info",
 		metric.WithDescription("런타임 빌드 정보"),
 		metric.WithFloat64Callback(func(_ context.Context, o metric.Float64Observer) error {
 			o.Observe(1, metric.WithAttributes(
@@ -43,4 +44,7 @@ func init() {
 			return nil
 		}),
 	)
+	if err != nil {
+		slog.WarnContext(context.Background(), "failed to register metric", "name", "gochat_build_info", "error", err)
+	}
 }

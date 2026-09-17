@@ -1,18 +1,22 @@
 # Go Chat MSA
 
-Go로 만든 MSA 채팅 서버이며, 빠른 메시지 분배를 목표로 합니다.  
-Kubernetes 위에서 동작하며, 웹소켓 서비스의 수평 확장 상황에서도 메시지 순서 정합성을 보장합니다.  
+Go로 만든 MSA 채팅 서버이며, 저지연 메시징과 유연한 수평 확장을 목표로 합니다.
+
+Kubernetes 위에서 무상태 웹소켓 서비스를 운영하며, NATS로 메시지를 전달하고 JetStream으로 영속화합니다.
+
 관측성 확보를 위해 OpenTelemetry 기반 Grafana 스택을 도입했습니다.
 
-- 5개의 서비스가 REST · gRPC · WebSocket으로 통신
-- 채팅방 ID 기반 Consistent Hashing으로 WebSocket 라우팅
-- Redis Pub/Sub 없이 인메모리 브로드캐스트로 빠르게 메시지 분배
-- 웹소켓 서비스 목록, 방 소유권 등의 제어 상태로 HPA 중 메시지 순서 보장
+- 4개의 마이크로서비스가 REST · gRPC · WebSocket · NATS로 통신
+- Kubernetes Service의 로드밸런싱으로 WebSocket 연결을 여러 Pod에 분산
+- NATS Pub/Sub을 통한 Pod 간 메시지 브로드캐스트
+- 웹소켓 서비스의 무상태 구조로 HPA 기반의 유연한 확장·축소 지원
+- NATS JetStream 기반 메시지 영속화
 - OTel 기반 Grafana 스택으로 로그 · 메트릭 · 트레이스 · 프로파일 통합 관측
 
 ### 관측성 기반의 병목 개선
-k6 부하 테스트로 10,000명 동시 접속, 2K Ingress, 200K Egress 환경에서 메시지 P99 레이턴시 43ms 달성했습니다.  
-Docker Compose 기준에서 병목을 제거해 P99 25ms 수준을 확보했고, 이후 K8s 전환 후 동일 머신에서 P99 43ms를 기록했습니다.
+
+k6 부하 테스트로 10,000명 동시 접속, 2K Ingress, 200K Egress 환경에서 메시지 P99 레이턴시 50ms를 달성했습니다.
+Docker Compose 기준에서 병목을 제거해 P99 25ms 수준을 확보했고, 이후 K8s 전환과 NATS JetStream 도입 후 동일 머신에서 P99 50ms를 기록했습니다.
 
 | 병목 | 증상 | 원인 | 개선 | 결과 |
 | :--- | :--- | :--- | :--- | :--- |
@@ -44,7 +48,6 @@ Docker Compose 기준에서 병목을 제거해 P99 25ms 수준을 확보했고,
 | Docker | 이미지 빌드와 kind 노드 실행 |
 | kind | 로컬 Kubernetes 클러스터 생성 |
 | kubectl | K8s 리소스 적용과 상태 확인 |
-| Go | 백엔드 서비스 빌드 |
 | Make | 실행 명령 단순화 |
 
 설치 후 아래 명령어로 K8s 클러스터와 애플리케이션을 함께 실행할 수 있습니다.
@@ -62,173 +65,91 @@ make dev-up
 ## 아키텍처
 
 ```mermaid
+---
+config:
+  layout: elk
+---
 flowchart TB
-    subgraph External ["외부"]
-        direction LR
-        Client["브라우저"]
-    end
+    Client["브라우저"]
 
     subgraph K8s ["Kubernetes 환경"]
-        direction TB
-
         Ingress["Ingress"]
 
-        subgraph PublicUI ["화면 · 문서"]
-            direction LR
-            FE["Frontend"]
-            Docs["Swagger UI"]
+        subgraph Services ["애플리케이션 서비스"]
+            AGW["API Gateway"]
+            WSS["WebSocket Service"]
+            US["User Service"]
+            CS["Chat Service"]
         end
 
-        subgraph Runtime ["서비스 런타임"]
-            direction TB
-
-            subgraph Services ["애플리케이션 서비스"]
-                direction TB
-
-                subgraph Gateway ["진입 계층"]
-                    direction LR
-                    AGW["API Gateway"]
-                    WSGW["WS Gateway"]
-                end
-
-                subgraph Domain ["도메인 계층"]
-                    direction LR
-                    US["User Service"]
-                    CS["Chat Service"]
-                    WSS["WebSocket Service"]
-                end
-            end
-
-            subgraph State ["상태 저장소"]
-                direction LR
-
-                subgraph Data ["영속 저장소"]
-                    direction LR
-                    PG[("PostgreSQL")]
-                    MG[("MongoDB")]
-                end
-
-                subgraph Control ["제어 상태 저장소"]
-                    direction LR
-                    RD[("Redis")]
-                end
-            end
-        end
-
-        subgraph Observability ["관측성"]
-            direction LR
-            Alloy["Alloy"]
-            Prometheus[("Prometheus")]
-            Loki[("Loki")]
-            Tempo[("Tempo")]
-            Pyroscope[("Pyroscope")]
-            Grafana["Grafana"]
-        end
-
-        subgraph Verification ["검증 리소스"]
-            direction LR
-            Load["C10K k6 Job"]
-            HPAProbe["HPA k6 Job"]
-        end
+        NATS["NATS Core + JetStream"]
+        RD[("Redis")]
+        PG[("PostgreSQL")]
+        MG[("MongoDB")]
     end
 
-    Client == "HTTP / WebSocket" ==> Ingress
-    Ingress -- "화면" --> FE
-    Ingress -- "REST" --> AGW
-    Ingress -- "WebSocket" --> WSGW
-    Ingress -- "API 문서" --> Docs
-    Ingress -- "대시보드" --> Grafana
-
-    AGW -- "사용자 · 방" --> US
-    AGW -- "메시지 조회" --> CS
-    WSGW -- "방 기준 라우팅" --> WSS
-    WSS -- "멤버십 확인" --> US
-    WSS -- "메시지 저장 · 순번 조회" --> CS
-
+    Client -->|"HTTP / WebSocket"| Ingress
+    Ingress -->|"/api"| AGW
+    Ingress <-->|"/ws"| WSS
+    AGW -->|"gRPC · 사용자·방 관리"| US
+    AGW -->|"gRPC · 메시지 조회"| CS
+    AGW -->|"내부 HTTP · 방 알림·종료"| WSS
+    WSS -->|"gRPC · 멤버십 확인"| US
+    WSS <-->|"메시지 발행·구독"| NATS
+    CS <-->|"저장 메시지 소비"| NATS
+    Services ~~~ NATS
+    NATS ~~~ PG & MG
     US --> PG
-    US --> RD
     CS --> MG
-    AGW --> RD
-    WSGW --> RD
-    WSS --> RD
-    MG ~~~ RD
-
-    PublicUI -. "Pod 로그" .-> Alloy
-    Services -. "로그 · 메트릭 · 트레이스" .-> Alloy
-    Services -. "프로파일" .-> Pyroscope
-    Alloy --> Prometheus
-    Alloy --> Loki
-    Alloy --> Tempo
-    Prometheus --> Grafana
-    Loki --> Grafana
-    Tempo --> Grafana
-    Pyroscope --> Grafana
+    AGW -->|"티켓 발급·요청 제한"| RD
+    WSS -->|"티켓 소비·연결 제한"| RD
+    US -->|"refresh token"| RD
 ```
 
 | 서비스 | 책임 | 통신 | 상태/저장소 |
 | :--- | :--- | :--- | :--- |
-| `api-gateway` | REST API 진입점, JWT 검증 | HTTP | Redis |
-| `ws-gateway` | WebSocket 티켓 발급 및 라우팅 | HTTP/WebSocket | Redis |
-| `websocket-service` | 세션 관리, 메시지 브로드캐스트 | WebSocket | Redis |
+| `api-gateway` | REST API 진입점, JWT 검증, WebSocket 티켓 발급 | HTTP, gRPC | Redis |
+| `websocket-service` | 세션 관리, 메시지 발행·구독 및 브로드캐스트 | HTTP/WebSocket, gRPC, NATS | Redis |
 | `user-service` | 사용자, 채팅방, refresh token 관리 | gRPC | PostgreSQL, Redis |
-| `chat-service` | 메시지 저장, 조회 | gRPC | MongoDB |
+| `chat-service` | 메시지 비동기 배치 저장, 조회 | gRPC, NATS JetStream | MongoDB |
 
 상세 흐름은 다이어그램으로 분리했습니다.
 
 | 다이어그램 | 내용 |
 | :--- | :--- |
 | [Kubernetes 실행 아키텍처](docs/diagrams/flow-k8s-architecture.mmd) | Ingress, 서비스, 데이터 계층, 관측성 구성 |
-| [멤버십 싱크](docs/diagrams/seq-membership-sync.mmd) | Redis 후보 목록 변경과 해시 링 갱신 |
-| [소유권 이전](docs/diagrams/seq-ownership-transfer.mmd) | HPA 확장 중 담당 인스턴스 이전과 종료 절차 |
-| [메시지 처리 흐름](docs/diagrams/flow-message.mmd) | WebSocket 메시지 수신, 순번 부여, 브로드캐스트, 저장 |
+| [방 구독 생명주기](docs/diagrams/seq-room-subscription.mmd) | NATS 방 구독과 로컬 세션 관리 |
+| [재연결과 메시지 복구](docs/diagrams/seq-reconnect-recovery.mmd) | Pod 종료 후 재연결과 메시지 조회 |
+| [메시지 처리 흐름](docs/diagrams/flow-message.mmd) | JetStream 기록, 브로드캐스트, 비동기 저장 |
 
 ## 주요 설계 결정
 
-### WebSocket 라우팅
+### 무상태 웹소켓 서비스와 수평 확장
 
-WebSocket 메시지는 같은 방의 세션을 한 WebSocket Service 인스턴스로 모아 브로드캐스트합니다.  
-메시지마다 Redis Pub/Sub를 거치지 않고, WS Gateway가 `room_id` 기반 consistent hashing으로 대상 인스턴스를 고릅니다.
+WebSocket 연결은 여러 웹소켓 서비스 인스턴스에 분산됩니다.
+각 인스턴스는 채팅방 ID 기반의 NATS Pub/Sub으로 메시지를 받아, 같은 방의 로컬 세션에 브로드캐스트합니다.
 
-이 구조의 목적은 메시지 분배 지연을 낮추고 중앙 병목을 피하는 것입니다.  
-방 단위 브로드캐스트와 순번 부여는 담당 WebSocket Service 인스턴스의 로컬 메모리에서 처리하고, Redis는 라우팅 후보 목록과 방 소유권 같은 제어 상태만 맡습니다.  
-여기서 방 소유권은 특정 방을 현재 어느 인스턴스가 처리하는지를 뜻합니다.  
+이 구조의 목적은 여러 인스턴스가 같은 방의 연결을 나눠 처리하며 유연하게 수평 확장하는 것입니다.
+웹소켓 서비스는 연결과 로컬 Hub를 관리하고, 메시지 영속화는 JetStream이 담당합니다.
 
-WebSocket Service 인스턴스는 Redis에 자기 주소를 `POD_IP:PORT` 형식으로 등록합니다.  
-Service VIP를 거치면 consistent hashing이 고른 담당 인스턴스가 Kubernetes Service 로드밸런싱으로 다시 바뀔 수 있기 때문입니다.  
+연결 시에는 API 게이트웨이가 발급한 일회성 티켓과 방 멤버십을 확인하고, NATS 구독을 준비한 뒤 WebSocket 연결을 수락합니다.
+참여·나가기 알림과 방 종료는 API 게이트웨이가 내부 HTTP로 요청하며, 요청받은 인스턴스가 Core NATS로 전파해 각 인스턴스의 로컬 세션에 반영합니다.
 
-WS Gateway는 Redis의 후보 키 변화를 감지해 해시 링을 갱신합니다.  
-Keyspace notification은 변경 신호로 사용하고, 실제 후보 목록은 `SCAN wss:member:*`로 다시 읽습니다.  
-30초 주기 재검사도 함께 둬 이벤트를 놓쳐도 Redis에 남아 있는 후보 목록으로 해시 링을 다시 맞춥니다.  
+인스턴스 증설 시에는 기존 연결을 유지하고 새 연결부터 분산합니다.
+축소나 재시작으로 연결이 끊기면 클라이언트가 새 티켓을 발급받아 재연결하고, 연결이 끊긴 동안의 메시지는 MongoDB에 저장된 이력을 조회해 복구합니다.
 
-### 분산 라우팅 정합성
+NATS 연결 단절을 감지하면 readiness를 내리고 기존 세션을 종료합니다.
+방 구독의 slow consumer나 전달 지연 한도 초과를 감지한 경우에도 해당 방의 로컬 세션을 종료해 재연결과 메시지 복구를 유도합니다.
 
-WS Gateway와 WebSocket Service의 각 인스턴스는 Redis 후보 목록을 관찰해 자기 로컬 해시 링을 갱신합니다.  
-하지만 모든 인스턴스가 같은 순간에 같은 목록을 보는 것은 아닙니다.  
-그래서 WS Gateway의 해시 링과 WebSocket Service의 해시 링이 일시적으로 다를 수 있다는 전제로 방어합니다.  
+### 웹소켓 서비스 계층 구조
 
-| 상황 | 처리 | 이유 |
-| :--- | :--- | :--- |
-| 잘못된 담당 인스턴스로 라우팅 | WebSocket Service가 421 응답, WS Gateway가 503으로 변환 | 오래된 라우팅 정보를 빠르게 드러내고 클라이언트가 새 담당 인스턴스로 다시 연결 |
-| 새 Hub 생성 | WebSocket upgrade 전에 방 소유권 획득 및 순번 초기화 | 소켓을 열기 전에 담당 인스턴스와 순번 기준을 확정 |
-| 담당 인스턴스 변경 | 저장 대기 작업 완료 후 방 소유권 반납 | 새 담당 인스턴스가 이전 저장 완료 전에 순번을 시작하지 않게 함 |
-| 방 소유권 갱신 실패 | 토큰 불일치나 키 없음은 즉시 Hub 종료, Redis 오류는 마지막 성공 갱신 후 20초 초과 시 Hub 종료 | 일시 오류는 흡수하되 소유권이 불확실해진 상태에서는 메시지 수신 차단 |
-
-담당 인스턴스 변경은 멤버십 변경 이벤트를 받으면 바로 검사하고, 기존 Hub는 0~2초 무작위 지연 후 종료 절차에 들어갑니다.  
-이벤트를 놓친 경우에도 Manager가 10초마다 자신이 가진 Hub의 담당 여부를 다시 확인하므로, 최대 약 12초 안에 종료 절차가 시작됩니다.  
-이후 Hub는 이미 브로드캐스트한 메시지의 저장 완료를 기다린 뒤 방 소유권을 반납합니다.  
-
-WebSocket 연결 라우팅 실패에 대해서는 WS Gateway나 WebSocket Service가 다른 인스턴스로 서버 측 재시도를 하지 않습니다.  
-연결 재시도는 클라이언트가 무작위 지연을 섞어 수행하게 해 재시도 트래픽이 한 번에 몰리지 않게 합니다.  
-
-### WebSocket 계층 구조
-
-WebSocket Service는 연결 수명, 방 소유권, 세션 목록, 브로드캐스트, 저장 요청을 함께 다룹니다.  
-이 책임을 한 계층에 모으면 상태 변경 순서를 추적하기 어려워지므로 Router, Manager, Hub, Session으로 나눴습니다.  
-의존 방향은 위에서 아래로만 흐르게 제한했습니다.  
+웹소켓 서비스는 연결 수명, 방 구독, 세션 목록과 브로드캐스트를 다룹니다.
+이 책임을 한 계층에 모으면 상태 변경 순서를 추적하기 어려워지므로 Router, Manager, Hub, Session으로 나눴습니다.
+의존 방향은 위에서 아래로만 흐르게 제한했습니다.
 
 ```text
-Router (1)
-└── Manager (1)
+Router (Pod당 1개)
+└── Manager (Pod당 1개)
     ├── Hub (채팅방 A)
     │   ├── Session (유저 1)
     │   └── Session (유저 2)
@@ -236,38 +157,41 @@ Router (1)
         └── Session (유저 3)
 ```
 
-Manager와 Hub는 액터 모델로 동시성을 처리합니다.  
-Manager는 Hub 목록과 생명주기를 단일 `select` 루프에서 관리하고, Hub는 세션 목록, 순번 부여, 브로드캐스트를 자기 루프에서 순서대로 처리합니다.  
-외부와는 채널 또는 주입된 함수로만 통신해 공유 상태를 직접 잠그는 범위를 줄였습니다.  
-다만 Hub가 종료 절차에 들어간 뒤 새 메시지가 `broadcastCh`에 들어가지 않도록 `RWMutex`와 atomic flag로 수신 경계를 닫습니다.
+Manager와 Hub는 액터 모델로 동시성을 처리합니다. Manager는 Hub 목록과 구독의 생명주기를 단일 `select` 루프에서 관리하고, Hub는 로컬 세션 목록과 브로드캐스트를 자기 루프에서 순서대로 처리합니다.
+외부와는 채널 또는 주입된 함수로 통신해 공유 상태를 직접 잠그는 범위를 줄였습니다.
 
 | 계층 | 책임 |
 | :--- | :--- |
 | Router | HTTP 요청을 검증하고 WebSocket upgrade 전까지의 준비 절차를 조율 |
-| Manager | Hub 생성과 종료, 방 소유권, 저장 파이프라인을 관리 |
-| Hub | 한 방의 세션 목록, 순번 부여, 브로드캐스트를 직렬 처리 |
-| Session | 개별 WebSocket 연결의 읽기/쓰기와 메시지 검증을 담당 |
+| Manager | 로컬 Hub·NATS 구독의 생성과 종료, 메시지 발행·제어 이벤트 |
+| Hub | 한 방의 로컬 세션과 브로드캐스트를 직렬 처리 |
+| Session | 개별 WebSocket 연결의 읽기/쓰기, 메시지 검증과 처리율 제한 |
 
-자식 계층이 부모를 직접 참조하면 순환 의존이 생깁니다.  
+자식 계층이 부모를 직접 참조하면 순환 의존이 생깁니다.
 부모의 작업 큐로 넘기는 일은 송신 전용 채널로, 호출한 자리에서 바로 결과가 필요한 일은 콜백 함수로 분리했습니다.
 
-### 비동기 배치 저장
+### JetStream 기반 비동기 배치 저장
 
-메시지를 브로드캐스트와 동시에 저장하면 저장 지연이 실시간 전송 경로에 직접 영향을 줍니다.  
-이를 방지하기 위해 실시간 분배와 저장을 분리하고, 저장은 배치 워커에서 비동기로 처리합니다.
+MongoDB 저장 지연이 실시간 전송 경로에 직접 영향을 주지 않도록, 저장은 채팅 서비스의 배치 워커에서 비동기로 처리합니다.
+여러 메시지를 모아 저장해 개별 쓰기 비용을 줄이고, 저장 대기 메시지는 JetStream에 보관합니다.
 
-저장 작업 큐가 꽉 찬 경우, 메시지 브로드캐스트를 수행하지 않습니다.  
-Hub는 `persistCh`에 작업을 넣기 전에 같은 크기의 버퍼드 채널을 세마포어처럼 사용해 저장 큐에 등록할 수 있는지 먼저 확인합니다.  
-등록 가능할 때만 순번을 부여하고, 저장 작업을 `persistCh`에 넣은 다음 브로드캐스트합니다.  
-저장 경로가 꽉 차 있거나 중간 단계에서 실패하면 순번과 예약을 되돌리고 메시지를 보낸 세션에 일시 오류를 반환합니다.  
+웹소켓 서비스는 사용자 채팅을 JetStream에 발행하고, 성공 `PubAck`를 수락 기준으로 사용합니다.
+JetStream은 메시지를 기록한 뒤 Core NATS로 재발행하고, 각 웹소켓 서비스가 구독한 방의 세션에 브로드캐스트합니다.
+실시간 전달은 MongoDB 저장 완료까지 기다리지 않지만, JetStream 기록에 걸리는 시간은 포함합니다.
 
-저장 워커는 채널에서 작업을 꺼내 일정 건수 또는 타이머 기준으로 배치 저장합니다.  
-메시지 순서는 Hub에서 부여하므로 DB 저장 순서가 달라져도 메시지 순서는 유지됩니다.  
-이미 저장된 메시지는 성공으로 보고, 재시도 가능한 오류만 재시도 큐로 보냅니다.  
+채팅 서비스의 워커들은 하나의 durable pull consumer를 공유해 메시지를 나눠 처리합니다.
+MongoDB에 배치 저장한 뒤 메시지별로 ACK하며, 워커 종료로 ACK되지 않은 메시지는 재전달됩니다.
 
-이 구조는 브로드캐스트 지연을 낮추지만, 저장 실패와 재시도가 길어지면 Hub 종료가 늦어질 수 있습니다.  
-서버 종료나 방 담당 인스턴스 변경 시 Hub는 이미 브로드캐스트한 메시지의 저장 완료를 기다리지만,  
-무한히 대기하지 않도록 `shutdown_timeout`을 지정하고 타임아웃 발생 시 메트릭과 로그를 남기고 종료합니다.
+재전달과 클라이언트 재시도에 대응하기 위해 메시지 저장은 멱등하게 처리합니다.
+메시지 ID 또는 `(채팅방 ID, 발신자 ID, 클라이언트 메시지 ID)`가 같으면 기존 내용과 대조해 중복 저장을 막습니다.
+일시적인 저장 오류는 재시도하고, 검증 오류나 내용 충돌은 DLQ에 기록한 뒤 원본을 ACK합니다.
+
+이 구조에서는 실시간으로 받은 메시지가 MongoDB 조회 결과에는 아직 나타나지 않을 수 있습니다.
+이를 보완하기 위해 서버는 UUIDv7 ID 기반 조회 API를 제공하고, 반복 조회와 메시지 병합은 클라이언트가 담당하도록 했습니다.
+
+클라이언트는 조회 시작점을 마지막 수신 ID보다 앞선 시점으로 되감고, 고정한 시작점부터 일정 시간 반복 조회합니다.
+시작점을 최신 메시지로 옮기지 않아야 그보다 작은 ID로 뒤늦게 저장된 메시지도 포함할 수 있기 때문입니다.
+조회 결과는 실시간 메시지와 합쳐 ID 기준으로 정렬하고 중복을 제거합니다.
 
 ### bcrypt 워커 풀
 
@@ -297,97 +221,145 @@ user-service는 `ErrQueueFull`을 `ResourceExhausted`로 바꿔 gateway가 과�
 Alloy는 로그, 메트릭, 트레이스를 수집합니다.  
 프로파일은 앱 SDK가 Pyroscope로 직접 전송합니다.
 
+```mermaid
+---
+config:
+  layout: elk
+---
+flowchart LR
+    Apps["애플리케이션"]
+    Alloy["Alloy"]
+    Loki[("Loki")]
+    Prometheus[("Prometheus")]
+    Tempo[("Tempo")]
+    Pyroscope[("Pyroscope")]
+    Grafana["Grafana"]
+
+    Apps -->|"메트릭·트레이스 push<br/>Pod 로그 수집"| Alloy
+    Apps -->|"프로파일 push"| Pyroscope
+    Alloy -->|"로그"| Loki
+    Alloy -->|"메트릭"| Prometheus
+    Alloy -->|"트레이스"| Tempo
+    Loki & Prometheus & Tempo & Pyroscope -->|"조회 결과"| Grafana
+```
+
 | 신호 | 백엔드 | 용도 |
 | :--- | :--- | :--- |
 | 로그 | Loki | 이벤트 기록 검색, `trace_id` 기준 요청 추적 |
-| 메트릭 | Prometheus | API 레이턴시, 오류율, WebSocket 지표 확인 |
+| 메트릭 | Prometheus | API 레이턴시, 오류율, WebSocket·NATS 지표 확인 |
 | 트레이스 | Tempo | HTTP/gRPC/Redis/DB 호출 흐름 추적 |
 | 프로파일 | Pyroscope | CPU 사용과 코드 병목 분석 |
 
 Grafana 대시보드는 전체 상태에서 시작해 API, 실시간 메시지, 저장소, 런타임을 목적에 맞게 확인할 수 있도록 구성했습니다.
 
-상세 계측 항목은 [텔레메트리 카탈로그](docs/TELEMETRY_CATALOG.md)에 정리했습니다.
+상세 계측 항목과 대시보드의 차이는 [텔레메트리 카탈로그](docs/TELEMETRY_CATALOG.md)에 정리했습니다.
 
 ## Kubernetes 실행 기준
 
-K8s manifest는 `base`와 환경별 overlay로 나눴습니다.
-부하 테스트는 `dev`, HPA 정합성 테스트는 `qa` overlay에서 실행합니다.
-`bootstrap.sh`가 데이터 계층, 관측성, migration, 애플리케이션을 순서대로 적용합니다.
+Kubernetes 매니페스트는 `base`와 환경별 오버레이로 나눕니다. `bootstrap.sh`가 PostgreSQL·MongoDB·Redis·NATS, 관측성, 마이그레이션, 애플리케이션을 순서대로 준비합니다.
 
-| 환경 | 주요 설정 | 검증 |
+| 환경 | 주요 설정 | 용도 |
 | :--- | :--- | :--- |
-| `dev` | WebSocket Service 2 replicas | C10K 부하 테스트 |
-| `qa` | WebSocket Service HPA `1→2` | HPA 전환 중 메시지 정합성 |
+| `dev` | 웹소켓 서비스 Pod 2개 | 개발·C10K 부하 테스트 |
+| `test` | 각 마이크로서비스 Pod 2개 | 다중 Pod E2E·저장 장애 복구 |
+| `qa` | 웹소켓 서비스 Pod 1~2개 자동 확장(HPA), Pod당 목표 연결 100개 | 확장·재연결 검증, 별도 강제 축소 실험 |
 
-### 검증 명령
+API 게이트웨이와 웹소켓 서비스는 ClusterIP, 사용자 서비스와 채팅 서비스는 Headless Service를 사용합니다. 채팅 서비스는 메시지 수락과 MongoDB 조회의 준비 상태를 분리해, DB 장애가 웹소켓 송수신 경로의 준비 상태를 해제하지 않게 합니다.
+
+### 코드·설정 검증
+
+```bash
+go test ./...
+golangci-lint run
+go test -count=1 -tags=integration ./...
+npm --prefix frontend ci
+npm --prefix frontend test
+npm --prefix frontend run lint
+npm --prefix frontend run build
+make k8s-validate
+```
+
+E2E는 `test` 환경을 준비한 뒤 실행합니다.
+
+```bash
+make test-up
+go test -count=1 -tags=e2e ./test/e2e
+```
+
+### 부하·HPA 검증
+
+필요한 환경을 선택해 실행합니다. 각 명령의 측정 범위와 조건은 아래 검증 보고서를 기준으로 합니다.
 
 ```bash
 make dev-up
 make dev-load
+```
 
+```bash
 make qa-up
 make qa-load
 ```
 
-환경에 맞는 클러스터를 띄우고 테스트를 진행할 수 있습니다.  
-단, 부하 테스트는 고성능 하드웨어가 필요하므로 주의 바랍니다.
+두 부하 시나리오는 클러스터 내부 Service에 직접 요청하며 Ingress 구간은 측정하지 않습니다. `qa-load`는 웹소켓 서비스 Pod를 1개로 되돌린 뒤 HPA 확장을 검증합니다. 활성 연결 중 2→1 강제 축소는 [HPA 보고서](docs/K8S_JETSTREAM_HPA_REPORT.md#연결-유지-중-websocket-scale-in)의 추가 절차로 수행했습니다.
 
 ### 정리
 
 ```bash
 make dev-down
+make test-down
 make qa-down
 make kind-delete
 ```
 
+`*-down`은 해당 namespace와 PVC를 삭제합니다. `kind-delete`는 클러스터 전체와 그 데이터를 삭제합니다.
+
 ## 검증 결과
 
-검증은 로컬 MacBook에서 OrbStack 위에 kind 클러스터를 띄워 수행했습니다.
-
-- 하드웨어: MacBook M4 Pro, 14코어 CPU, 24GB 메모리
-- 런타임: OrbStack 2.2.1, kind Kubernetes v1.36.1
+아래는 2026-09-16에 실행한 JetStream 구성의 검증 결과입니다.
 
 ### C10K 부하 테스트
 
-로컬 kind `dev` 환경에서 10,000 동시 연결과 100개 방 조건의 부하를 검증했습니다.
+로컬 kind Kubernetes v1.37.0의 `dev` 환경에서 k6 워커 4개, 목표 10,000 VU, 100개 방으로 측정했습니다. 웹소켓 서비스·채팅 서비스·NATS의 Pod 수는 각각 2·1·1개입니다.
 
 | 항목 | 결과 |
 | :--- | :--- |
-| 동시 접속 | 10,000 |
-| 채팅방 | 100개 |
-| 방당 인원 | 100명 |
-| 메시지 Ingress | 약 2K msg/s |
-| 메시지 Egress | 약 200K msg/s |
-| 클라이언트 메시지 P99 | 최대 43ms |
-| 서버 Fanout P99 | 6.51ms |
-| 서버 Egress P99 | 24.2ms |
-| 메시지 timeout | 0 |
+| 활성 웹소켓 연결 관측 최대 | 9,996개 |
+| 송신 시도 / echo 지연 표본 | 1,185,961 / 11,666건 |
+| 워커별 메시지 P99 | 38.82 / 36.83 / 42.00 / 50.00ms |
+| 송신 오류 / 메시지 타임아웃 | 0 / 0 |
+| OOM / Pod 재시작 | 0 / 0 |
+| 종료 후 저장 대기 메시지 / DLQ 메시지 | 0 / 0 |
+| `<50ms` 기준 | 워커 4 실패, k6 exit code 99 |
 
-자세한 테스트 환경, 워커별 수치, CPU/메모리 분석은
-[Kubernetes C10K 부하 테스트 보고서](docs/K8S_C10K_REPORT.md)에 정리했습니다.
+지연은 표본 측정용 가상 사용자(VU)의 송신부터 자신의 메시지를 돌려받는 echo까지 측정한 값입니다. 워커별 P99를 전체 요청의 통합 P99로 해석하거나, 오류·저장 대기 메시지 0만으로 전체 메시지 무손실을 판단하지 않습니다. 과거 43ms·31ms 결과와는 실행 조건이 달라 JetStream만의 비용을 분리할 수 없습니다.
 
-### WebSocket HPA 정합성 테스트
+환경과 집계 기준은 [JetStream C10K 보고서](docs/K8S_JETSTREAM_C10K_REPORT.md)에 있습니다.
 
-로컬 kind `qa` 환경에서 `websocket-service` HPA `1→2` 전환 중 메시지 정합성을 검증했습니다.
+### 웹소켓 서비스 HPA·장애 복구
 
-| 항목 | 결과 |
+로컬 kind `qa` 환경에서 HPA 1→2 확장과 별도 강제 2→1 축소를 검증했습니다.
+
+| 시나리오 | 관측 결과 |
 | :--- | :--- |
-| k6 작업 | `k6-hpa Complete 1/1` |
-| HTTP 실패 | 0 |
-| WebSocket 오류 | 0 |
-| 순번 중복 | 0 |
-| 순번 역전 | 0 |
-| 누락 구간 감지/복구 | 2 / 2 |
-| 누락 구간 미복구 | 0 |
-| MongoDB 순번 공백 | 0 |
-| 누락분 조회 P99 | 15.33ms |
+| HPA 확장 | 송신·echo·MongoDB 문서 각각 11,985건 |
+| 활성 연결 중 강제 축소 | 송신·echo·MongoDB 문서 각각 12,239건, 계획되지 않은 연결 종료 99건 |
+| 위 두 실행 | DB 미반영·echo 타임아웃·동기화 오류·최종 누락·중복 실시간 전달 0 |
+| MongoDB 중단·복구, 채팅 서비스 재시작·Pod 1→3→1, 같은 PVC의 NATS 재시작 | 단계별 누적 echo ID 10→18→26→34건과 최종 DB 집합 일치 |
+| 장애 복구 단계 종료 | 누락·논리 중복·저장 대기 메시지·DLQ 메시지 0 |
+
+HPA 결과는 echo로 확인한 ID 집합을 기준으로 합니다. 직접 `PubAck`와 DB를 대조한 별도 통합 테스트는 정상 메시지 52건 범위입니다. 장시간 장애, 네트워크 지연 주입, NATS 중단 중 신규 송신, 호스트·디스크 손실은 이 실행으로 검증하지 않았습니다.
+
+재현 절차와 해석 범위는 [JetStream HPA·장애 복구 보고서](docs/K8S_JETSTREAM_HPA_REPORT.md)에 있습니다.
 
 ## 더 살펴보기
 
 | 문서 | 내용 |
 | :--- | :--- |
 | [DESIGN.md](docs/DESIGN.md) | 전체 설계와 트레이드오프 |
-| [K8S_C10K_REPORT.md](docs/K8S_C10K_REPORT.md) | K8s `dev-load` C10K 부하 테스트 결과 |
+| [K8S_JETSTREAM_C10K_REPORT.md](docs/K8S_JETSTREAM_C10K_REPORT.md) | JetStream 구성의 C10K 결과 |
+| [K8S_JETSTREAM_HPA_REPORT.md](docs/K8S_JETSTREAM_HPA_REPORT.md) | HPA 확장·강제 축소, 저장 장애 복구 결과 |
+| [RFC-0002](docs/rfcs/0002-jetstream-durable-message-persistence.md) | JetStream 채택 결정·검증 결과·후속 과제 |
+| [K8S_C10K_REPORT.md](docs/K8S_C10K_REPORT.md) | JetStream 도입 전 Kubernetes C10K 기록 |
 | [TELEMETRY_CATALOG.md](docs/TELEMETRY_CATALOG.md) | 로그/메트릭/트레이스/프로파일 카탈로그 |
 | [DOCKER_C10K_REPORT.md](docs/DOCKER_C10K_REPORT.md) | Docker Compose C10K 성능 기준 |
 | [DOCKER_C10K_TROUBLESHOOTING.md](docs/DOCKER_C10K_TROUBLESHOOTING.md) | Docker Compose C10K 병목과 해결 기록 |
@@ -395,11 +367,11 @@ make kind-delete
 | 다이어그램 | 내용 |
 | :--- | :--- |
 | [Kubernetes 실행 아키텍처](docs/diagrams/flow-k8s-architecture.mmd) | Ingress, 서비스, 데이터 계층, 관측성 구성 |
-| [로그인과 WebSocket 인증](docs/diagrams/seq-auth-ticket.mmd) | 로그인, refresh token, WebSocket 티켓 발급 |
-| [WebSocket 연결](docs/diagrams/seq-websocket.mmd) | 티켓 검증, 담당 인스턴스 확인, Hub 등록 |
-| [멤버십 싱크](docs/diagrams/seq-membership-sync.mmd) | Redis 후보 목록 변경과 해시 링 갱신 |
-| [소유권 이전](docs/diagrams/seq-ownership-transfer.mmd) | HPA 확장 중 담당 인스턴스 이전과 종료 절차 |
-| [메시지 처리 흐름](docs/diagrams/flow-message.mmd) | WebSocket 메시지 수신, 순번 부여, 브로드캐스트, 저장 |
+| [로그인과 웹소켓 인증](docs/diagrams/seq-auth-ticket.mmd) | 로그인, 갱신 토큰, 웹소켓 연결 티켓 발급 |
+| [웹소켓 연결](docs/diagrams/seq-websocket.mmd) | 티켓·멤버십 검증, 방 구독 준비, 세션 등록 |
+| [방 구독 생명주기](docs/diagrams/seq-room-subscription.mmd) | 여러 Pod의 방 구독과 로컬 세션 정리 |
+| [재연결과 메시지 복구](docs/diagrams/seq-reconnect-recovery.mmd) | Pod 종료 후 새 연결과 MongoDB 복구 조회 |
+| [메시지 처리 흐름](docs/diagrams/flow-message.mmd) | JetStream 수락, Core RePublish, MongoDB 저장·복구 |
 
 Docker Compose는 더 이상 기본 실행 경로가 아닙니다.  
 K8s 전환 전 C10K 기준점은 `legacy-compose-baseline` 태그와 Docker Compose 문서로 남겼습니다.

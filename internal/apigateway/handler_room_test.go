@@ -268,10 +268,10 @@ func TestRouter_HandleDeleteRoom(t *testing.T) {
 				config: &Config{
 					AppConfig: config.AppConfig{Env: "test"},
 					Registry: ServiceRegistry{
-						WSGateway: config.HostConfig{Host: "mock-ws-gateway"},
+						WebSocket: config.HostConfig{Host: "mock-websocket-service"},
 					},
 					Port: config.PortConfig{
-						WSGateway: "8088",
+						WebSocket: "8081",
 					},
 				},
 			}
@@ -348,8 +348,8 @@ func TestRouter_HandleJoinRoom(t *testing.T) {
 				httpClient: &http.Client{Timeout: 1 * time.Second},
 				config: &Config{
 					AppConfig: config.AppConfig{Env: "test"},
-					Registry:  ServiceRegistry{WSGateway: config.HostConfig{Host: "localhost"}},
-					Port:      config.PortConfig{WSGateway: "8080"},
+					Registry:  ServiceRegistry{WebSocket: config.HostConfig{Host: "localhost"}},
+					Port:      config.PortConfig{WebSocket: "8080"},
 				},
 			}
 
@@ -425,8 +425,8 @@ func TestRouter_HandleLeaveRoom(t *testing.T) {
 				httpClient: &http.Client{Timeout: 1 * time.Second},
 				config: &Config{
 					AppConfig: config.AppConfig{Env: "test"},
-					Registry:  ServiceRegistry{WSGateway: config.HostConfig{Host: "localhost"}},
-					Port:      config.PortConfig{WSGateway: "8080"},
+					Registry:  ServiceRegistry{WebSocket: config.HostConfig{Host: "localhost"}},
+					Port:      config.PortConfig{WebSocket: "8080"},
 				},
 			}
 
@@ -668,17 +668,16 @@ func TestRouter_HandleMessages(t *testing.T) {
 	tests := []struct {
 		name         string
 		roomID       string
-		lastSeq      string
+		afterID      string
 		limit        string
 		mockUser     func(m *mocks.MockUserServiceClient)
 		mockChat     func(m *mocks.MockChatServiceClient)
 		expectedCode int
 	}{
 		{
-			name:    "Success: last_seq가 없는 경우 ListMessages 호출",
-			roomID:  "room-123",
-			lastSeq: "",
-			limit:   "10",
+			name:   "Success: after_id가 없는 경우 ListMessages 호출",
+			roomID: "room-123",
+			limit:  "10",
 			mockUser: func(m *mocks.MockUserServiceClient) {
 				m.EXPECT().GetMemberJoinedAt(mock.Anything, mock.Anything).Return(&userpb.GetMemberJoinedAtResponse{JoinedAt: timestamppb.Now()}, nil)
 			},
@@ -688,17 +687,29 @@ func TestRouter_HandleMessages(t *testing.T) {
 			expectedCode: http.StatusOK,
 		},
 		{
-			name:    "Success: last_seq가 있는 경우 SyncMessages 호출",
+			name:    "Success: after_id가 있는 경우 SyncMessages 호출",
 			roomID:  "room-123",
-			lastSeq: "5",
+			afterID: "01920f6a-7c3e-7b1a-9d2f-3e4a5b6c7d8e",
 			limit:   "10",
 			mockUser: func(m *mocks.MockUserServiceClient) {
 				m.EXPECT().GetMemberJoinedAt(mock.Anything, mock.Anything).Return(&userpb.GetMemberJoinedAtResponse{JoinedAt: timestamppb.Now()}, nil)
 			},
 			mockChat: func(m *mocks.MockChatServiceClient) {
-				m.EXPECT().SyncMessages(mock.Anything, mock.Anything).Return(&chatpb.SyncMessagesResponse{}, nil)
+				m.EXPECT().SyncMessages(mock.Anything, mock.MatchedBy(func(req *chatpb.SyncMessagesRequest) bool {
+					return req.AfterMessageId == "01920f6a-7c3e-7b1a-9d2f-3e4a5b6c7d8e"
+				})).Return(&chatpb.SyncMessagesResponse{HasMore: true}, nil)
 			},
 			expectedCode: http.StatusOK,
+		},
+		{
+			name:   "Failure: limit 형식 오류",
+			roomID: "room-123",
+			limit:  "abc",
+			mockUser: func(m *mocks.MockUserServiceClient) {
+				m.EXPECT().GetMemberJoinedAt(mock.Anything, mock.Anything).Return(&userpb.GetMemberJoinedAtResponse{JoinedAt: timestamppb.Now()}, nil)
+			},
+			mockChat:     func(m *mocks.MockChatServiceClient) {},
+			expectedCode: http.StatusBadRequest,
 		},
 	}
 
@@ -722,8 +733,8 @@ func TestRouter_HandleMessages(t *testing.T) {
 			mux.Handle("GET /rooms/{id}/messages", authMw(http.HandlerFunc(r.handleListMessages)))
 
 			path := "/rooms/" + tt.roomID + "/messages?limit=" + tt.limit
-			if tt.lastSeq != "" {
-				path += "&last_seq=" + tt.lastSeq
+			if tt.afterID != "" {
+				path += "&after_id=" + tt.afterID
 			}
 			req := httptest.NewRequest("GET", path, nil)
 			req.Header.Set("Authorization", "Bearer "+validToken)

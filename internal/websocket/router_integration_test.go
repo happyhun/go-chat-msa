@@ -4,6 +4,7 @@ package websocket_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -11,262 +12,404 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
+	natscontainer "github.com/testcontainers/testcontainers-go/modules/nats"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/types/known/emptypb"
 
-	chatpb "go-chat-msa/api/proto/chat/v1"
 	userpb "go-chat-msa/api/proto/user/v1"
 	"go-chat-msa/internal/apigateway/mocks"
 	"go-chat-msa/internal/shared/config"
+	"go-chat-msa/internal/shared/wsticket"
 	ws "go-chat-msa/internal/websocket"
-	"go-chat-msa/internal/wsgateway/loadbalance"
+	"go-chat-msa/internal/websocket/hub"
+	"go-chat-msa/internal/websocket/natsbus"
 )
+
+const (
+	testInternalSecret = "integration-secret"
+	testAllowedOrigin  = "http://chat.example.test"
+)
+
+type wsNode struct {
+	router *ws.Router
+	bus    *natsbus.Bus
+	server *httptest.Server
+	wsURL  string
+	cancel context.CancelFunc
+	done   chan struct{}
+}
 
 type RouterIntegrationSuite struct {
 	suite.Suite
+	container      *natscontainer.NATSContainer
+	natsURL        string
 	mockUserClient *mocks.MockUserServiceClient
-	mockChatClient *mocks.MockChatServiceClient
-	router         *ws.Router
-	server         *httptest.Server
-	wsURL          string
-	cancel         context.CancelFunc
-	managerDone    chan struct{}
+	redisClient    *redis.Client
+	node           *wsNode
+}
+
+func (s *RouterIntegrationSuite) SetupSuite() {
+	ctx := context.Background()
+
+	container, err := natscontainer.Run(ctx, "nats:2.14.6-alpine", natscontainer.WithConfigFile(strings.NewReader("port: 4222\njetstream { store_dir: /data/jetstream }\n")))
+	s.Require().NoError(err)
+	s.container = container
+
+	url, err := container.ConnectionString(ctx)
+	s.Require().NoError(err)
+	s.natsURL = url
+	nc, err := nats.Connect(url)
+	s.Require().NoError(err)
+	defer nc.Close()
+	js, err := jetstream.New(nc)
+	s.Require().NoError(err)
+	_, err = js.CreateStream(ctx, jetstream.StreamConfig{
+		Name: "CHAT_PERSIST", Subjects: []string{"chat.persist.*"}, Storage: jetstream.FileStorage,
+		Retention: jetstream.WorkQueuePolicy, RePublish: &jetstream.RePublish{Source: "chat.persist.*", Destination: "room.msg.$1"},
+	})
+	s.Require().NoError(err)
+}
+
+func (s *RouterIntegrationSuite) TearDownSuite() {
+	if s.container != nil {
+		s.container.Terminate(context.Background())
+	}
 }
 
 func (s *RouterIntegrationSuite) SetupTest() {
 	s.mockUserClient = mocks.NewMockUserServiceClient(s.T())
-	s.mockChatClient = mocks.NewMockChatServiceClient(s.T())
+	s.redisClient = redis.NewClient(&redis.Options{Addr: miniredis.RunT(s.T()).Addr()})
+	s.node = s.startNode("pod-a")
+}
 
-	const selfAddr = "self:8081"
-	cfg := ws.WebSocketConfig{
-		AdvertisedAddr: selfAddr,
+func (s *RouterIntegrationSuite) TearDownTest() {
+	s.stopNode(s.node)
+	_ = s.redisClient.Close()
+}
+
+func (s *RouterIntegrationSuite) testConfig() ws.WebSocketConfig {
+	return ws.WebSocketConfig{
 		Manager: config.ManagerConfig{
 			WriteWait:   10 * time.Second,
 			PongWait:    60 * time.Second,
 			PingPeriod:  54 * time.Second,
-			IdleTimeout: 100 * time.Millisecond,
+			IdleTimeout: 2 * time.Second,
+		},
+		GRPCClient: config.GRPCClientConfig{Timeout: time.Second},
+		RateLimit: ws.RateLimitConfig{
+			WSConnect: config.RateLimitConfig{RPS: 100, Burst: 100, TTL: time.Minute},
+			WSMessage: config.RateLimitConfig{RPS: 100, Burst: 100, TTL: time.Minute},
+		},
+		AllowedOrigins: []string{testAllowedOrigin},
+		NATS: ws.NATSConfig{
+			FlushTimeout:    2 * time.Second,
+			MaxDeliveryLag:  5 * time.Second,
+			SubPendingMsgs:  1000,
+			SubPendingBytes: 8 * 1024 * 1024,
 		},
 	}
-	hashRing := loadbalance.New([]string{selfAddr})
+}
 
-	s.router = ws.NewRouter(s.mockChatClient, s.mockUserClient, cfg, hashRing)
-	s.server = httptest.NewServer(s.router)
-	s.wsURL = strings.Replace(s.server.URL, "http", "ws", 1)
+func (s *RouterIntegrationSuite) startNode(podName string) *wsNode {
+	bus, err := natsbus.Connect(natsbus.Config{
+		URL:             s.natsURL,
+		Name:            podName,
+		FlushTimeout:    2 * time.Second,
+		SubPendingMsgs:  1000,
+		SubPendingBytes: 8 * 1024 * 1024,
+	})
+	s.Require().NoError(err)
 
-	ctx, cancel := context.WithCancel(s.T().Context())
-	s.cancel = cancel
-	s.managerDone = make(chan struct{})
+	router := ws.NewRouter(s.mockUserClient, s.testConfig(), bus,
+		ws.WithPodName(podName),
+		ws.WithInternalSecret(testInternalSecret),
+		ws.WithRedisClient(s.redisClient))
+	bus.SetObserver(router.Observer())
+
+	server := httptest.NewServer(router)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
 	go func() {
-		defer close(s.managerDone)
-		s.router.RunManager(ctx)
+		defer close(done)
+		router.RunManager(ctx)
 	}()
+
+	return &wsNode{
+		router: router,
+		bus:    bus,
+		server: server,
+		wsURL:  strings.Replace(server.URL, "http", "ws", 1),
+		cancel: cancel,
+		done:   done,
+	}
 }
 
-func (s *RouterIntegrationSuite) TearDownTest() {
-	s.server.Close()
-	s.cancel()
-	<-s.managerDone
+func (s *RouterIntegrationSuite) stopNode(node *wsNode) {
+	if node == nil {
+		return
+	}
+	node.server.Close()
+	node.cancel()
+	<-node.done
+	_ = node.bus.Drain()
 }
 
-func (s *RouterIntegrationSuite) dial(userID, roomID string) (*websocket.Conn, *http.Response, error) {
-	header := http.Header{}
-	header.Set("X-User-ID", userID)
-	url := fmt.Sprintf("%s/ws?room_id=%s", s.wsURL, roomID)
-	return websocket.DefaultDialer.Dial(url, header)
+func (s *RouterIntegrationSuite) dial(node *wsNode, userID, roomID string) (*websocket.Conn, *http.Response, error) {
+	return websocket.DefaultDialer.Dial(s.wsURL(node, userID, roomID), nil)
 }
 
-func (s *RouterIntegrationSuite) TestConnect_MissingUserID() {
-	header := http.Header{}
-	url := fmt.Sprintf("%s/ws?room_id=room-1", s.wsURL)
-	_, resp, err := websocket.DefaultDialer.Dial(url, header)
+func (s *RouterIntegrationSuite) wsURL(node *wsNode, userID, roomID string) string {
+	ticket, err := wsticket.NewStore(s.redisClient).Issue(context.Background(), userID, time.Minute)
+	s.Require().NoError(err)
+	return fmt.Sprintf("%s/ws?room_id=%s&ticket=%s", node.wsURL, roomID, ticket)
+}
+
+func (s *RouterIntegrationSuite) expectMember(times int) {
+	s.mockUserClient.EXPECT().
+		VerifyRoomMember(mock.Anything, mock.Anything).
+		Return(&userpb.VerifyRoomMemberResponse{}, nil).Times(times)
+}
+
+func (s *RouterIntegrationSuite) readFrame(conn *websocket.Conn) map[string]any {
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, data, err := conn.ReadMessage()
+	s.Require().NoError(err)
+
+	var frame map[string]any
+	s.Require().NoError(json.Unmarshal(data, &frame))
+	return frame
+}
+
+func (s *RouterIntegrationSuite) TestConnect_MissingTicket() {
+	url := fmt.Sprintf("%s/ws?room_id=%s", s.node.wsURL, uuid.NewString())
+	_, resp, err := websocket.DefaultDialer.Dial(url, nil)
 	s.Error(err)
 	s.Equal(http.StatusUnauthorized, resp.StatusCode)
 }
 
-func (s *RouterIntegrationSuite) TestConnect_MissingRoomID() {
-	header := http.Header{}
-	header.Set("X-User-ID", "user-1")
-	url := fmt.Sprintf("%s/ws", s.wsURL)
-	_, resp, err := websocket.DefaultDialer.Dial(url, header)
+func (s *RouterIntegrationSuite) TestConnect_TicketIsSingleUse() {
+	roomID := uuid.NewString()
+	s.expectMember(1)
+
+	url := s.wsURL(s.node, "user-1", roomID)
+	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
+	s.Require().NoError(err)
+	defer conn.Close()
+
+	_, resp, err := websocket.DefaultDialer.Dial(url, nil)
+	s.Error(err)
+	s.Equal(http.StatusUnauthorized, resp.StatusCode)
+}
+
+func (s *RouterIntegrationSuite) TestConnect_Origin() {
+	tests := []struct {
+		name       string
+		origin     string
+		wantStatus int
+	}{
+		{name: "Success: 허용 목록의 Origin", origin: testAllowedOrigin, wantStatus: http.StatusSwitchingProtocols},
+		{name: "Success: Origin이 없는 비브라우저 클라이언트", wantStatus: http.StatusSwitchingProtocols},
+		{name: "Failure: 허용되지 않은 Origin", origin: "http://evil.example.test", wantStatus: http.StatusForbidden},
+	}
+
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.expectMember(1)
+			header := http.Header{}
+			if tt.origin != "" {
+				header.Set("Origin", tt.origin)
+			}
+
+			conn, resp, err := websocket.DefaultDialer.Dial(s.wsURL(s.node, "user-1", uuid.NewString()), header)
+			if conn != nil {
+				defer conn.Close()
+			}
+			if tt.wantStatus != http.StatusSwitchingProtocols {
+				s.Error(err)
+			}
+			s.Equal(tt.wantStatus, resp.StatusCode)
+		})
+	}
+}
+
+func (s *RouterIntegrationSuite) TestConnect_InvalidRoomID() {
+	_, resp, err := websocket.DefaultDialer.Dial(s.wsURL(s.node, "user-1", "room-1"), nil)
 	s.Error(err)
 	s.Equal(http.StatusBadRequest, resp.StatusCode)
 }
 
 func (s *RouterIntegrationSuite) TestConnect_NotRoomMember() {
+	roomID := uuid.NewString()
 	s.mockUserClient.EXPECT().
 		VerifyRoomMember(mock.Anything, &userpb.VerifyRoomMemberRequest{
-			RoomId: "room-forbidden",
+			RoomId: roomID,
 			UserId: "user-outsider",
 		}).Return(nil, status.Error(codes.NotFound, "not a member"))
 
-	header := http.Header{}
-	header.Set("X-User-ID", "user-outsider")
-	url := fmt.Sprintf("%s/ws?room_id=room-forbidden", s.wsURL)
-	_, resp, err := websocket.DefaultDialer.Dial(url, header)
+	_, resp, err := websocket.DefaultDialer.Dial(s.wsURL(s.node, "user-outsider", roomID), nil)
 	s.Error(err)
 	s.Equal(http.StatusForbidden, resp.StatusCode)
 }
 
-func (s *RouterIntegrationSuite) TestConnect_Success() {
+func (s *RouterIntegrationSuite) TestPublish_EchoesThroughNATS() {
+	roomID := uuid.NewString()
 	userID := "user-1"
-	roomID := "room-1"
+	s.expectMember(1)
 
-	s.mockUserClient.EXPECT().
-		VerifyRoomMember(mock.Anything, &userpb.VerifyRoomMemberRequest{
-			RoomId: roomID,
-			UserId: userID,
-		}).Return(&userpb.VerifyRoomMemberResponse{}, nil)
+	content := "Hello, World!"
 
-	s.mockChatClient.EXPECT().
-		GetLastSequenceNumber(mock.Anything, &chatpb.GetLastSequenceNumberRequest{
-			RoomId: roomID,
-		}).Return(&chatpb.GetLastSequenceNumberResponse{SequenceNumber: 100}, nil)
-
-	conn, resp, err := s.dial(userID, roomID)
+	conn, resp, err := s.dial(s.node, userID, roomID)
 	s.Require().NoError(err)
 	s.Equal(http.StatusSwitchingProtocols, resp.StatusCode)
 	defer conn.Close()
 
-	content := "Hello, World!"
-	clientMsgID := "msg-unique-id"
+	s.publish(roomID, userID, content, "msg-unique-id")
 
-	s.mockChatClient.EXPECT().
-		BatchCreateMessages(mock.Anything, mock.MatchedBy(func(req *chatpb.BatchCreateMessagesRequest) bool {
-			if len(req.Requests) == 0 {
-				return false
-			}
-			r := req.Requests[0]
-			return r.Content == content && r.RoomId == roomID && r.SenderId == userID && r.SequenceNumber == 101
-		})).Return(&emptypb.Empty{}, nil)
-
-	msgReq := map[string]string{
-		"type":          "chat",
-		"content":       content,
-		"client_msg_id": clientMsgID,
-	}
-	err = conn.WriteJSON(msgReq)
-	s.Require().NoError(err)
-
-	var received map[string]interface{}
-	err = conn.ReadJSON(&received)
-	s.Require().NoError(err)
-
-	s.Equal("chat", received["type"])
-	s.Equal(content, received["content"])
-	s.Equal(float64(101), received["sequence_number"])
-	s.Equal(clientMsgID, received["client_msg_id"])
+	frame := s.readFrame(conn)
+	s.Equal("chat", frame["type"])
+	s.Equal(content, frame["content"])
+	s.Equal("msg-unique-id", frame["client_msg_id"])
+	s.NotEmpty(frame["id"], "발행 시 UUIDv7 id가 부여된다")
+	s.Equal(float64(1), frame["frame_no"], "연결의 첫 프레임은 1번이다")
 }
 
-func (s *RouterIntegrationSuite) TestBroadcast_BetweenClients() {
-	roomID := "broadcast-room"
-	aliceID := "alice"
-	bobID := "bob"
+func (s *RouterIntegrationSuite) TestBroadcast_AcrossPods() {
+	roomID := uuid.NewString()
+	s.expectMember(2)
 
-	s.mockChatClient.EXPECT().
-		GetLastSequenceNumber(mock.Anything, &chatpb.GetLastSequenceNumberRequest{
-			RoomId: roomID,
-		}).Return(&chatpb.GetLastSequenceNumberResponse{SequenceNumber: 0}, nil)
+	other := s.startNode("pod-b")
+	defer s.stopNode(other)
 
-	s.mockUserClient.EXPECT().
-		VerifyRoomMember(mock.Anything, mock.MatchedBy(func(req *userpb.VerifyRoomMemberRequest) bool {
-			return req.RoomId == roomID
-		})).Return(&userpb.VerifyRoomMemberResponse{}, nil).Twice()
-
-	aliceConn, _, err := s.dial(aliceID, roomID)
+	aliceConn, _, err := s.dial(s.node, "alice", roomID)
 	s.Require().NoError(err)
 	defer aliceConn.Close()
 
-	bobConn, _, err := s.dial(bobID, roomID)
+	bobConn, _, err := s.dial(other, "bob", roomID)
 	s.Require().NoError(err)
 	defer bobConn.Close()
 
-	content := "Hi Bob!"
-	s.mockChatClient.EXPECT().
-		BatchCreateMessages(mock.Anything, mock.MatchedBy(func(req *chatpb.BatchCreateMessagesRequest) bool {
-			if len(req.Requests) == 0 {
-				return false
-			}
-			r := req.Requests[0]
-			return r.Content == content && r.RoomId == roomID && r.SenderId == aliceID
-		})).Return(&emptypb.Empty{}, nil)
+	content := "cross pod"
+	s.publish(roomID, "alice", content, "alice-msg-1")
 
-	err = aliceConn.WriteJSON(map[string]string{
-		"type":          "chat",
-		"content":       content,
-		"client_msg_id": "alice-msg-1",
-	})
-	s.Require().NoError(err)
-
-	var bobReceived map[string]interface{}
-	err = bobConn.ReadJSON(&bobReceived)
-	s.Require().NoError(err)
-	s.Equal(content, bobReceived["content"])
-	s.Equal(aliceID, bobReceived["sender_id"])
+	frame := s.readFrame(bobConn)
+	s.Equal(content, frame["content"])
+	s.Equal("alice", frame["sender_id"])
 }
 
-func (s *RouterIntegrationSuite) TestSession_Conflict_Kick() {
-	userID := "conflicting-user"
-	roomID := "conflict-room"
+func (s *RouterIntegrationSuite) TestMultipleSessions_SameUser() {
+	roomID := uuid.NewString()
+	s.expectMember(3)
 
-	s.mockUserClient.EXPECT().VerifyRoomMember(mock.Anything, mock.Anything).
-		Return(&userpb.VerifyRoomMemberResponse{}, nil).Twice()
-	s.mockChatClient.EXPECT().GetLastSequenceNumber(mock.Anything, mock.Anything).
-		Return(&chatpb.GetLastSequenceNumberResponse{SequenceNumber: 0}, nil)
-
-	conn1, _, err := s.dial(userID, roomID)
+	first, _, err := s.dial(s.node, "same-user", roomID)
 	s.Require().NoError(err)
-	defer conn1.Close()
+	defer first.Close()
 
-	conn2, _, err := s.dial(userID, roomID)
+	second, _, err := s.dial(s.node, "same-user", roomID)
 	s.Require().NoError(err)
-	defer conn2.Close()
+	defer second.Close()
 
-	conn1.SetReadDeadline(time.Now().Add(2 * time.Second))
-	var msg map[string]interface{}
-	err = conn1.ReadJSON(&msg)
-	s.Require().NoError(err, "Should receive conflict message")
-	s.Equal("conflict", msg["type"])
+	sender, _, err := s.dial(s.node, "other-user", roomID)
+	s.Require().NoError(err)
+	defer sender.Close()
 
-	_, _, err = conn1.ReadMessage()
-	s.Error(err, "Connection should be closed")
+	s.publish(roomID, "other-user", "hi both tabs", "multi-1")
+
+	for _, conn := range []*websocket.Conn{first, second} {
+		frame := s.readFrame(conn)
+		s.Equal("hi both tabs", frame["content"])
+	}
 }
 
-func (s *RouterIntegrationSuite) TestInternal_Broadcast() {
-	userID := "connected-user"
-	roomID := "internal-broadcast-room"
+func (s *RouterIntegrationSuite) TestInternal_SystemMessage() {
+	roomID := uuid.NewString()
+	s.expectMember(1)
 
-	s.mockUserClient.EXPECT().VerifyRoomMember(mock.Anything, mock.Anything).
-		Return(&userpb.VerifyRoomMemberResponse{}, nil)
-	s.mockChatClient.EXPECT().GetLastSequenceNumber(mock.Anything, mock.Anything).
-		Return(&chatpb.GetLastSequenceNumberResponse{SequenceNumber: 0}, nil)
-	s.mockChatClient.EXPECT().BatchCreateMessages(mock.Anything, mock.Anything).
-		Return(&emptypb.Empty{}, nil)
-
-	conn, _, err := s.dial(userID, roomID)
+	conn, _, err := s.dial(s.node, "connected-user", roomID)
 	s.Require().NoError(err)
 	defer conn.Close()
 
-	time.Sleep(20 * time.Millisecond)
-
-	username := "tester"
-	reqBody := fmt.Sprintf(`{"username":"%s","event":"join"}`, username)
-	req := httptest.NewRequest("POST", "/internal/rooms/"+roomID+"/broadcast", strings.NewReader(reqBody))
+	req := httptest.NewRequest(http.MethodPost, "/internal/rooms/"+roomID+"/system-messages",
+		strings.NewReader(`{"username":"tester","event":"join"}`))
+	req.Header.Set("X-Internal-Secret", testInternalSecret)
 	w := httptest.NewRecorder()
 
-	s.router.ServeHTTP(w, req)
+	s.node.router.ServeHTTP(w, req)
 	s.Equal(http.StatusNoContent, w.Code)
 
-	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	var received map[string]interface{}
-	err = conn.ReadJSON(&received)
-	s.Require().NoError(err, "Should receive internal broadcast message")
-	s.Equal("system", received["type"])
-	s.Contains(received["content"], username)
-	s.Contains(received["content"], "들어왔습니다")
+	frame := s.readFrame(conn)
+	s.Equal("system", frame["type"])
+	s.Contains(frame["content"], "tester")
+	s.Contains(frame["content"], "들어왔습니다")
+}
+
+func (s *RouterIntegrationSuite) TestInternal_CloseRoomSessionsAcrossPods() {
+	roomID := uuid.NewString()
+	s.expectMember(1)
+
+	other := s.startNode("pod-b")
+	defer s.stopNode(other)
+
+	conn, _, err := s.dial(other, "victim", roomID)
+	s.Require().NoError(err)
+	defer conn.Close()
+
+	req := httptest.NewRequest(http.MethodDelete, "/internal/rooms/"+roomID+"/sessions", nil)
+	req.Header.Set("X-Internal-Secret", testInternalSecret)
+	w := httptest.NewRecorder()
+
+	s.node.router.ServeHTTP(w, req)
+	s.Equal(http.StatusNoContent, w.Code)
+
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, _, err = conn.ReadMessage()
+	var closeErr *websocket.CloseError
+	s.Require().ErrorAs(err, &closeErr)
+	s.Equal(websocket.CloseTryAgainLater, closeErr.Code)
+}
+
+func (s *RouterIntegrationSuite) TestInternal_RequiresSecret() {
+	req := httptest.NewRequest(http.MethodDelete, "/internal/rooms/"+uuid.NewString()+"/sessions", nil)
+	w := httptest.NewRecorder()
+
+	s.node.router.ServeHTTP(w, req)
+	s.Equal(http.StatusUnauthorized, w.Code)
+}
+
+func (s *RouterIntegrationSuite) publish(roomID, senderID, content, clientMsgID string) {
+	id, err := uuid.NewV7()
+	s.Require().NoError(err)
+	payload, err := json.Marshal(map[string]any{
+		"id": id.String(), "room_id": roomID, "sender_id": senderID,
+		"content": content, "client_msg_id": clientMsgID, "type": "chat", "timestamp": time.Now().Unix(),
+	})
+	s.Require().NoError(err)
+	s.Require().NoError(s.node.bus.PublishMessage(s.T().Context(), hub.Envelope{
+		RoomID: roomID, SenderID: senderID, MessageID: id.String(), Payload: payload,
+		ReceivedAt: time.Now(), OriginPod: "chat-pod",
+	}))
+}
+
+func (s *RouterIntegrationSuite) TestSend_ViaWebSocket() {
+	s.expectMember(1)
+	roomID := uuid.NewString()
+	conn, _, err := s.dial(s.node, "sender", roomID)
+	s.Require().NoError(err)
+	defer conn.Close()
+	clientMsgID := uuid.NewString()
+	s.Require().NoError(conn.WriteJSON(map[string]string{"content": "accepted", "client_msg_id": clientMsgID}))
+	frame := s.readFrame(conn)
+	s.Equal("chat", frame["type"])
+	s.Equal("accepted", frame["content"])
+	s.Equal(clientMsgID, frame["client_msg_id"])
+	s.NotEmpty(frame["id"])
 }
 
 func TestRouterIntegrationSuite(t *testing.T) {

@@ -149,29 +149,31 @@ groups:
           summary: "Persistence retry queue is full"
           description: "Retry queue full events are occurring in namespace {{ $labels.namespace }}."
 
-      - alert: GoChatWSSessionConflicts
+      - alert: GoChatWSSessionsClosedByServer
         expr: |
-          sum by(namespace) (rate(gochat_ws_session_conflicts_total[5m])) > 0
+          sum by(namespace, reason) (rate(gochat_ws_sessions_closed_total{reason=~"slow_consumer|delivery_lag|nats_disconnected"}[5m])) > 0
         for: 2m
         labels:
           severity: warning
           signal: realtime
         annotations:
-          summary: "WebSocket session conflicts detected"
-          description: "Session conflict events are occurring in namespace {{ $labels.namespace }}."
+          summary: "WebSocket sessions closed by server"
+          description: "Sessions are being closed with reason {{ $labels.reason }} in namespace {{ $labels.namespace }}."
 
-      - alert: GoChatWSRoutingRejected
+      - alert: GoChatNATSUnhealthy
         expr: |
-          sum by(namespace) (rate(gochat_websocket_owner_rejected_total[5m])) > 0
+          sum by(namespace) (rate(gochat_ws_nats_disconnects_total[5m])) > 0
           or
-          sum by(namespace) (rate(gochat_wsgateway_misdirected_total[5m])) > 0
+          sum by(namespace) (rate(gochat_ws_nats_slow_consumer_total[5m])) > 0
+          or
+          sum by(namespace) (rate(gochat_ws_nats_publish_failed_total[5m])) > 0
         for: 2m
         labels:
           severity: warning
           signal: realtime
         annotations:
-          summary: "WebSocket routing rejects detected"
-          description: "Owner reject or misdirected gateway events are occurring in namespace {{ $labels.namespace }}."
+          summary: "NATS delivery path unhealthy"
+          description: "Disconnects, slow consumers, or publish failures are occurring in namespace {{ $labels.namespace }}."
 
   - name: gochat-platform-runtime
     interval: 30s

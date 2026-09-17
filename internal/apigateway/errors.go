@@ -34,6 +34,9 @@ func writeProblemFromGRPC(w http.ResponseWriter, r *http.Request, err error) {
 	case codes.ResourceExhausted:
 		slog.WarnContext(r.Context(), "System Overloaded", "message", st.Message(), "path", r.URL.Path)
 		httpio.WriteProblem(r.Context(), w, http.StatusServiceUnavailable, "system overloaded: "+st.Message())
+	case codes.Unavailable:
+		w.Header().Set("Retry-After", "1")
+		httpio.WriteProblem(r.Context(), w, http.StatusServiceUnavailable, st.Message())
 	case codes.DeadlineExceeded:
 		slog.WarnContext(r.Context(), "Processing Timeout", "message", st.Message(), "path", r.URL.Path)
 		httpio.WriteProblem(r.Context(), w, http.StatusGatewayTimeout, "processing timeout: "+st.Message())

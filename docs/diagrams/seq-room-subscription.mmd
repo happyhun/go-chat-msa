@@ -1,0 +1,30 @@
+sequenceDiagram
+    autonumber
+    participant A as 클라이언트 A
+    participant B as 클라이언트 B
+    participant WA as websocket-service A
+    participant WB as websocket-service B
+    participant U as user-service
+    participant N as NATS Core
+
+    A->>WA: 새 연결 · 티켓 검증 후
+    WA->>U: 방 멤버십 확인
+    U-->>WA: 가입 확인
+    WA->>N: Subscribe room.msg.roomID + Flush
+    N-->>WA: 준비 완료
+    WA-->>A: Upgrade·로컬 Hub 등록
+    B->>WB: 같은 방 새 연결 · 티켓 검증 후
+    WB->>U: 방 멤버십 확인
+    U-->>WB: 가입 확인
+    WB->>N: Subscribe 같은 room.msg.roomID + Flush
+    N-->>WB: 준비 완료
+    WB-->>B: Upgrade·로컬 Hub 등록
+    Note over WA,N: 일반 subscription · queue group 없음
+    N-->>WA: JetStream RePublish 메시지
+    N-->>WB: 같은 메시지
+    WA-->>A: 로컬 fan-out
+    WB-->>B: 로컬 fan-out
+    A->>WA: 연결 종료
+    Note over WA: 마지막 세션 종료 후 idle timeout
+    WA->>N: Unsubscribe
+    Note over WB,N: B의 방 구독과 연결은 유지

@@ -1,0 +1,14 @@
+[
+  {
+    "createIndexes": "messages",
+    "indexes": [
+      {
+        "key": {
+          "roomId": 1,
+          "_id": 1
+        },
+        "name": "idx_room_message_id"
+      }
+    ]
+  }
+]

@@ -3,7 +3,7 @@ package chat
 import (
 	"context"
 	"errors"
-	"strings"
+	"fmt"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -11,13 +11,10 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-var ErrSequenceConflict = errors.New("sequence number conflict")
-
 type Repository interface {
-	SaveMany(ctx context.Context, msgs []*Message) error
+	SaveBatch(ctx context.Context, msgs []*Message) []error
 	GetHistory(ctx context.Context, roomID string, limit int64, joinedAt time.Time) ([]*Message, error)
-	GetLastSequenceNumber(ctx context.Context, roomID string) (int64, error)
-	SyncMessages(ctx context.Context, roomID string, lastSeq int64, limit int64, joinedAt time.Time) ([]*Message, error)
+	SyncMessages(ctx context.Context, roomID, afterID string, limit int64, joinedAt time.Time) ([]*Message, error)
 }
 
 type collection interface {
@@ -34,9 +31,10 @@ func NewRepository(col collection) Repository {
 	return &mongoRepository{col: col}
 }
 
-func (r *mongoRepository) SaveMany(ctx context.Context, msgs []*Message) error {
+func (r *mongoRepository) SaveBatch(ctx context.Context, msgs []*Message) []error {
+	results := make([]error, len(msgs))
 	if len(msgs) == 0 {
-		return nil
+		return results
 	}
 
 	docs := make([]any, len(msgs))
@@ -47,39 +45,54 @@ func (r *mongoRepository) SaveMany(ctx context.Context, msgs []*Message) error {
 	opts := options.InsertMany().SetOrdered(false)
 	_, err := r.col.InsertMany(ctx, docs, opts)
 
-	var bwErr mongo.BulkWriteException
-	if !errors.As(err, &bwErr) {
+	if err == nil {
+		return results
+	}
+	bulkErr, ok := errors.AsType[mongo.BulkWriteException](err)
+	if !ok || bulkErr.WriteConcernError != nil || len(bulkErr.WriteErrors) == 0 {
+		for i := range results {
+			results[i] = err
+		}
+		return results
+	}
+	for _, we := range bulkErr.WriteErrors {
+		if we.Index < 0 || we.Index >= len(msgs) {
+			for i := range results {
+				results[i] = err
+			}
+			return results
+		}
+		switch we.Code {
+		case 11000:
+			results[we.Index] = r.checkDuplicate(ctx, msgs[we.Index])
+		case 121:
+			results[we.Index] = fmt.Errorf("%w: %s", ErrInvalidMessage, we.Message)
+		default:
+			results[we.Index] = we
+		}
+	}
+	return results
+}
+
+var (
+	ErrMessageConflict = errors.New("message payload conflicts with existing document")
+	ErrInvalidMessage  = errors.New("invalid message")
+)
+
+func (r *mongoRepository) checkDuplicate(ctx context.Context, msg *Message) error {
+	filter := bson.M{"$or": bson.A{
+		bson.M{"_id": msg.ID},
+		bson.M{"roomId": msg.RoomID, "senderId": msg.SenderID, "clientMsgId": msg.ClientMsgID},
+	}}
+	var existing Message
+	if err := r.col.FindOne(ctx, filter).Decode(&existing); err != nil {
 		return err
 	}
-
-	hasSequenceConflict := false
-	for _, we := range bwErr.WriteErrors {
-		if we.Code != 11000 {
-			return err
-		}
-		switch {
-		case isSequenceDuplicate(we):
-			hasSequenceConflict = true
-		case isClientMessageDuplicate(we):
-			continue
-		default:
-			return err
-		}
-	}
-	if hasSequenceConflict {
-		return ErrSequenceConflict
+	if existing.RoomID != msg.RoomID || existing.SenderID != msg.SenderID ||
+		existing.ClientMsgID != msg.ClientMsgID || existing.Type != msg.Type || existing.Content != msg.Content {
+		return ErrMessageConflict
 	}
 	return nil
-}
-
-func isClientMessageDuplicate(err mongo.BulkWriteError) bool {
-	return strings.Contains(err.Message, "unique_room_client_msg") ||
-		strings.Contains(err.Message, "clientMsgId")
-}
-
-func isSequenceDuplicate(err mongo.BulkWriteError) bool {
-	return strings.Contains(err.Message, "unique_room_sequence") ||
-		strings.Contains(err.Message, "sequenceNumber")
 }
 
 func (r *mongoRepository) GetHistory(ctx context.Context, roomID string, limit int64, joinedAt time.Time) ([]*Message, error) {
@@ -90,47 +103,16 @@ func (r *mongoRepository) GetHistory(ctx context.Context, roomID string, limit i
 	}
 
 	opts := options.Find().
-		SetSort(bson.D{{Key: "sequenceNumber", Value: -1}}).
+		SetSort(bson.D{{Key: "_id", Value: -1}}).
 		SetLimit(limit)
 
-	cursor, err := r.col.Find(ctx, filter, opts)
-	if err != nil {
-		return nil, err
-	}
-	defer cursor.Close(ctx)
-
-	var messages []*Message
-	if err := cursor.All(ctx, &messages); err != nil {
-		return nil, err
-	}
-
-	return messages, nil
+	return r.find(ctx, filter, opts)
 }
 
-func (r *mongoRepository) GetLastSequenceNumber(ctx context.Context, roomID string) (int64, error) {
-	filter := bson.M{"roomId": roomID}
-	opts := options.FindOne().
-		SetSort(bson.D{{Key: "sequenceNumber", Value: -1}}).
-		SetProjection(bson.D{{Key: "sequenceNumber", Value: 1}, {Key: "_id", Value: 0}})
-
-	var result struct {
-		SequenceNumber int64 `bson:"sequenceNumber"`
-	}
-	err := r.col.FindOne(ctx, filter, opts).Decode(&result)
-	if errors.Is(err, mongo.ErrNoDocuments) {
-		return 0, nil
-	}
-	if err != nil {
-		return 0, err
-	}
-
-	return result.SequenceNumber, nil
-}
-
-func (r *mongoRepository) SyncMessages(ctx context.Context, roomID string, lastSeq int64, limit int64, joinedAt time.Time) ([]*Message, error) {
+func (r *mongoRepository) SyncMessages(ctx context.Context, roomID, afterID string, limit int64, joinedAt time.Time) ([]*Message, error) {
 	filter := bson.M{
-		"roomId":         roomID,
-		"sequenceNumber": bson.M{"$gt": lastSeq},
+		"roomId": roomID,
+		"_id":    bson.M{"$gt": afterID},
 	}
 
 	if !joinedAt.IsZero() {
@@ -138,14 +120,18 @@ func (r *mongoRepository) SyncMessages(ctx context.Context, roomID string, lastS
 	}
 
 	opts := options.Find().
-		SetSort(bson.D{{Key: "sequenceNumber", Value: 1}}).
+		SetSort(bson.D{{Key: "_id", Value: 1}}).
 		SetLimit(limit)
 
+	return r.find(ctx, filter, opts)
+}
+
+func (r *mongoRepository) find(ctx context.Context, filter any, opts *options.FindOptions) ([]*Message, error) {
 	cursor, err := r.col.Find(ctx, filter, opts)
 	if err != nil {
 		return nil, err
 	}
-	defer cursor.Close(ctx)
+	defer func() { _ = cursor.Close(ctx) }()
 
 	var messages []*Message
 	if err := cursor.All(ctx, &messages); err != nil {

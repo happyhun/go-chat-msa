@@ -3,26 +3,25 @@ package hub
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
 )
 
 const (
-	msgTypeChat     = "chat"
-	msgTypeConflict = "conflict"
-	msgTypeSystem   = "system"
+	msgTypeChat   = "chat"
+	msgTypeSystem = "system"
 )
 
 type Message struct {
-	ID             string `json:"id"`
-	RoomID         string `json:"room_id"`
-	SenderID       string `json:"sender_id"`
-	Content        string `json:"content"`
-	ClientMsgID    string `json:"client_msg_id,omitempty"`
-	Type           string `json:"type"`
-	SequenceNumber int64  `json:"sequence_number"`
-	Timestamp      int64  `json:"timestamp,omitempty"`
+	ID          string `json:"id"`
+	RoomID      string `json:"room_id"`
+	SenderID    string `json:"sender_id"`
+	Content     string `json:"content"`
+	ClientMsgID string `json:"client_msg_id,omitempty"`
+	Type        string `json:"type"`
+	Timestamp   int64  `json:"timestamp,omitempty"`
 
 	ReceivedAt time.Time `json:"-"`
 }
@@ -55,4 +54,22 @@ func (m *Message) toRawJSON() ([]byte, error) {
 		return nil, fmt.Errorf("marshal message: %w", err)
 	}
 	return data, nil
+}
+
+func uuidV7Gap(newerID, olderID string) (time.Duration, bool) {
+	newer, err := uuid.Parse(newerID)
+	if err != nil || newer.Version() != 7 {
+		return 0, false
+	}
+	older, err := uuid.Parse(olderID)
+	if err != nil || older.Version() != 7 {
+		return 0, false
+	}
+	return time.Unix(newer.Time().UnixTime()).Sub(time.Unix(older.Time().UnixTime())), true
+}
+
+func appendFrameNoSuffix(dst []byte, frameNo int64) []byte {
+	dst = append(dst, `,"frame_no":`...)
+	dst = strconv.AppendInt(dst, frameNo, 10)
+	return append(dst, '}')
 }
