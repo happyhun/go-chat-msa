@@ -1,0 +1,141 @@
+rule_files:
+  - ../rules/gochat-alerts.yaml
+
+evaluation_interval: 30s
+
+tests:
+  - name: Persistence failures fire after the hold period and clear on recovery
+    interval: 1m
+    input_series:
+      - series: 'gochat_chat_persistence_oldest_pending_age_seconds{namespace="go-chat-test",pod="chat-1"}'
+        values: '90 90 90 0 0 0'
+      - series: 'gochat_chat_persistence_oldest_pending_age_seconds{namespace="go-chat-test",pod="chat-2"}'
+        values: '90 90 90 0 0 0'
+      - series: 'gochat_chat_persistence_circuit{namespace="go-chat-test",pod="chat-1"}'
+        values: '1 1 1 2 0 0'
+      - series: 'gochat_chat_persistence_circuit{namespace="go-chat-test",pod="chat-2"}'
+        values: '2 2 2 0 0 0'
+      - series: 'nats_stream_total_bytes{namespace="go-chat-test",stream_name="CHAT_PERSIST"}'
+        values: '95 95 95 0 0 0'
+      - series: 'nats_stream_limit_bytes{namespace="go-chat-test",stream_name="CHAT_PERSIST"}'
+        values: '100 100 100 100 100 100'
+      - series: 'nats_stream_total_messages{namespace="go-chat-test",stream_name="CHAT_PERSIST_DLQ"}'
+        values: '2 2 2 0 0 0'
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: GoChatPersistenceOldestPendingAgeHigh
+        exp_alerts: []
+      - eval_time: 30s
+        alertname: GoChatPersistenceCircuitOpen
+        exp_alerts: []
+      - eval_time: 30s
+        alertname: GoChatPersistenceStreamNearlyFull
+        exp_alerts: []
+      - eval_time: 30s
+        alertname: GoChatPersistenceDLQNotEmpty
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: GoChatPersistenceOldestPendingAgeHigh
+        exp_alerts:
+          - exp_labels:
+              namespace: go-chat-test
+              severity: warning
+              signal: persistence
+            exp_annotations:
+              summary: Persistence pending age above 60s
+              description: Oldest pending message age is 90s in namespace go-chat-test.
+      - eval_time: 2m
+        alertname: GoChatPersistenceCircuitOpen
+        exp_alerts:
+          - exp_labels:
+              namespace: go-chat-test
+              pod: chat-1
+              severity: warning
+              signal: persistence
+            exp_annotations:
+              summary: Persistence circuit is open for chat-1
+              description: New persistence pulls are paused for pod chat-1 in namespace go-chat-test.
+      - eval_time: 2m
+        alertname: GoChatPersistenceStreamNearlyFull
+        exp_alerts:
+          - exp_labels:
+              namespace: go-chat-test
+              stream_name: CHAT_PERSIST
+              severity: critical
+              signal: persistence
+            exp_annotations:
+              summary: Persistence stream CHAT_PERSIST is above 90% capacity
+              description: Stream CHAT_PERSIST is approaching its byte limit in namespace go-chat-test.
+      - eval_time: 2m
+        alertname: GoChatPersistenceDLQNotEmpty
+        exp_alerts:
+          - exp_labels:
+              namespace: go-chat-test
+              severity: warning
+              signal: persistence
+            exp_annotations:
+              summary: Persistence DLQ contains messages
+              description: DLQ contains 2 messages in namespace go-chat-test.
+      - eval_time: 5m
+        alertname: GoChatPersistenceOldestPendingAgeHigh
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: GoChatPersistenceCircuitOpen
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: GoChatPersistenceStreamNearlyFull
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: GoChatPersistenceDLQNotEmpty
+        exp_alerts: []
+
+  - name: Healthy traffic and half-open probes do not alert
+    interval: 1m
+    input_series:
+      - series: 'gochat_chat_persistence_pending{namespace="go-chat-test",pod="chat-1"}'
+        values: '100+0x10'
+      - series: 'gochat_chat_persistence_oldest_pending_age_seconds{namespace="go-chat-test",pod="chat-1"}'
+        values: '1+0x10'
+      - series: 'gochat_chat_persistence_circuit{namespace="go-chat-test",pod="chat-1"}'
+        values: '2+0x10'
+      - series: 'nats_stream_total_bytes{namespace="go-chat-test",stream_name="CHAT_PERSIST"}'
+        values: '90+0x10'
+      - series: 'nats_stream_limit_bytes{namespace="go-chat-test",stream_name="CHAT_PERSIST"}'
+        values: '100+0x10'
+      - series: 'nats_stream_total_messages{namespace="go-chat-test",stream_name="CHAT_PERSIST_DLQ"}'
+        values: '0+0x10'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: GoChatPersistenceOldestPendingAgeHigh
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: GoChatPersistenceCircuitOpen
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: GoChatPersistenceStreamNearlyFull
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: GoChatPersistenceDLQNotEmpty
+        exp_alerts: []
+
+  - name: Shared backlog is counted once per namespace
+    interval: 1m
+    input_series:
+      - series: 'gochat_chat_persistence_pending{namespace="go-chat-dev",pod="chat-1"}'
+        values: '10'
+      - series: 'gochat_chat_persistence_pending{namespace="go-chat-dev",pod="chat-2"}'
+        values: '10'
+      - series: 'gochat_chat_persistence_pending{namespace="go-chat-test",pod="chat-1"}'
+        values: '20'
+    promql_expr_test:
+      - expr: sum(max by(namespace) (gochat_chat_persistence_pending))
+        eval_time: 0m
+        exp_samples:
+          - labels: '{}'
+            value: 30
+
+  - name: Missing persistence telemetry remains absent
+    promql_expr_test:
+      - expr: sum(max by(namespace) (gochat_chat_persistence_pending))
+        eval_time: 0m
+        exp_samples: []

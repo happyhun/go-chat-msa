@@ -742,7 +742,7 @@ Grafana 대시보드는 장애 분석 흐름에 맞춥니다. 전체 상태에�
 | Data Persistence | PostgreSQL, MongoDB, Redis pool 및 저장 지표 |
 | Platform Runtime | Kubernetes replica/restart/HPA, container CPU/memory, Go runtime |
 
-NATS 메시지 경계에서는 트레이스 컨텍스트를 전파하지 않습니다. 메시지 전달과 저장 경로는 전용 메트릭과 프로파일로 확인합니다. 일부 Grafana 패널에는 제거된 로컬 저장 큐 지표가 남아 있으므로 현재 계측과의 차이는 [텔레메트리 카탈로그](TELEMETRY_CATALOG.md#persistence)에 정리합니다.
+NATS 메시지 경계에서는 트레이스 컨텍스트를 전파하지 않습니다. 메시지 전달과 저장 경로는 전용 메트릭과 프로파일로 확인합니다. 저장 대기량·지연·재시도·DLQ와 Pod별 회로 차단 상태는 [텔레메트리 카탈로그](TELEMETRY_CATALOG.md#persistence)에 정리합니다.
 
 `trace_id`를 기준으로 Loki 로그와 Tempo 트레이스를 연결합니다. 로그/트레이스/프로파일은 별도 커스텀 대시보드보다 Grafana Explore와 drilldown 화면을 기본 경로로 사용해 장애 분석 중 화면 전환 비용을 줄입니다.
 

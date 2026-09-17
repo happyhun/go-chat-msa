@@ -116,38 +116,51 @@ groups:
   - name: gochat-realtime-persistence
     interval: 30s
     rules:
-      - alert: GoChatPersistenceRetryQueueBackedUp
+      - alert: GoChatPersistenceOldestPendingAgeHigh
         expr: |
-          sum by(namespace) (gochat_persistence_retry_queue_depth) > 0
-        for: 5m
-        labels:
-          severity: warning
-          signal: persistence
-        annotations:
-          summary: "Persistence retry queue is backed up"
-          description: "Retry queue depth is {{ printf \"%.0f\" $value }} in namespace {{ $labels.namespace }}."
-
-      - alert: GoChatPersistenceOldestRetryAgeHigh
-        expr: |
-          max by(namespace) (gochat_persistence_retry_oldest_age_seconds) > 60
+          max by(namespace) (gochat_chat_persistence_oldest_pending_age_seconds) > 60
         for: 2m
         labels:
           severity: warning
           signal: persistence
         annotations:
-          summary: "Persistence retry age above 60s"
-          description: "Oldest persistence retry age is {{ printf \"%.0f\" $value }}s in namespace {{ $labels.namespace }}."
+          summary: "Persistence pending age above 60s"
+          description: "Oldest pending message age is {{ printf \"%.0f\" $value }}s in namespace {{ $labels.namespace }}."
 
-      - alert: GoChatPersistenceRetryQueueFull
+      - alert: GoChatPersistenceCircuitOpen
         expr: |
-          sum by(namespace) (rate(gochat_persistence_retry_queue_full_total[5m])) > 0
+          max by(namespace, pod) (gochat_chat_persistence_circuit) == 1
+        for: 1m
+        labels:
+          severity: warning
+          signal: persistence
+        annotations:
+          summary: "Persistence circuit is open for {{ $labels.pod }}"
+          description: "New persistence pulls are paused for pod {{ $labels.pod }} in namespace {{ $labels.namespace }}."
+
+      - alert: GoChatPersistenceStreamNearlyFull
+        expr: |
+          max by(namespace, stream_name) (nats_stream_total_bytes{stream_name=~"CHAT_PERSIST|CHAT_PERSIST_DLQ"})
+          /
+          max by(namespace, stream_name) (nats_stream_limit_bytes{stream_name=~"CHAT_PERSIST|CHAT_PERSIST_DLQ"}) > 0.9
         for: 1m
         labels:
           severity: critical
           signal: persistence
         annotations:
-          summary: "Persistence retry queue is full"
-          description: "Retry queue full events are occurring in namespace {{ $labels.namespace }}."
+          summary: "Persistence stream {{ $labels.stream_name }} is above 90% capacity"
+          description: "Stream {{ $labels.stream_name }} is approaching its byte limit in namespace {{ $labels.namespace }}."
+
+      - alert: GoChatPersistenceDLQNotEmpty
+        expr: |
+          max by(namespace) (nats_stream_total_messages{stream_name="CHAT_PERSIST_DLQ"}) > 0
+        for: 1m
+        labels:
+          severity: warning
+          signal: persistence
+        annotations:
+          summary: "Persistence DLQ contains messages"
+          description: "DLQ contains {{ printf \"%.0f\" $value }} messages in namespace {{ $labels.namespace }}."
 
       - alert: GoChatWSSessionsClosedByServer
         expr: |

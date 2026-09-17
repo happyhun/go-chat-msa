@@ -641,13 +641,13 @@
           "legendFormat": "send queue dropped"
         },
         {
-          "expr": "sum(rate(gochat_ws_persist_dropped_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval])) or on() vector(0)",
+          "expr": "sum(rate(gochat_ws_jetstream_publish_ack_duration_seconds_count{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\",status=\"error\"}[$__rate_interval]))",
           "refId": "B",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "legendFormat": "persist dropped"
+          "legendFormat": "JetStream publish errors"
         },
         {
           "expr": "sum(rate(gochat_ws_messages_rate_limited_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval])) or on() vector(0)",
@@ -685,7 +685,7 @@
           "calcs": []
         }
       },
-      "description": "Backpressure and rate-limit protection signals."
+      "description": "WebSocket send queue drops, JetStream publish errors, and message rate limits."
     },
     {
       "id": 16,

@@ -64,10 +64,13 @@ func (s *Service) SyncMessages(ctx context.Context, req *pb.SyncMessagesRequest)
 	if req.RoomId == "" {
 		return nil, status.Error(codes.InvalidArgument, "room_id is required")
 	}
-	if req.AfterMessageId != "" {
-		if _, err := uuid.Parse(req.AfterMessageId); err != nil {
+	afterID := req.AfterMessageId
+	if afterID != "" {
+		id, err := uuid.Parse(afterID)
+		if err != nil {
 			return nil, status.Error(codes.InvalidArgument, "after_message_id must be a uuid")
 		}
+		afterID = id.String()
 	}
 
 	limit := int64(req.Limit)
@@ -82,7 +85,7 @@ func (s *Service) SyncMessages(ctx context.Context, req *pb.SyncMessagesRequest)
 		joinedAt = req.JoinedAt.AsTime()
 	}
 
-	messages, err := s.repo.SyncMessages(ctx, req.RoomId, req.AfterMessageId, limit+1, joinedAt)
+	messages, err := s.repo.SyncMessages(ctx, req.RoomId, afterID, limit+1, joinedAt)
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to sync messages", "error", err)
 		return nil, status.Error(codes.Unavailable, "message sync unavailable")

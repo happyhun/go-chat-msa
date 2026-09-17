@@ -567,13 +567,13 @@
     },
     {
       "id": 9,
-      "title": "Retry Queue",
+      "title": "Pending Messages",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Total persistence retry queue items. Yellow means any backlog; red means the queue is materially backed up near the per-pod 250 item buffer.",
+      "description": "Messages awaiting persistence or ACK in the shared JetStream consumer. Each namespace is counted once.",
       "gridPos": {
         "x": 18,
         "y": 5,
@@ -591,22 +591,9 @@
           },
           "unit": "short",
           "decimals": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 1
-              },
-              {
-                "color": "red",
-                "value": 200
-              }
-            ]
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
           }
         },
         "overrides": []
@@ -632,7 +619,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(gochat_persistence_retry_queue_depth{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}) or on() vector(0)",
+          "expr": "sum(max by(namespace) (gochat_chat_persistence_pending{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}))",
           "refId": "A"
         }
       ]
@@ -962,7 +949,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Backpressure and protection events that can drop or reject messages.",
+      "description": "WebSocket send queue drops, JetStream publish errors, and message rate limits.",
       "gridPos": {
         "x": 12,
         "y": 20,
@@ -1009,9 +996,9 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(rate(gochat_ws_persist_dropped_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval])) or on() vector(0)",
+          "expr": "sum(rate(gochat_ws_jetstream_publish_ack_duration_seconds_count{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\",status=\"error\"}[$__rate_interval]))",
           "refId": "B",
-          "legendFormat": "persist dropped"
+          "legendFormat": "JetStream publish errors"
         },
         {
           "datasource": {
@@ -1135,13 +1122,13 @@
     },
     {
       "id": 23,
-      "title": "Oldest Retry",
+      "title": "Oldest Pending",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Age of the oldest persistence retry item.",
+      "description": "Age of the oldest message awaiting persistence or ACK in JetStream.",
       "gridPos": {
         "x": 0,
         "y": 29,
@@ -1200,20 +1187,20 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max(gochat_persistence_retry_oldest_age_seconds{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}) or on() vector(0)",
+          "expr": "max(gochat_chat_persistence_oldest_pending_age_seconds{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"})",
           "refId": "A"
         }
       ]
     },
     {
       "id": 26,
-      "title": "Persistence Drain P99",
+      "title": "Persistence Lag P99",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "P99 duration of one persistence drain attempt after messages are dequeued. Excludes queue wait and retry backoff.",
+      "description": "P99 time from message UUIDv7 creation to confirmed MongoDB persistence, including queue wait and retries.",
       "gridPos": {
         "x": 6,
         "y": 29,
@@ -1231,22 +1218,9 @@
           },
           "unit": "ms",
           "decimals": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 100
-              },
-              {
-                "color": "red",
-                "value": 250
-              }
-            ]
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
           }
         },
         "overrides": []
@@ -1272,8 +1246,9 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.99, sum by(le) (rate(gochat_ws_persist_drain_duration_seconds_bucket{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval]))) * 1000",
-          "refId": "A"
+          "expr": "histogram_quantile(0.99, sum by(le) (rate(gochat_chat_persistence_lag_seconds_bucket{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval]))) * 1000",
+          "refId": "A",
+          "legendFormat": "p99"
         }
       ]
     },
@@ -1285,7 +1260,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "In-memory persistence backlog and retry queue depth.",
+      "description": "Shared JetStream consumer messages awaiting persistence or ACK, counted once per namespace.",
       "gridPos": {
         "x": 12,
         "y": 29,
@@ -1324,30 +1299,21 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(gochat_ws_persist_channel_depth{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}) or on() vector(0)",
+          "expr": "sum(max by(namespace) (gochat_chat_persistence_pending{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}))",
           "refId": "A",
-          "legendFormat": "persist channel"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum(gochat_persistence_retry_queue_depth{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}) or on() vector(0)",
-          "refId": "B",
-          "legendFormat": "retry queue"
+          "legendFormat": "pending"
         }
       ]
     },
     {
       "id": 28,
-      "title": "Persistence Errors",
+      "title": "Persistence Retries and DLQ",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Persistence write and drain outcomes that require attention.",
+      "description": "Retry attempts and successful DLQ publishes per second.",
       "gridPos": {
         "x": 18,
         "y": 29,
@@ -1385,27 +1351,18 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(rate(gochat_persistence_batch_save_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\",status=~\"reject|retry\"}[$__rate_interval])) or on() vector(0)",
+          "expr": "sum(rate(gochat_chat_persistence_retry_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval]))",
           "refId": "A",
-          "legendFormat": "batch save not ok"
+          "legendFormat": "retry"
         },
         {
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(rate(gochat_persistence_retry_save_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\",status=~\"reject|exhaust|retry\"}[$__rate_interval])) or on() vector(0)",
+          "expr": "sum(rate(gochat_chat_persistence_dlq_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval]))",
           "refId": "B",
-          "legendFormat": "retry save not ok"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum(rate(gochat_ws_persist_drain_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\",status=~\"error|timeout\"}[$__rate_interval])) or on() vector(0)",
-          "refId": "C",
-          "legendFormat": "drain not ok"
+          "legendFormat": "DLQ published"
         }
       ]
     },

@@ -743,18 +743,20 @@ func (s *E2ESuite) TestScenario_15_RoomMessageIDsAreStrictlyIncreasing() {
 	var syncRes struct {
 		Messages []map[string]any `json:"messages"`
 	}
-	syncURL := fmt.Sprintf("/rooms/%s/messages?after_id=%s&limit=%d", roomID, ids[0], totalMessages)
-	s.Require().EventuallyWithT(func(c *assert.CollectT) {
-		if !assert.NoError(c, s.makeRequest(ctx, "GET", syncURL, nil, &syncRes, aliceToken)) {
-			return
-		}
-		assert.Len(c, messagesWithContentPrefix(syncRes.Messages, "k8s-seq-msg-"), totalMessages-1,
-			"after_id must exclude the anchor message")
-	}, 10*time.Second, 200*time.Millisecond)
+	for _, cursor := range []string{ids[0], strings.ToUpper(ids[0])} {
+		syncURL := fmt.Sprintf("/rooms/%s/messages?after_id=%s&limit=%d", roomID, cursor, totalMessages)
+		s.Require().EventuallyWithT(func(c *assert.CollectT) {
+			if !assert.NoError(c, s.makeRequest(ctx, "GET", syncURL, nil, &syncRes, aliceToken)) {
+				return
+			}
+			assert.Len(c, messagesWithContentPrefix(syncRes.Messages, "k8s-seq-msg-"), totalMessages-1,
+				"after_id must exclude the anchor message")
+		}, 10*time.Second, 200*time.Millisecond)
 
-	synced := messagesWithContentPrefix(syncRes.Messages, "k8s-seq-msg-")
-	for i := 1; i < len(synced); i++ {
-		s.Require().Greater(messageID(synced[i]), messageID(synced[i-1]), "sync must return messages in id order")
+		synced := messagesWithContentPrefix(syncRes.Messages, "k8s-seq-msg-")
+		for i := range synced {
+			s.Equal(ids[i+1], messageID(synced[i]), "sync must return exactly the messages after the cursor in id order")
+		}
 	}
 }
 

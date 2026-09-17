@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -209,6 +210,48 @@ func (s *ChatSuite) TestSyncMessages_AfterMessageID() {
 	s.Equal("Content 6", res.Messages[0].Content)
 	s.Equal("Content 7", res.Messages[1].Content)
 	s.Equal("Content 8", res.Messages[2].Content)
+}
+
+func (s *ChatSuite) TestSyncMessages_CursorFormats() {
+	const roomID = "room_cursor"
+	ids := []string{
+		"01920f6a-7c3e-7b1a-9d2f-3e4a5b6c7d8d",
+		"01920f6a-7c3e-7b1a-9d2f-3e4a5b6c7d8e",
+		"01920f6a-7c3e-7b1a-9d2f-3e4a5b6c7d8f",
+		"01920f6a-7c3e-7b1a-9d2f-3e4a5b6c7d90",
+	}
+	var messages []*chat.Message
+	for _, id := range ids {
+		messages = append(messages, &chat.Message{
+			ID: id, RoomID: roomID, SenderID: "u1", ClientMsgID: id,
+			Content: id, Type: "chat", CreatedAt: time.Now(),
+		})
+	}
+	for _, err := range s.repo.SaveBatch(s.T().Context(), messages) {
+		s.Require().NoError(err)
+	}
+
+	for _, cursor := range []string{
+		ids[1], strings.ToUpper(ids[1]), strings.ReplaceAll(ids[1], "-", ""), "urn:uuid:" + ids[1],
+	} {
+		s.Run(cursor, func() {
+			res, err := s.client.SyncMessages(s.T().Context(), &pb.SyncMessagesRequest{
+				RoomId: roomID, AfterMessageId: cursor, Limit: 1,
+			})
+			s.Require().NoError(err)
+			s.Require().Len(res.Messages, 1)
+			s.Equal(ids[2], res.Messages[0].Id)
+			s.True(res.HasMore)
+
+			next, err := s.client.SyncMessages(s.T().Context(), &pb.SyncMessagesRequest{
+				RoomId: roomID, AfterMessageId: res.Messages[0].Id, Limit: 1,
+			})
+			s.Require().NoError(err)
+			s.Require().Len(next.Messages, 1)
+			s.Equal(ids[3], next.Messages[0].Id)
+			s.False(next.HasMore)
+		})
+	}
 }
 
 func (s *ChatSuite) TestSyncMessages_InvalidAfterMessageID() {

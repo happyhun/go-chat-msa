@@ -2,6 +2,7 @@ package chat_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -149,6 +150,13 @@ func TestService_SyncMessages(t *testing.T) {
 			},
 			req:     &pb.SyncMessagesRequest{RoomId: "r1", AfterMessageId: afterID},
 			wantErr: false,
+		},
+		{
+			name: "Success: 대문자 UUID 커서 정규화",
+			mock: func(m *mocks.MockRepository) {
+				m.EXPECT().SyncMessages(mock.Anything, "r1", afterID, int64(16), mock.Anything).Return(nil, nil)
+			},
+			req: &pb.SyncMessagesRequest{RoomId: "r1", AfterMessageId: strings.ToUpper(afterID)},
 		},
 		{
 			name:    "Failure: after_message_id 형식 오류 (InvalidArgument)",

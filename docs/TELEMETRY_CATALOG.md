@@ -233,7 +233,9 @@ HTTP/gRPC panic recovery는 `gochat_panic_recovered` counter를 증가시키고 
 - retry는 delayed NAK 시도, DLQ는 DLQ publish 성공 횟수다. 누적 DLQ counter는 현재 DLQ에 남은 메시지 수와 다르다.
 - `gochat_chat_messages_saved_total`은 저장 성공 또는 내용이 같은 중복으로 처리한 건수이며, 고유 문서 수가 아니다.
 
-현재 Grafana의 Operations Overview, Realtime Messaging, Data Persistence 일부 패널에는 제거된 `gochat_ws_persist_*`, `gochat_persistence_*` 조회가 남아 있다. 해당 패널의 0 또는 빈 결과는 정상 저장의 근거가 아니다. 위 `gochat_chat_persistence_*`는 현재 코드 계측 기준이며 대시보드의 이전 retry/drain 패널과 일치하지 않는다.
+Operations Overview와 Data Persistence는 namespace별 shared consumer 대기량을 `max`로 중복 제거한 뒤 합산한다. 저장 지연은 UUIDv7 생성 시각부터 MongoDB 저장 확인까지의 P99이며, 재시도와 DLQ 발행률은 Pod별 counter를 합산한다. 열린 회로 수는 상태가 `1`인 Pod 수다. DLQ 잔량은 exporter의 `nats_stream_total_messages{stream_name="CHAT_PERSIST_DLQ"}`로 조회하며 앱 Pod·node 필터와 무관하게 선택한 namespace 전체를 표시한다. 저장 패널은 수집되지 않은 값을 0으로 대체하지 않는다.
+
+저장 경보는 가장 오래된 대기 메시지가 60초를 넘는 상태가 2분간 지속되거나, Pod의 회로가 1분간 열려 있을 때 발생한다. 저장·DLQ stream의 byte 사용량이 한도의 90%를 1분간 넘으면 용량 경보를, DLQ에 메시지가 1분간 남아 있으면 확인 경보를 발생시킨다.
 
 ### NATS Exporter
 
@@ -247,6 +249,8 @@ NATS StatefulSet의 exporter는 `-varz`, `-jsz=all`, `-connz_detailed`, `-prefix
 | nats_varz_slow_consumers | 서버가 관측한 slow consumer |
 | nats_connz_pending_bytes | 연결별 전송 대기 바이트 |
 | nats_connz_rtt | 연결 RTT |
+| nats_stream_total_messages | stream별 현재 메시지 수, DLQ 잔량 |
+| nats_stream_total_bytes / nats_stream_limit_bytes | stream별 byte 사용량과 한도 |
 
 JetStream stream·consumer 상태도 exporter에서 수집한다. 앱의 shared consumer backlog와 Pod별 circuit 상태를 함께 확인한다.
 

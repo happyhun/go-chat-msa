@@ -252,7 +252,7 @@ flowchart LR
 
 Grafana 대시보드는 전체 상태에서 시작해 API, 실시간 메시지, 저장소, 런타임을 목적에 맞게 확인할 수 있도록 구성했습니다.
 
-상세 계측 항목과 대시보드의 차이는 [텔레메트리 카탈로그](docs/TELEMETRY_CATALOG.md)에 정리했습니다.
+상세 계측 항목은 [텔레메트리 카탈로그](docs/TELEMETRY_CATALOG.md)에 정리했습니다.
 
 ## Kubernetes 실행 기준
 
