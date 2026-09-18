@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
-	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go-chat-msa/internal/websocket/hub"
@@ -50,8 +50,9 @@ type Bus struct {
 	js   jetstream.JetStream
 	cfg  Config
 
-	mu       sync.RWMutex
-	observer hub.BusObserver
+	mu        sync.RWMutex
+	observer  hub.BusObserver
+	resetting atomic.Bool
 }
 
 func Connect(cfg Config) (*Bus, error) {
@@ -67,12 +68,14 @@ func Connect(cfg Config) (*Bus, error) {
 		nats.RetryOnFailedConnect(true),
 		nats.ReconnectBufSize(-1),
 		nats.DisconnectErrHandler(func(_ *nats.Conn, err error) {
+			b.resetting.Store(true)
 			slog.WarnContext(context.Background(), "NATS disconnected", "error", err)
 			if observer := b.currentObserver(); observer != nil {
 				observer.OnDisconnected()
 			}
 		}),
 		nats.ReconnectHandler(func(nc *nats.Conn) {
+			b.resetting.Store(false)
 			slog.InfoContext(context.Background(), "NATS reconnected", "url", nc.ConnectedUrl())
 			if observer := b.currentObserver(); observer != nil {
 				observer.OnReconnected()
@@ -114,7 +117,7 @@ func (b *Bus) currentObserver() hub.BusObserver {
 	return b.observer
 }
 
-func (b *Bus) handleAsyncError(_ *nats.Conn, sub *nats.Subscription, err error) {
+func (b *Bus) handleAsyncError(nc *nats.Conn, sub *nats.Subscription, err error) {
 	subject := ""
 	dropped := 0
 	if sub != nil {
@@ -129,7 +132,14 @@ func (b *Bus) handleAsyncError(_ *nats.Conn, sub *nats.Subscription, err error) 
 		return
 	}
 	if observer := b.currentObserver(); observer != nil {
-		observer.OnSlowConsumer(roomIDFromSubject(subject), dropped)
+		observer.OnSlowConsumer(dropped)
+	}
+	if !nc.IsConnected() || !b.resetting.CompareAndSwap(false, true) {
+		return
+	}
+	if err := nc.ForceReconnect(); err != nil {
+		b.resetting.Store(false)
+		slog.ErrorContext(context.Background(), "reset NATS connection after slow consumer", "error", err)
 	}
 }
 
@@ -233,7 +243,7 @@ func (b *Bus) SubscribeEvents(deliver func(hub.RoomEvent)) (hub.Subscription, er
 }
 
 func (b *Bus) Connected() bool {
-	return b != nil && b.conn != nil && b.conn.IsConnected()
+	return b != nil && b.conn != nil && !b.resetting.Load() && b.conn.IsConnected()
 }
 
 func (b *Bus) Drain() error {
@@ -298,17 +308,6 @@ func validateRoomID(roomID string) error {
 		return fmt.Errorf("%w: %q", ErrInvalidRoom, roomID)
 	}
 	return nil
-}
-
-func roomIDFromSubject(subject string) string {
-	switch {
-	case strings.HasPrefix(subject, subjectRoomMsgPrefix):
-		return strings.TrimPrefix(subject, subjectRoomMsgPrefix)
-	case strings.HasPrefix(subject, subjectRoomEventPrefix):
-		return strings.TrimPrefix(subject, subjectRoomEventPrefix)
-	default:
-		return ""
-	}
 }
 
 var (

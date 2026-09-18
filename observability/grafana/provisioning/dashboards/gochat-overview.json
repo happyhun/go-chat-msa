@@ -943,13 +943,13 @@
     },
     {
       "id": 20,
-      "title": "Drops and Rate Limits",
+      "title": "Overflows and Rate Limits",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "WebSocket send queue drops, JetStream publish errors, and message rate limits.",
+      "description": "WebSocket send queue overflow disconnects, JetStream publish errors, and message rate limits.",
       "gridPos": {
         "x": 12,
         "y": 20,
@@ -987,9 +987,9 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(rate(gochat_ws_send_queue_dropped_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval])) or on() vector(0)",
+          "expr": "sum(rate(gochat_ws_send_queue_overflows_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval])) or on() vector(0)",
           "refId": "A",
-          "legendFormat": "send queue dropped"
+          "legendFormat": "send queue overflow"
         },
         {
           "datasource": {

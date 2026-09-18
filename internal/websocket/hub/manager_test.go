@@ -9,6 +9,7 @@ import (
 
 	"go-chat-msa/internal/shared/config"
 
+	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -255,4 +256,67 @@ func TestNewSystemMessage(t *testing.T) {
 	assert.Equal(t, msgTypeSystem, msg.Type)
 	assert.Equal(t, systemSenderID, msg.SenderID)
 	assert.NotEmpty(t, msg.ClientMsgID)
+}
+
+func TestManager_ReconnectWaitsForSessionPumps(t *testing.T) {
+	t.Parallel()
+	m := newTestManager(t, newFakeBus())
+	m.sessionCloseDelay = func() time.Duration { return 0 }
+	registration, err := m.PrepareRegister(t.Context(), "room-1")
+	require.NoError(t, err)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	registration.hub.publish = func(context.Context, *Message) error {
+		close(started)
+		<-release
+		return nil
+	}
+	server, client := createTestWSPair(t)
+	defer client.Close()
+	require.NoError(t, registration.Commit(t.Context(), server, "user-1"))
+	require.NoError(t, client.WriteJSON(map[string]string{"content": "hello", "client_msg_id": "00000000-0000-4000-8000-000000000001"}))
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("publish did not start")
+	}
+	other, err := m.PrepareRegister(t.Context(), "room-2")
+	require.NoError(t, err)
+	otherServer, otherClient := createTestWSPair(t)
+	defer otherClient.Close()
+	require.NoError(t, other.Commit(t.Context(), otherServer, "user-2"))
+	pending, err := m.PrepareRegister(t.Context(), "room-3")
+	require.NoError(t, err)
+	m.OnDisconnected()
+	m.OnReconnected()
+	require.Eventually(t, registration.hub.isDraining, time.Second, time.Millisecond)
+	assert.False(t, m.BusConnected())
+	_, err = m.PrepareRegister(t.Context(), "room-4")
+	require.ErrorIs(t, err, ErrBusUnavailable)
+	require.ErrorIs(t, pending.Commit(t.Context(), nil, "user-3"), ErrBusUnavailable)
+	select {
+	case <-registration.hub.done():
+		t.Fatal("hub finished before its session pump")
+	default:
+	}
+	releaseOnce.Do(func() { close(release) })
+	require.Eventually(t, m.BusConnected, time.Second, time.Millisecond)
+	for _, h := range []*Hub{registration.hub, other.hub, pending.hub} {
+		select {
+		case <-h.done():
+		default:
+			t.Fatal("readiness restored before every old hub stopped")
+		}
+	}
+	for _, conn := range []*websocket.Conn{client, otherClient} {
+		require.NoError(t, conn.SetReadDeadline(time.Now().Add(time.Second)))
+		_, _, err := conn.ReadMessage()
+		require.Error(t, err)
+	}
+	next, err := m.PrepareRegister(t.Context(), "room-1")
+	require.NoError(t, err)
+	require.NotSame(t, registration.hub, next.hub)
+	next.Cancel()
 }

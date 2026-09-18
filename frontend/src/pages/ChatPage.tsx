@@ -213,7 +213,6 @@ export default function ChatPage() {
   const { connected, reconnecting, connect, disconnect, send } = useWebSocket({
     roomId: roomId!,
     onMessage,
-    onFrameGap: recover,
     onReconnected,
     onGaveUp,
   })

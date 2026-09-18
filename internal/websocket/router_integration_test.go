@@ -185,6 +185,7 @@ func (s *RouterIntegrationSuite) readFrame(conn *websocket.Conn) map[string]any 
 
 	var frame map[string]any
 	s.Require().NoError(json.Unmarshal(data, &frame))
+	s.NotContains(frame, "frame_no")
 	return frame
 }
 
@@ -278,7 +279,6 @@ func (s *RouterIntegrationSuite) TestPublish_EchoesThroughNATS() {
 	s.Equal(content, frame["content"])
 	s.Equal("msg-unique-id", frame["client_msg_id"])
 	s.NotEmpty(frame["id"], "발행 시 UUIDv7 id가 부여된다")
-	s.Equal(float64(1), frame["frame_no"], "연결의 첫 프레임은 1번이다")
 }
 
 func (s *RouterIntegrationSuite) TestBroadcast_AcrossPods() {

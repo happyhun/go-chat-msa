@@ -82,11 +82,10 @@ func TestHub_FanOutToAllSessions(t *testing.T) {
 
 		var frame struct {
 			Content string `json:"content"`
-			FrameNo int64  `json:"frame_no"`
 		}
 		require.NoError(t, json.Unmarshal(data, &frame))
 		assert.Equal(t, "hello world", frame.Content)
-		assert.Equal(t, int64(1), frame.FrameNo)
+		assert.NotContains(t, string(data), `"frame_no"`)
 	}
 }
 
@@ -181,4 +180,33 @@ func TestHub_Lifecycle(t *testing.T) {
 		assert.Equal(t, closeCodeTryAgainLater, closeErr.Code)
 		assert.Equal(t, closeReasonRoomClosed, closeErr.Text)
 	})
+}
+
+func TestHub_OverflowClosesOnlySlowSession(t *testing.T) {
+	t.Parallel()
+	h := newTestHub("room")
+	slowServer, slowClient := createTestWSPair(t)
+	defer func() { _ = slowClient.Close() }()
+	fastServer, fastClient := createTestWSPair(t)
+	defer func() { _ = fastClient.Close() }()
+	defer func() { _ = fastServer.Close() }()
+	slow := newTestSession(slowServer, "slow", "room", nil)
+	fast := newTestSession(fastServer, "fast", "room", nil)
+	h.sessions[slow.id] = slow
+	h.sessions[fast.id] = fast
+	for range sendBufferSize {
+		slow.send(t.Context(), egressPacket{data: []byte(`{"content":"queued"}`)})
+	}
+	go fast.writePump(t.Context())
+	packet := testPacket("01920f6a-7c3e-7b1a-9d2f-3e4a5b6c7d8e", "sender", "last message")
+	h.fanOut(t.Context(), packet)
+	require.True(t, slow.isClosed())
+	require.False(t, fast.isClosed())
+	require.NoError(t, fastClient.SetReadDeadline(time.Now().Add(time.Second)))
+	_, data, err := fastClient.ReadMessage()
+	require.NoError(t, err)
+	assert.Equal(t, packet.payload, data)
+	require.NoError(t, slowClient.SetReadDeadline(time.Now().Add(time.Second)))
+	_, _, err = slowClient.ReadMessage()
+	assert.True(t, websocket.IsCloseError(err, websocket.CloseAbnormalClosure))
 }

@@ -216,6 +216,8 @@ func (s *E2ESuite) waitForWSMessage(ctx context.Context, conn *websocket.Conn, m
 			continue
 		}
 
+		s.NotContains(msg, "frame_no")
+
 		if msgType != "" && msg["type"] != msgType {
 			continue
 		}

@@ -39,5 +39,4 @@ export interface WsOutgoing {
   client_msg_id?: string
   type: 'chat' | 'system'
   timestamp: number
-  frame_no?: number
 }

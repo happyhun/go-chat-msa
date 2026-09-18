@@ -337,6 +337,10 @@ func (s *E2ESuite) TestScenario_07_MessageRecovery_Recovery() {
 	time.Sleep(500 * time.Millisecond)
 
 	syncURL := fmt.Sprintf("/rooms/%s/messages?after_id=%s&limit=10", roomID, baselineID)
+	bConn, _, err = s.dialWS(ctx, bTok, roomID)
+	s.Require().NoError(err)
+	defer bConn.Close()
+
 	var syncRes struct {
 		Messages []map[string]any `json:"messages"`
 	}
@@ -348,6 +352,11 @@ func (s *E2ESuite) TestScenario_07_MessageRecovery_Recovery() {
 	s.Equal(numMissed, len(syncRes.Messages), "Exactly %d missed messages should be recovered via REST API", numMissed)
 	s.Equal("missed-msg-1", syncRes.Messages[0]["content"])
 	s.Equal("missed-msg-3", syncRes.Messages[numMissed-1]["content"])
+
+	s.Require().NoError(s.sendMessage(aConn, "after-reconnect"))
+	msg, err := s.waitForWSMessage(ctx, bConn, "chat", "after-reconnect", 5*time.Second)
+	s.Require().NoError(err)
+	s.Require().NotEmpty(messageID(msg))
 
 	s.T().Log("Recovery Check PASSED: Missed messages successfully fetched from Chat Service")
 }

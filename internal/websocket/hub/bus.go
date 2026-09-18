@@ -41,7 +41,7 @@ type MessageBus interface {
 }
 
 type BusObserver interface {
-	OnSlowConsumer(roomID string, dropped int)
+	OnSlowConsumer(dropped int)
 	OnInvalidEvent()
 	OnDisconnected()
 	OnReconnected()

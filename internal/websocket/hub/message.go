@@ -3,7 +3,6 @@ package hub
 import (
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -66,10 +65,4 @@ func uuidV7Gap(newerID, olderID string) (time.Duration, bool) {
 		return 0, false
 	}
 	return time.Unix(newer.Time().UnixTime()).Sub(time.Unix(older.Time().UnixTime())), true
-}
-
-func appendFrameNoSuffix(dst []byte, frameNo int64) []byte {
-	dst = append(dst, `,"frame_no":`...)
-	dst = strconv.AppendInt(dst, frameNo, 10)
-	return append(dst, '}')
 }

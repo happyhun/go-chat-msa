@@ -25,7 +25,6 @@ const (
 
 	closeReasonRoomClosed     = "room_closed"
 	closeReasonShutdown       = "shutdown"
-	closeReasonSlowConsumer   = "slow_consumer"
 	closeReasonDeliveryLag    = "delivery_lag"
 	closeReasonNATSDisconnect = "nats_disconnected"
 )
@@ -63,9 +62,10 @@ type Hub struct {
 	unregisterCh chan *session
 	broadcastCh  chan deliverPacket
 
-	doneCh   chan struct{}
-	stopCh   chan struct{}
-	stopOnce sync.Once
+	doneCh    chan struct{}
+	stopCh    chan struct{}
+	stopOnce  sync.Once
+	sessionWG sync.WaitGroup
 
 	draining       atomic.Bool
 	activeSessions atomic.Int64
@@ -101,8 +101,9 @@ func (h *Hub) run(ctx context.Context) {
 	defer func() {
 		slog.InfoContext(ctx, "Hub actor stopped", "room_id", h.roomID)
 		h.shutdown()
-		close(h.doneCh)
 		cancelSessions()
+		h.sessionWG.Wait()
+		close(h.doneCh)
 	}()
 
 	idleTimer := time.NewTimer(h.idleTimeout)
@@ -121,7 +122,7 @@ func (h *Hub) run(ctx context.Context) {
 			s := newSession(uuid.NewString(), h.sessionCfg, req.conn, req.userID, h.roomID,
 				h.unregisterCh, h.publish, h.allowFunc)
 			h.registerSession(ctx, s, idleTimer)
-			go s.run(sessionCtx)
+			h.sessionWG.Go(func() { s.run(sessionCtx) })
 			req.errCh <- nil
 
 		case s := <-h.unregisterCh:
@@ -211,7 +212,6 @@ func (h *Hub) shutdown() {
 	for _, s := range h.sessions {
 		if signal != nil {
 			s.closeWithCode(signal.code, signal.reason)
-			sessionsClosedTotal.Add(context.Background(), 1, metric.WithAttributes(attribute.String("reason", signal.reason)))
 		} else {
 			s.close()
 		}

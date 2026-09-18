@@ -84,8 +84,9 @@ type Manager struct {
 	closeAllCh         chan closeAllReq
 	eventSub           Subscription
 	busConnected       atomic.Bool
-	disconnectEpoch    atomic.Uint64
-	sessionsCloseEpoch atomic.Uint64
+	connectionMu       sync.Mutex
+	disconnectEpoch    uint64
+	sessionsCloseEpoch uint64
 	sessionCloseDelay  func() time.Duration
 	stoppedCh          chan struct{}
 	stoppedOnce        sync.Once
@@ -194,6 +195,10 @@ func (m *Manager) Run(ctx context.Context) {
 	for {
 		select {
 		case req := <-m.prepareRegisterCh:
+			if !m.BusConnected() {
+				req.resultCh <- prepareRegisterResult{err: ErrBusUnavailable}
+				continue
+			}
 			h, created, err := getOrCreate(req.ctx, req.roomID)
 			if err != nil {
 				req.resultCh <- prepareRegisterResult{err: err}
@@ -224,6 +229,12 @@ func (m *Manager) Run(ctx context.Context) {
 		case req := <-m.closeAllCh:
 			for _, entry := range hubs {
 				entry.hub.forceClose(req.code, req.reason)
+			}
+			for roomID, entry := range hubs {
+				<-entry.hub.done()
+				m.unsubscribe(entry)
+				delete(hubs, roomID)
+				hubsActive.Add(ctx, -1)
 			}
 			close(req.doneCh)
 
@@ -352,6 +363,9 @@ func (m *Manager) PrepareRegister(ctx context.Context, roomID string) (*Registra
 func (r *Registration) Commit(ctx context.Context, conn *websocket.Conn, userID string) error {
 	if r == nil || r.manager == nil || r.hub == nil {
 		return errors.New("registration is not prepared")
+	}
+	if !r.manager.BusConnected() {
+		return ErrBusUnavailable
 	}
 	if !r.done.CompareAndSwap(false, true) {
 		return errors.New("registration already closed")
@@ -519,17 +533,11 @@ func (m *Manager) closeAllSessions(ctx context.Context, code int, reason string)
 	}
 }
 
-func (m *Manager) OnSlowConsumer(roomID string, dropped int) {
+func (m *Manager) OnSlowConsumer(dropped int) {
 	natsSlowConsumerTotal.Add(context.Background(), 1)
 	if dropped > 0 {
 		natsDroppedMessagesTotal.Add(context.Background(), int64(dropped))
 	}
-	if roomID == "" {
-		return
-	}
-	slog.WarnContext(context.Background(), "nats slow consumer, closing room sessions",
-		"room_id", roomID, "dropped", dropped)
-	m.closeRoomAsync(context.Background(), roomID, closeCodeTryAgainLater, closeReasonSlowConsumer)
 }
 
 func (m *Manager) OnInvalidEvent() {
@@ -538,36 +546,46 @@ func (m *Manager) OnInvalidEvent() {
 }
 
 func (m *Manager) OnDisconnected() {
-	disconnectEpoch := m.disconnectEpoch.Add(1)
+	m.connectionMu.Lock()
+	m.disconnectEpoch++
+	disconnectEpoch := m.disconnectEpoch
 	m.busConnected.Store(false)
+	m.connectionMu.Unlock()
 	natsDisconnectsTotal.Add(context.Background(), 1)
 	slog.WarnContext(context.Background(), "nats disconnected, closing sessions")
 
 	go func() {
 		time.Sleep(m.sessionCloseDelay())
-		if m.disconnectEpoch.Load() != disconnectEpoch {
+		m.connectionMu.Lock()
+		current := m.disconnectEpoch == disconnectEpoch
+		m.connectionMu.Unlock()
+		if !current {
 			return
 		}
 		m.closeAllSessions(context.Background(), closeCodeServiceRestart, closeReasonNATSDisconnect)
-		if m.disconnectEpoch.Load() != disconnectEpoch {
+		m.connectionMu.Lock()
+		defer m.connectionMu.Unlock()
+		if m.disconnectEpoch != disconnectEpoch {
 			return
 		}
-		m.sessionsCloseEpoch.Store(disconnectEpoch)
-		if m.bus == nil || m.bus.Connected() {
+		m.sessionsCloseEpoch = disconnectEpoch
+		if !m.Stopped() && (m.bus == nil || m.bus.Connected()) {
 			m.busConnected.Store(true)
 		}
 	}()
 }
 
 func (m *Manager) OnReconnected() {
-	if m.sessionsCloseEpoch.Load() == m.disconnectEpoch.Load() {
+	m.connectionMu.Lock()
+	defer m.connectionMu.Unlock()
+	if m.sessionsCloseEpoch == m.disconnectEpoch && !m.Stopped() {
 		m.busConnected.Store(true)
 	}
 	slog.InfoContext(context.Background(), "nats reconnected")
 }
 
 func (m *Manager) BusConnected() bool {
-	return m.busConnected.Load()
+	return m.busConnected.Load() && (m.bus == nil || m.bus.Connected())
 }
 
 func (m *Manager) shutdownHubs(ctx context.Context, hubs map[string]*hubEntry) {

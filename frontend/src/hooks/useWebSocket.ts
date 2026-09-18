@@ -3,18 +3,18 @@ import type { WsOutgoing } from '../types'
 import { ApiError, createWsTicket } from '../api/client'
 
 const MAX_RECONNECT_ATTEMPTS = 20
+const STABLE_CONNECTION_MS = 30000
 
 export type WebSocketStopReason = 'auth' | 'rate_limited' | 'connection_failed'
 
 interface UseWebSocketOptions {
   roomId: string
   onMessage: (msg: WsOutgoing) => void
-  onFrameGap?: () => void
   onReconnected?: () => void
   onGaveUp?: (reason: WebSocketStopReason) => void
 }
 
-export function useWebSocket({ roomId, onMessage, onFrameGap, onReconnected, onGaveUp }: UseWebSocketOptions) {
+export function useWebSocket({ roomId, onMessage, onReconnected, onGaveUp }: UseWebSocketOptions) {
   const [connected, setConnected] = useState(false)
   const [reconnecting, setReconnecting] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
@@ -22,12 +22,12 @@ export function useWebSocket({ roomId, onMessage, onFrameGap, onReconnected, onG
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const enabled = useRef(false)
   const generation = useRef(0)
-  const callbacks = useRef({ onMessage, onFrameGap, onReconnected, onGaveUp })
+  const callbacks = useRef({ onMessage, onReconnected, onGaveUp })
   const connectRef = useRef<() => Promise<void>>(async () => {})
 
   useEffect(() => {
-    callbacks.current = { onMessage, onFrameGap, onReconnected, onGaveUp }
-  }, [onMessage, onFrameGap, onReconnected, onGaveUp])
+    callbacks.current = { onMessage, onReconnected, onGaveUp }
+  }, [onMessage, onReconnected, onGaveUp])
 
   const scheduleReconnect = useCallback(() => {
     if (!enabled.current) return
@@ -62,7 +62,7 @@ export function useWebSocket({ roomId, onMessage, onFrameGap, onReconnected, onG
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const ws = new WebSocket(`${protocol}//${window.location.host}/ws?room_id=${roomId}&ticket=${ticket}`)
     wsRef.current = ws
-    let frameNo = 0
+    let openedAt: number | undefined
     await new Promise<void>((resolve) => {
       ws.onopen = () => {
         if (!enabled.current || connectionGeneration !== generation.current) {
@@ -71,7 +71,7 @@ export function useWebSocket({ roomId, onMessage, onFrameGap, onReconnected, onG
           return
         }
         const wasReconnect = attempts.current > 0
-        attempts.current = 0
+        openedAt = performance.now()
         setConnected(true)
         setReconnecting(false)
         if (wasReconnect) callbacks.current.onReconnected?.()
@@ -86,16 +86,15 @@ export function useWebSocket({ roomId, onMessage, onFrameGap, onReconnected, onG
           ws.close()
           return
         }
-        if (typeof msg.frame_no === 'number') {
-          if (frameNo > 0 && msg.frame_no > frameNo + 1) callbacks.current.onFrameGap?.()
-          frameNo = Math.max(frameNo, msg.frame_no)
-        }
         callbacks.current.onMessage(msg)
       }
       ws.onerror = () => resolve()
       ws.onclose = () => {
         resolve()
         if (connectionGeneration !== generation.current) return
+        if (openedAt !== undefined && performance.now() - openedAt >= STABLE_CONNECTION_MS) {
+          attempts.current = 0
+        }
         setConnected(false)
         wsRef.current = null
         scheduleReconnect()

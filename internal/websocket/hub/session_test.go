@@ -2,7 +2,12 @@ package hub
 
 import (
 	"context"
-	"encoding/json"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -56,89 +61,71 @@ func TestSession_ReadPump_Unregister(t *testing.T) {
 	}
 }
 
-func TestSession_FrameNumbering(t *testing.T) {
+func TestSession_WritePumpPreservesPayload(t *testing.T) {
 	t.Parallel()
-
 	serverConn, clientConn := createTestWSPair(t)
 	defer func() { _ = clientConn.Close() }()
-
-	s := newTestSession(serverConn, "user2", "room2", nil)
-	go s.writePump(context.Background())
-
-	for want := 1; want <= 3; want++ {
-		s.send(context.Background(), egressPacket{data: []byte(`{"content":"hi"}`)})
-
+	defer func() { _ = serverConn.Close() }()
+	s := newTestSession(serverConn, "user", "room", nil)
+	go s.writePump(t.Context())
+	payload := []byte(`{"id":"m1","content":"hi } \"there\""}`)
+	original := string(payload)
+	for range 3 {
+		s.send(t.Context(), egressPacket{data: payload})
 		require.NoError(t, clientConn.SetReadDeadline(time.Now().Add(time.Second)))
-		_, data, err := clientConn.ReadMessage()
+		messageType, data, err := clientConn.ReadMessage()
 		require.NoError(t, err)
-
-		var frame struct {
-			Content string `json:"content"`
-			FrameNo int64  `json:"frame_no"`
-		}
-		require.NoError(t, json.Unmarshal(data, &frame))
-		assert.Equal(t, "hi", frame.Content)
-		assert.Equal(t, int64(want), frame.FrameNo, "frame_no must increase by one per frame")
+		assert.Equal(t, websocket.TextMessage, messageType)
+		assert.Equal(t, original, string(data))
+		assert.Equal(t, original, string(payload))
 	}
 }
 
-func TestSession_WriteFrame(t *testing.T) {
+func TestSession_SendClosesConnectionWhenBufferFull(t *testing.T) {
 	t.Parallel()
-
-	tests := []struct {
-		name    string
-		payload string
-		frameNo int64
-		want    string
-	}{
-		{
-			name:    "Success: 객체 끝에 frame_no 추가",
-			payload: `{"id":"m1","content":"hi"}`,
-			frameNo: 7,
-			want:    `{"id":"m1","content":"hi","frame_no":7}`,
-		},
-		{
-			name:    "Success: 중괄호가 없으면 원본 유지",
-			payload: `not-json`,
-			frameNo: 3,
-			want:    `not-json`,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			serverConn, clientConn := createTestWSPair(t)
-			defer func() { _ = clientConn.Close() }()
-
-			payload := []byte(tt.payload)
-			s := newTestSession(serverConn, "user", "room", nil)
-			require.NoError(t, s.writeFrame(egressPacket{data: payload, frameNo: tt.frameNo}))
-
-			require.NoError(t, clientConn.SetReadDeadline(time.Now().Add(time.Second)))
-			_, data, err := clientConn.ReadMessage()
-			require.NoError(t, err)
-			assert.Equal(t, tt.want, string(data))
-			assert.Equal(t, tt.payload, string(payload), "shared payload must not be modified")
-		})
-	}
-}
-
-func TestSession_SendDropsFrameWhenBufferFull(t *testing.T) {
-	t.Parallel()
-
 	serverConn, clientConn := createTestWSPair(t)
 	defer func() { _ = clientConn.Close() }()
-
-	s := newTestSession(serverConn, "user3", "room3", nil)
-
-	for range sendBufferSize + 10 {
-		s.send(context.Background(), egressPacket{data: []byte(`{"content":"spam"}`)})
+	unregisterCh := make(chan *session, 1)
+	s := newTestSession(serverConn, "user", "room", unregisterCh)
+	packet := egressPacket{data: []byte(`{"content":"queued"}`)}
+	for range sendBufferSize {
+		s.send(t.Context(), packet)
 	}
-
-	assert.False(t, s.isClosed(), "session must stay open when frames are dropped")
+	require.False(t, s.isClosed())
+	s.send(t.Context(), packet)
+	require.True(t, s.isClosed())
+	s.send(t.Context(), packet)
+	s.close()
 	assert.Len(t, s.sendCh, sendBufferSize)
-	assert.Equal(t, int64(sendBufferSize+10), s.frameNo, "dropped frames still consume a frame number")
+	require.NoError(t, clientConn.SetReadDeadline(time.Now().Add(time.Second)))
+	_, _, err := clientConn.ReadMessage()
+	assert.True(t, websocket.IsCloseError(err, websocket.CloseAbnormalClosure), "expected connection closure without draining queued frames: %v", err)
+	go s.run(t.Context())
+	select {
+	case got := <-unregisterCh:
+		assert.Same(t, s, got)
+	case <-time.After(time.Second):
+		t.Fatal("overflowed session was not unregistered")
+	}
+}
+
+func TestSession_ConcurrentOverflowAndClose(t *testing.T) {
+	t.Parallel()
+	serverConn, clientConn := createTestWSPair(t)
+	defer func() { _ = clientConn.Close() }()
+	defer func() { _ = serverConn.Close() }()
+	s := newTestSession(serverConn, "user", "room", nil)
+	packet := egressPacket{data: []byte(`{"content":"queued"}`)}
+	for range sendBufferSize {
+		s.send(t.Context(), packet)
+	}
+	var wg sync.WaitGroup
+	for range 10 {
+		wg.Go(func() { s.send(t.Context(), packet) })
+		wg.Go(s.close)
+	}
+	wg.Wait()
+	assert.True(t, s.isClosed())
 }
 
 func TestSession_WritePumpPing(t *testing.T) {
@@ -211,4 +198,84 @@ func TestSession_Run(t *testing.T) {
 			t.Fatal("session.run should return after context cancel")
 		}
 	})
+}
+
+type blockedWriteConn struct {
+	net.Conn
+	blockWrites  atomic.Bool
+	writeStarted chan struct{}
+	closed       chan struct{}
+	writeOnce    sync.Once
+	closeOnce    sync.Once
+}
+
+func (c *blockedWriteConn) Write(p []byte) (int, error) {
+	if !c.blockWrites.Load() {
+		return c.Conn.Write(p)
+	}
+	c.writeOnce.Do(func() { close(c.writeStarted) })
+	<-c.closed
+	return 0, net.ErrClosed
+}
+
+func (c *blockedWriteConn) Close() error {
+	c.closeOnce.Do(func() { close(c.closed) })
+	return c.Conn.Close()
+}
+
+func TestSession_OverflowUnblocksRunningWriter(t *testing.T) {
+	t.Parallel()
+	peerCh := make(chan *websocket.Conn, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upgrader := websocket.Upgrader{}
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err == nil {
+			peerCh <- conn
+		}
+	}))
+	defer server.Close()
+	var blocked *blockedWriteConn
+	dialer := websocket.Dialer{NetDialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+		conn, err := (&net.Dialer{}).DialContext(ctx, network, addr)
+		if err != nil {
+			return nil, err
+		}
+		blocked = &blockedWriteConn{Conn: conn, writeStarted: make(chan struct{}), closed: make(chan struct{})}
+		return blocked, nil
+	}}
+	conn, _, err := dialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	require.NoError(t, err)
+	defer conn.Close()
+	peer := <-peerCh
+	defer peer.Close()
+	blocked.blockWrites.Store(true)
+	unregisterCh := make(chan *session, 1)
+	s := newTestSession(conn, "slow", "room", unregisterCh)
+	done := make(chan struct{})
+	go func() {
+		s.run(t.Context())
+		close(done)
+	}()
+	packet := egressPacket{data: []byte(`{"content":"queued"}`)}
+	s.send(t.Context(), packet)
+	select {
+	case <-blocked.writeStarted:
+	case <-time.After(time.Second):
+		t.Fatal("writer did not reach the blocked connection")
+	}
+	for range sendBufferSize {
+		s.send(t.Context(), packet)
+	}
+	require.False(t, s.isClosed())
+	s.send(t.Context(), packet)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("overflow did not stop both session pumps")
+	}
+	assert.Same(t, s, <-unregisterCh)
+	assert.Len(t, s.sendCh, sendBufferSize, "queued frames must not be drained")
+	require.NoError(t, peer.SetReadDeadline(time.Now().Add(time.Second)))
+	_, _, err = peer.ReadMessage()
+	assert.True(t, websocket.IsCloseError(err, websocket.CloseAbnormalClosure))
 }

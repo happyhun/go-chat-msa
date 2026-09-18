@@ -30,7 +30,11 @@ func (s *E2ESuite) TestScenario_17_DurableAcceptanceAndRestartRecovery() {
 	s.Require().NoError(s.makeRequest(ctx, http.MethodPut, "/rooms/"+roomID+"/members/me", nil, nil, bobToken))
 	aliceConn, _, err := s.dialWS(ctx, aliceToken, roomID)
 	s.Require().NoError(err)
-	defer func() { _ = aliceConn.Close() }()
+	defer func() {
+		if aliceConn != nil {
+			_ = aliceConn.Close()
+		}
+	}()
 	bobConn, _, err := s.dialWS(ctx, bobToken, roomID)
 	s.Require().NoError(err)
 	defer func() { _ = bobConn.Close() }()
@@ -76,7 +80,9 @@ func (s *E2ESuite) TestScenario_17_DurableAcceptanceAndRestartRecovery() {
 			send(aliceConn, fmt.Sprintf("%s-%d", scenario, i), uuid.NewString())
 			time.Sleep(300 * time.Millisecond)
 		}
-		s.Require().NoError(aliceConn.Close())
+		if scenario != "nats-restart" {
+			s.Require().NoError(aliceConn.Close())
+		}
 		counts, err := s.persistenceStreamCounts(ctx)
 		s.Require().NoError(err)
 		s.Require().GreaterOrEqual(counts["CHAT_PERSIST"], uint64(8))
@@ -99,6 +105,14 @@ func (s *E2ESuite) TestScenario_17_DurableAcceptanceAndRestartRecovery() {
 			restoredPVC, err := s.kubectlOutput(ctx, "-n", s.namespace, "get", "pvc/data-nats-0", "-o", "jsonpath={.metadata.uid}")
 			s.Require().NoError(err)
 			s.Require().Equal(pvc, restoredPVC)
+			s.Require().NoError(aliceConn.SetReadDeadline(time.Now().Add(10 * time.Second)))
+			_, _, err = aliceConn.ReadMessage()
+			s.Require().True(websocket.IsCloseError(err, websocket.CloseServiceRestart), "old session must close after NATS disconnect: %v", err)
+			s.Require().EventuallyWithT(func(c *assert.CollectT) {
+				aliceConn, _, err = s.dialWS(ctx, aliceToken, roomID)
+				assert.NoError(c, err)
+			}, 30*time.Second, time.Second)
+
 			counts, err = s.persistenceStreamCounts(ctx)
 			s.Require().NoError(err)
 			s.Require().GreaterOrEqual(counts["CHAT_PERSIST"], uint64(8))
@@ -106,6 +120,10 @@ func (s *E2ESuite) TestScenario_17_DurableAcceptanceAndRestartRecovery() {
 		recoveryStarted := time.Now()
 		s.Require().NoError(s.runKubectl(ctx, "-n", s.namespace, "scale", "deployment/mongo", "--replicas=1"))
 		s.Require().NoError(s.runKubectl(ctx, "-n", s.namespace, "rollout", "status", "deployment/mongo", "--timeout=180s"))
+		if scenario == "nats-restart" {
+			send(aliceConn, "live after NATS recovery", uuid.NewString())
+			s.Require().NoError(aliceConn.Close())
+		}
 		s.Require().EventuallyWithT(func(c *assert.CollectT) {
 			var response struct {
 				Messages []map[string]any `json:"messages"`

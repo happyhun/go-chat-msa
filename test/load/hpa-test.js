@@ -56,7 +56,6 @@ const acceptedReceipts = new Counter('accepted_receipts');
 const acceptedMissing = new Counter('accepted_missing');
 const syncErrors = new Counter('sync_errors');
 
-const frameGaps = new Counter('frame_gaps');
 const unresolvedObserved = new Counter('unresolved_observed');
 const liveMissed = new Counter('live_missed');
 const finalMissing = new Counter('final_missing');
@@ -288,7 +287,6 @@ function connectWebSocket(ticket, sessionStartCursor, receivedIds, acceptedIds) 
     const connUrl = `${WS_URL}?ticket=${ticket}&room_id=${session.roomId}`;
     const pending = new Map();
     const seenClientMsgIds = new Set();
-    let lastFrameNo = 0;
     let intentionalClose = false;
 
     const connRes = ws.connect(connUrl, { headers: withForwardedFor({}) }, function (socket) {
@@ -337,12 +335,6 @@ function connectWebSocket(ticket, sessionStartCursor, receivedIds, acceptedIds) 
         socket.on('message', function (raw) {
             try {
                 const msg = JSON.parse(raw);
-                if (typeof msg.frame_no === 'number') {
-                    if (lastFrameNo > 0 && msg.frame_no > lastFrameNo + 1) {
-                        frameGaps.add(msg.frame_no - lastFrameNo - 1);
-                    }
-                    if (msg.frame_no > lastFrameNo) lastFrameNo = msg.frame_no;
-                }
                 if (msg.id) {
                     receivedIds.add(msg.id);
                     if (msg.id > (session.lastId || '')) session.lastId = msg.id;

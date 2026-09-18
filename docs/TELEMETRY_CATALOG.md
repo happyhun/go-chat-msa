@@ -191,7 +191,7 @@ HTTP/gRPC panic recovery는 `gochat_panic_recovered` counter를 증가시키고 
 | gochat_ws_messages_received_total | counter | - |
 | gochat_ws_messages_rate_limited_total | counter | - |
 | gochat_ws_messages_sent_total | counter | - |
-| gochat_ws_send_queue_dropped_total | counter | - |
+| gochat_ws_send_queue_overflows_total | counter | - |
 | gochat_ws_broadcast_channel_depth | histogram | - |
 | gochat_ws_egress_duration_seconds | histogram | - |
 | gochat_ws_broker_hop_duration_seconds | histogram | - |
@@ -207,6 +207,7 @@ HTTP/gRPC panic recovery는 `gochat_panic_recovered` counter를 증가시키고 
 | gochat_ws_room_events_ignored_total | counter | reason |
 
 - 서비스: websocket-service. active 계열은 현재값이며 `gochat_ws_connections_active`는 QA HPA에도 사용한다.
+- send queue overflow는 세션당 최초 포화 시 한 번 기록하며, 같은 종료는 sessions closed의 `reason=send_queue_overflow`에도 기록한다. 전송하지 못한 전체 프레임 수를 뜻하지 않는다.
 - publish ack의 `status`는 `accepted`, `error`다. 성공은 MongoDB 저장 완료가 아니라 발행 호출의 성공 `PubAck`다.
 - publish failure의 `subject_kind`는 `msg`, `event`, 무시한 room event의 `reason`은 `invalid`, `unknown_type`이다.
 - egress는 서버가 채팅을 받은 시각부터 같은 발신자 ID 세션의 소켓 쓰기 직전까지다. 쓰기 완료 시간은 포함하지 않으며, 같은 사용자가 다른 Pod에도 연결되어 있으면 Pod 간 시계 차이가 섞일 수 있다. hub fan-out은 구독 콜백 도착부터 로컬 세션 큐 적재까지를 수신 Pod의 시계로 측정한다.

@@ -1,7 +1,6 @@
 package hub
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,6 +12,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 )
 
 const (
@@ -24,7 +25,6 @@ const (
 
 type egressPacket struct {
 	data       []byte
-	frameNo    int64
 	senderID   string
 	receivedAt time.Time
 }
@@ -48,9 +48,6 @@ type session struct {
 	publishFunc  publishFunc
 	sendCh       chan egressPacket
 	allowFunc    func(userID, roomID string) bool
-
-	frameNo  int64
-	frameBuf []byte
 
 	mu          sync.RWMutex
 	closed      bool
@@ -206,7 +203,7 @@ func (s *session) writePump(ctx context.Context) {
 				observeEgress(ctx, packet.receivedAt)
 			}
 
-			if err := s.writeFrame(packet); err != nil {
+			if err := s.conn.WriteMessage(websocket.TextMessage, packet.data); err != nil {
 				return
 			}
 			messagesSentTotal.Add(ctx, 1)
@@ -231,36 +228,24 @@ func (s *session) writePump(ctx context.Context) {
 	}
 }
 
-func (s *session) writeFrame(packet egressPacket) error {
-	end := bytes.LastIndexByte(packet.data, '}')
-	if end < 0 {
-		return s.conn.WriteMessage(websocket.TextMessage, packet.data)
-	}
-
-	s.frameBuf = appendFrameNoSuffix(append(s.frameBuf[:0], packet.data[:end]...), packet.frameNo)
-	return s.conn.WriteMessage(websocket.TextMessage, s.frameBuf)
-}
-
 func (s *session) send(ctx context.Context, packet egressPacket) {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
 		return
 	}
-	s.frameNo++
-	packet.frameNo = s.frameNo
-	dropped := false
 
 	select {
 	case s.sendCh <- packet:
+		s.mu.Unlock()
 	default:
-		dropped = true
-	}
-	s.mu.Unlock()
-
-	if dropped {
-		sendQueueDroppedTotal.Add(ctx, 1)
-		slog.WarnContext(ctx, "Send queue full - dropping frame", "sender_id", s.senderID, "session_id", s.id)
+		s.closed = true
+		close(s.sendCh)
+		s.mu.Unlock()
+		_ = s.conn.Close()
+		sendQueueOverflowsTotal.Add(ctx, 1)
+		sessionsClosedTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", "send_queue_overflow")))
+		slog.WarnContext(ctx, "Send queue full - closing session", "sender_id", s.senderID, "session_id", s.id)
 	}
 }
 
@@ -280,6 +265,9 @@ func (s *session) closeWithCode(code int, reason string) {
 	s.closeReason = reason
 
 	close(s.sendCh)
+	if reason != "" {
+		sessionsClosedTotal.Add(context.Background(), 1, metric.WithAttributes(attribute.String("reason", reason)))
+	}
 }
 
 func (s *session) closeMessage() []byte {

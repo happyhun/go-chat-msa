@@ -19,7 +19,7 @@ var (
 	messagesReceivedTotal    metric.Int64Counter
 	messagesRateLimitedTotal metric.Int64Counter
 	messagesSentTotal        metric.Int64Counter
-	sendQueueDroppedTotal    metric.Int64Counter
+	sendQueueOverflowsTotal  metric.Int64Counter
 	broadcastChannelDepth    metric.Float64Histogram
 	egressDuration           metric.Float64Histogram
 	brokerHopDuration        metric.Float64Histogram
@@ -71,10 +71,10 @@ func init() {
 	)
 	warnOnMetricError("gochat_ws_messages_sent", err)
 
-	sendQueueDroppedTotal, err = hubMeter.Int64Counter("gochat_ws_send_queue_dropped",
-		metric.WithDescription("세션 전송 버퍼 포화로 버린 프레임 수"),
+	sendQueueOverflowsTotal, err = hubMeter.Int64Counter("gochat_ws_send_queue_overflows",
+		metric.WithDescription("세션 전송 버퍼 포화로 연결을 종료한 횟수"),
 	)
-	warnOnMetricError("gochat_ws_send_queue_dropped", err)
+	warnOnMetricError("gochat_ws_send_queue_overflows", err)
 
 	broadcastChannelDepth, err = hubMeter.Float64Histogram("gochat_ws_broadcast_channel_depth",
 		metric.WithDescription("메시지 디큐 시점의 브로드캐스트 채널 깊이"),

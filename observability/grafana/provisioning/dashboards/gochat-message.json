@@ -618,7 +618,7 @@
     },
     {
       "id": 15,
-      "title": "Drops and Rate Limits",
+      "title": "Overflows and Rate Limits",
       "type": "timeseries",
       "gridPos": {
         "x": 0,
@@ -632,13 +632,13 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(gochat_ws_send_queue_dropped_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval])) or on() vector(0)",
+          "expr": "sum(rate(gochat_ws_send_queue_overflows_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval])) or on() vector(0)",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "legendFormat": "send queue dropped"
+          "legendFormat": "send queue overflow"
         },
         {
           "expr": "sum(rate(gochat_ws_jetstream_publish_ack_duration_seconds_count{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\",status=\"error\"}[$__rate_interval]))",
@@ -685,11 +685,11 @@
           "calcs": []
         }
       },
-      "description": "WebSocket send queue drops, JetStream publish errors, and message rate limits."
+      "description": "WebSocket send queue overflow disconnects, JetStream publish errors, and message rate limits."
     },
     {
       "id": 16,
-      "title": "Out of Order and Frame Drops",
+      "title": "Out of Order and Queue Overflows",
       "type": "timeseries",
       "gridPos": {
         "x": 0,
@@ -712,13 +712,13 @@
           "legendFormat": "out of order"
         },
         {
-          "expr": "sum(rate(gochat_ws_send_queue_dropped_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval])) or on() vector(0)",
+          "expr": "sum(rate(gochat_ws_send_queue_overflows_total{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval])) or on() vector(0)",
           "refId": "B",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "legendFormat": "frame dropped"
+          "legendFormat": "send queue overflow"
         },
         {
           "expr": "histogram_quantile(0.99, sum by(le) (rate(gochat_ws_reorder_span_seconds_bucket{namespace=~\"$namespace\",pod=~\"$pod\",node=~\"$node\"}[$__rate_interval])))",
@@ -782,7 +782,7 @@
           "calcs": []
         }
       },
-      "description": "Delivery order and per-session frame loss. Most reorders are sub-millisecond gaps between pods; the reorder span distribution sets the sync rewind margin. Dropped frames leave a frame_no gap that the client resyncs."
+      "description": "Delivery order and per-session queue overflow. Most reorders are sub-millisecond gaps between pods; the reorder span distribution sets the sync rewind margin. Send queue overflow closes the affected session so the client reconnects and syncs."
     },
     {
       "id": 17,
