@@ -13,10 +13,10 @@ import (
 var mongoPoolMeter = otel.Meter("go-chat-msa/metrics/mongo-pool")
 
 type mongoPoolCollector struct {
-	checkedOut int64
-	open       int64
-	created    uint64
-	closed     uint64
+	checkedOut atomic.Int64
+	open       atomic.Int64
+	created    atomic.Uint64
+	closed     atomic.Uint64
 }
 
 func NewMongoPoolMonitor() *event.PoolMonitor {
@@ -33,7 +33,7 @@ func (c *mongoPoolCollector) registerMetrics() {
 	_, err = mongoPoolMeter.Int64ObservableGauge("gochat_mongo_pool_checked_out_conns",
 		metric.WithDescription("Number of currently checked-out (in-use) connections."),
 		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
-			o.Observe(atomic.LoadInt64(&c.checkedOut))
+			o.Observe(c.checkedOut.Load())
 			return nil
 		}),
 	)
@@ -43,7 +43,7 @@ func (c *mongoPoolCollector) registerMetrics() {
 	_, err = mongoPoolMeter.Int64ObservableGauge("gochat_mongo_pool_open_conns",
 		metric.WithDescription("Total number of open connections in the pool."),
 		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
-			o.Observe(atomic.LoadInt64(&c.open))
+			o.Observe(c.open.Load())
 			return nil
 		}),
 	)
@@ -53,7 +53,7 @@ func (c *mongoPoolCollector) registerMetrics() {
 	_, err = mongoPoolMeter.Int64ObservableCounter("gochat_mongo_pool_created",
 		metric.WithDescription("Cumulative number of connections created."),
 		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
-			o.Observe(int64(atomic.LoadUint64(&c.created)))
+			o.Observe(int64(c.created.Load()))
 			return nil
 		}),
 	)
@@ -63,7 +63,7 @@ func (c *mongoPoolCollector) registerMetrics() {
 	_, err = mongoPoolMeter.Int64ObservableCounter("gochat_mongo_pool_closed",
 		metric.WithDescription("Cumulative number of connections closed."),
 		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
-			o.Observe(int64(atomic.LoadUint64(&c.closed)))
+			o.Observe(int64(c.closed.Load()))
 			return nil
 		}),
 	)
@@ -75,14 +75,14 @@ func (c *mongoPoolCollector) registerMetrics() {
 func (c *mongoPoolCollector) handleEvent(evt *event.PoolEvent) {
 	switch evt.Type {
 	case event.ConnectionCreated:
-		atomic.AddUint64(&c.created, 1)
-		atomic.AddInt64(&c.open, 1)
+		c.created.Add(1)
+		c.open.Add(1)
 	case event.ConnectionClosed:
-		atomic.AddUint64(&c.closed, 1)
-		atomic.AddInt64(&c.open, -1)
+		c.closed.Add(1)
+		c.open.Add(-1)
 	case event.GetSucceeded:
-		atomic.AddInt64(&c.checkedOut, 1)
+		c.checkedOut.Add(1)
 	case event.ConnectionReturned:
-		atomic.AddInt64(&c.checkedOut, -1)
+		c.checkedOut.Add(-1)
 	}
 }

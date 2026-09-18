@@ -349,7 +349,7 @@ func validateRefreshTokenStoreInput(userID, token string, ttl time.Duration) err
 }
 
 func parseRefreshTokenValidation(result any) (RefreshTokenValidation, error) {
-	values, ok := result.([]interface{})
+	values, ok := result.([]any)
 	if !ok || len(values) != 2 {
 		return RefreshTokenValidation{}, fmt.Errorf("unexpected refresh token validation result: %T", result)
 	}
@@ -376,7 +376,7 @@ func parseRefreshTokenValidation(result any) (RefreshTokenValidation, error) {
 }
 
 func parseRefreshTokenRotation(result any) (RefreshTokenRotation, error) {
-	values, ok := result.([]interface{})
+	values, ok := result.([]any)
 	if !ok || len(values) != 2 {
 		return RefreshTokenRotation{}, fmt.Errorf("unexpected refresh token rotation result: %T", result)
 	}

@@ -81,7 +81,7 @@ func TestRouter_HandleCreateUser(t *testing.T) {
 
 			r := &Router{
 				userClient: mockUserClient,
-				config:     &Config{AppConfig: config.AppConfig{Env: "test"}},
+				config:     &Config{Env: "test"},
 			}
 
 			handler := http.HandlerFunc(r.handleCreateUser)
@@ -189,7 +189,7 @@ func TestRouter_HandleVerifyUser(t *testing.T) {
 			r := &Router{
 				userClient: mockUserClient,
 				config: &Config{
-					AppConfig: config.AppConfig{Env: "test"},
+					Env: "test",
 					UserService: config.UserConfig{
 						Token: config.TokenConfig{
 							RefreshTokenExpirationDays: 7,
@@ -320,7 +320,7 @@ func TestRouter_HandleDeleteUser(t *testing.T) {
 			r := &Router{
 				userClient: mockUserClient,
 				config: &Config{
-					AppConfig: config.AppConfig{Env: "test"},
+					Env: "test",
 				},
 			}
 
@@ -437,7 +437,7 @@ func TestRouter_HandleBatchGetUsers(t *testing.T) {
 
 			r := &Router{
 				userClient: mockUserClient,
-				config:     &Config{AppConfig: config.AppConfig{Env: "test"}},
+				config:     &Config{Env: "test"},
 			}
 
 			w := httptest.NewRecorder()

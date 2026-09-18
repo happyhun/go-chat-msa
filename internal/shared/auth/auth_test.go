@@ -52,12 +52,10 @@ func TestVerifyJWT(t *testing.T) {
 
 	validClaims := func() UserClaims {
 		return UserClaims{
-			Username: "testuser",
-			RegisteredClaims: jwt.RegisteredClaims{
-				Subject:   "user123",
-				ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
-				IssuedAt:  jwt.NewNumericDate(time.Now()),
-			},
+			Username:  "testuser",
+			Subject:   "user123",
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
 		}
 	}
 

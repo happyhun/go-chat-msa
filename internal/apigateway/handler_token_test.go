@@ -67,7 +67,7 @@ func TestRouter_HandleRefreshToken(t *testing.T) {
 			r := &Router{
 				userClient: mockUserClient,
 				config: &Config{
-					AppConfig: config.AppConfig{Env: "test"},
+					Env: "test",
 					UserService: config.UserConfig{
 						Token: config.TokenConfig{
 							RefreshTokenExpirationDays: 7,
@@ -127,7 +127,7 @@ func TestRouter_HandleRevokeToken(t *testing.T) {
 
 			r := &Router{
 				userClient: mockUserClient,
-				config:     &Config{AppConfig: config.AppConfig{Env: "test"}},
+				config:     &Config{Env: "test"},
 			}
 			handler := http.HandlerFunc(r.handleRevokeToken)
 

@@ -98,7 +98,7 @@ func TestRouter_HandleListJoinedRooms(t *testing.T) {
 			r := &Router{
 				userClient: mockUserClient,
 				jwtSecret:  jwtSecret,
-				config:     &Config{AppConfig: config.AppConfig{Env: "test"}},
+				config:     &Config{Env: "test"},
 			}
 
 			mux := http.NewServeMux()
@@ -181,7 +181,7 @@ func TestRouter_HandleCreateRoom(t *testing.T) {
 			r := &Router{
 				userClient: mockUserClient,
 				jwtSecret:  jwtSecret,
-				config:     &Config{AppConfig: config.AppConfig{Env: "test"}},
+				config:     &Config{Env: "test"},
 			}
 
 			mux := http.NewServeMux()
@@ -266,7 +266,7 @@ func TestRouter_HandleDeleteRoom(t *testing.T) {
 				jwtSecret:  jwtSecret,
 				httpClient: &http.Client{Timeout: 2 * time.Second},
 				config: &Config{
-					AppConfig: config.AppConfig{Env: "test"},
+					Env: "test",
 					Registry: ServiceRegistry{
 						WebSocket: config.HostConfig{Host: "mock-websocket-service"},
 					},
@@ -347,9 +347,9 @@ func TestRouter_HandleJoinRoom(t *testing.T) {
 				jwtSecret:  jwtSecret,
 				httpClient: &http.Client{Timeout: 1 * time.Second},
 				config: &Config{
-					AppConfig: config.AppConfig{Env: "test"},
-					Registry:  ServiceRegistry{WebSocket: config.HostConfig{Host: "localhost"}},
-					Port:      config.PortConfig{WebSocket: "8080"},
+					Env:      "test",
+					Registry: ServiceRegistry{WebSocket: config.HostConfig{Host: "localhost"}},
+					Port:     config.PortConfig{WebSocket: "8080"},
 				},
 			}
 
@@ -424,9 +424,9 @@ func TestRouter_HandleLeaveRoom(t *testing.T) {
 				jwtSecret:  jwtSecret,
 				httpClient: &http.Client{Timeout: 1 * time.Second},
 				config: &Config{
-					AppConfig: config.AppConfig{Env: "test"},
-					Registry:  ServiceRegistry{WebSocket: config.HostConfig{Host: "localhost"}},
-					Port:      config.PortConfig{WebSocket: "8080"},
+					Env:      "test",
+					Registry: ServiceRegistry{WebSocket: config.HostConfig{Host: "localhost"}},
+					Port:     config.PortConfig{WebSocket: "8080"},
 				},
 			}
 
@@ -548,7 +548,7 @@ func TestRouter_HandleSearchRooms(t *testing.T) {
 			r := &Router{
 				userClient: mockUserClient,
 				config: &Config{
-					AppConfig: config.AppConfig{Env: "test"},
+					Env: "test",
 					UserService: config.UserConfig{
 						Search: config.SearchConfig{
 							DefaultLimit: 20,
