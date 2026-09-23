@@ -638,8 +638,6 @@ go test -count=1 -tags=integration,e2e ./...
 
 `test` overlay는 주요 gateway/service를 `replicas: 2`로 고정합니다. HPA를 바로 붙이면 replica 변화와 부하 변화가 섞여 실패 원인을 좁히기 어렵습니다. 고정 replica에서 정합성을 확인한 뒤, `qa` overlay에서 WebSocket HPA 조건을 검증합니다.
 
-E2E는 PostgreSQL 데이터를 truncate하고 MongoDB 문서를 `deleteMany`로 지워 인덱스를 유지합니다. Redis는 인증·티켓·처리율 제한 등 테스트가 만든 키만 지웁니다. NATS StatefulSet의 준비 상태도 확인하며, 저장 장애 시나리오는 MongoDB 중단·복구, chat-service 재시작·replica 변경, 같은 PVC를 사용하는 NATS 재시작 후 수락 메시지의 최종 저장을 확인합니다.
-
 ### 4.8 K6 부하와 HPA 정합성 검증
 
 부하 테스트는 목적별로 분리합니다.
