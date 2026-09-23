@@ -185,7 +185,7 @@ export default function ChatPage() {
   }, [ensureSendersLoaded, updateLastId, userId, roomId])
   const { recover, exhausted } = useMessageSync(roomId!, userId ?? '', lastIdRef, onSyncMessages)
 
-  const onReconnected = useCallback(() => {
+  const onConnected = useCallback(() => {
     recover()
     fetchMembers()
   }, [recover, fetchMembers])
@@ -213,7 +213,7 @@ export default function ChatPage() {
   const { connected, reconnecting, connect, disconnect, send } = useWebSocket({
     roomId: roomId!,
     onMessage,
-    onReconnected,
+    onConnected,
     onGaveUp,
   })
 
@@ -253,10 +253,6 @@ export default function ChatPage() {
         setLoading(false)
 
         await connect()
-        if (cancelled) return
-
-        const fromId = lastIdRef.current
-        recover(fromId)
       } catch (err) {
         if (cancelled) return
         setLoading(false)
@@ -449,7 +445,7 @@ export default function ChatPage() {
         <div className="bg-amber-50 border-b border-amber-100 text-amber-800 text-xs">
           <div className="max-w-4xl mx-auto px-4 py-2">
             {reconnectNotice === 'long'
-              ? '연결 복구가 지연되고 있습니다. 보낸 메시지는 재연결 후 전송됩니다.'
+              ? '연결 복구가 지연되고 있습니다. 작성 중인 메시지는 연결 후 직접 보내 주세요.'
               : '채팅방 재접속 중입니다'}
           </div>
         </div>
@@ -627,7 +623,7 @@ export default function ChatPage() {
                   ? '채팅방을 불러온 후 메시지를 보낼 수 있습니다'
                   : connected
                     ? '메시지를 입력하세요...'
-                    : '실시간 연결과 관계없이 메시지를 보낼 수 있습니다...'
+                    : '연결을 기다리는 중입니다. 메시지를 미리 작성할 수 있습니다.'
               }
               disabled={Boolean(loadError)}
               className="flex-1 px-4 py-2.5 bg-gray-100 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none overflow-y-auto leading-5"

@@ -10,11 +10,11 @@ export type WebSocketStopReason = 'auth' | 'rate_limited' | 'connection_failed'
 interface UseWebSocketOptions {
   roomId: string
   onMessage: (msg: WsOutgoing) => void
-  onReconnected?: () => void
+  onConnected?: () => void
   onGaveUp?: (reason: WebSocketStopReason) => void
 }
 
-export function useWebSocket({ roomId, onMessage, onReconnected, onGaveUp }: UseWebSocketOptions) {
+export function useWebSocket({ roomId, onMessage, onConnected, onGaveUp }: UseWebSocketOptions) {
   const [connected, setConnected] = useState(false)
   const [reconnecting, setReconnecting] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
@@ -22,12 +22,12 @@ export function useWebSocket({ roomId, onMessage, onReconnected, onGaveUp }: Use
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const enabled = useRef(false)
   const generation = useRef(0)
-  const callbacks = useRef({ onMessage, onReconnected, onGaveUp })
+  const callbacks = useRef({ onMessage, onConnected, onGaveUp })
   const connectRef = useRef<() => Promise<void>>(async () => {})
 
   useEffect(() => {
-    callbacks.current = { onMessage, onReconnected, onGaveUp }
-  }, [onMessage, onReconnected, onGaveUp])
+    callbacks.current = { onMessage, onConnected, onGaveUp }
+  }, [onMessage, onConnected, onGaveUp])
 
   const scheduleReconnect = useCallback(() => {
     if (!enabled.current) return
@@ -70,11 +70,10 @@ export function useWebSocket({ roomId, onMessage, onReconnected, onGaveUp }: Use
           resolve()
           return
         }
-        const wasReconnect = attempts.current > 0
         openedAt = performance.now()
         setConnected(true)
         setReconnecting(false)
-        if (wasReconnect) callbacks.current.onReconnected?.()
+        callbacks.current.onConnected?.()
         resolve()
       }
       ws.onmessage = (event) => {

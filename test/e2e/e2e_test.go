@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/sync/errgroup"
@@ -827,6 +828,107 @@ func (s *E2ESuite) TestScenario_16_ReconnectCatchUpFromDatabaseHistory() {
 }
 
 const zeroMessageCursor = "00000000-0000-0000-0000-000000000000"
+
+func (s *E2ESuite) TestScenario_17_DurableAcceptanceAndRestartRecovery() {
+	ctx := s.T().Context()
+	s.Require().NoError(s.setMongoProxyEnabled(ctx, true))
+	password := "SecurePass123!"
+	alice, bob := s.generateUniqueUsername("da"), s.generateUniqueUsername("db")
+	for _, username := range []string{alice, bob} {
+		s.Require().NoError(s.signUp(ctx, username, password))
+	}
+	aliceToken, _, err := s.login(ctx, alice, password)
+	s.Require().NoError(err)
+	bobToken, _, err := s.login(ctx, bob, password)
+	s.Require().NoError(err)
+	roomID, err := s.createRoom(ctx, aliceToken, "Durable recovery")
+	s.Require().NoError(err)
+	s.Require().NoError(s.makeRequest(ctx, http.MethodPut, "/rooms/"+roomID+"/members/me", nil, nil, bobToken))
+	aliceConn, _, err := s.dialWS(ctx, aliceToken, roomID)
+	s.Require().NoError(err)
+	defer func() {
+		if aliceConn != nil {
+			_ = aliceConn.Close()
+		}
+	}()
+	bobConn, _, err := s.dialWS(ctx, bobToken, roomID)
+	s.Require().NoError(err)
+	defer func() { _ = bobConn.Close() }()
+	clientID := uuid.NewString()
+	accepted := make(map[string]bool)
+	send := func(conn *websocket.Conn, content, clientID string) string {
+		s.Require().NoError(conn.WriteJSON(map[string]string{"type": "chat", "content": content, "client_msg_id": clientID}))
+		message, err := s.waitForWSMessage(ctx, aliceConn, "chat", content, 10*time.Second)
+		s.Require().NoError(err)
+		s.Require().Equal(clientID, message["client_msg_id"])
+		id := messageID(message)
+		s.Require().NotEmpty(id)
+		accepted[id] = true
+		return id
+	}
+	firstID := send(aliceConn, "alice before outage", clientID)
+	s.Require().NoError(aliceConn.WriteJSON(map[string]string{"type": "chat", "content": "alice before outage", "client_msg_id": clientID}))
+	s.Require().NotEqual(firstID, send(bobConn, "bob before outage", clientID))
+	s.Require().NoError(aliceConn.Close())
+	s.Require().NoError(bobConn.Close())
+	s.requirePersistedMessages(ctx, aliceToken, roomID, accepted)
+	mongoIdentity, err := s.mongoProcessIdentity(ctx)
+	s.Require().NoError(err)
+	s.Require().NotEmpty(mongoIdentity)
+	replicas, err := s.kubectlOutput(ctx, "-n", s.namespace, "get", "deployment/chat-service", "-o", "jsonpath={.spec.replicas}")
+	s.Require().NoError(err)
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer cancel()
+		s.NoError(s.setMongoProxyEnabled(cleanupCtx, true), "restore MongoDB connectivity")
+		s.NoError(s.runKubectl(cleanupCtx, "-n", s.namespace, "scale", "deployment/chat-service", "--replicas="+replicas))
+		s.NoError(s.runKubectl(cleanupCtx, "-n", s.namespace, "rollout", "status", "deployment/chat-service", "--timeout=120s"))
+	}()
+	for _, scenario := range []string{"mongo-recovery", "worker-restart", "worker-scale-in"} {
+		s.T().Logf("starting %s", scenario)
+		aliceConn, _, err = s.dialWS(ctx, aliceToken, roomID)
+		s.Require().NoError(err)
+		s.Require().NoError(s.setMongoProxyEnabled(ctx, false))
+		s.Require().EventuallyWithT(func(c *assert.CollectT) {
+			// Probe through the Service; the MongoDB liveness probe bypasses the proxy.
+			err := s.runKubectl(ctx, "-n", s.namespace, "exec", "deployment/mongo", "-c", "mongo", "--",
+				"mongosh", "mongodb://mongo:27017/?serverSelectionTimeoutMS=1000", "--quiet", "--eval", "db.adminCommand('ping')")
+			assert.Error(c, err, "MongoDB service must be unreachable before sending")
+		}, 10*time.Second, time.Second)
+		for i := range 8 {
+			send(aliceConn, fmt.Sprintf("%s-%d", scenario, i), uuid.NewString())
+			time.Sleep(300 * time.Millisecond)
+		}
+		s.Require().NoError(aliceConn.Close())
+		counts, err := s.persistenceStreamCounts(ctx)
+		s.Require().NoError(err)
+		s.Require().GreaterOrEqual(counts["CHAT_PERSIST"], uint64(8))
+		s.Require().Zero(counts["CHAT_PERSIST_DLQ"])
+		switch scenario {
+		case "worker-restart":
+			s.Require().NoError(s.runKubectl(ctx, "-n", s.namespace, "rollout", "restart", "deployment/chat-service"))
+			s.Require().NoError(s.runKubectl(ctx, "-n", s.namespace, "rollout", "status", "deployment/chat-service", "--timeout=180s"))
+		case "worker-scale-in":
+			for _, replicas := range []int{3, 1} {
+				s.Require().NoError(s.runKubectl(ctx, "-n", s.namespace, "scale", "deployment/chat-service", fmt.Sprintf("--replicas=%d", replicas)))
+				s.Require().NoError(s.runKubectl(ctx, "-n", s.namespace, "rollout", "status", "deployment/chat-service", "--timeout=180s"))
+				s.requireDeploymentReadyReplicas(ctx, "chat-service", replicas)
+			}
+
+		}
+		counts, err = s.persistenceStreamCounts(ctx)
+		s.Require().NoError(err)
+		s.Require().Equal(uint64(8), counts["CHAT_PERSIST"], "unpersisted messages must remain unacknowledged during the fault")
+		s.Require().Zero(counts["CHAT_PERSIST_DLQ"])
+		recoveryStarted := time.Now()
+		s.Require().NoError(s.setMongoProxyEnabled(ctx, true))
+		s.requirePersistedMessages(ctx, aliceToken, roomID, accepted)
+		restoredIdentity, err := s.mongoProcessIdentity(ctx)
+		s.Require().NoError(err)
+		s.Require().Equal(mongoIdentity, restoredIdentity, "MongoDB pod and process must survive connection faults")
+		s.T().Logf("%s: accepted=%d, missing=0, duplicate=0, pending=0, DLQ=0, recovery=%s", scenario, len(accepted), time.Since(recoveryStarted).Round(time.Millisecond))
+	}
+}
 
 func messageID(msg map[string]any) string {
 	id, _ := msg["id"].(string)

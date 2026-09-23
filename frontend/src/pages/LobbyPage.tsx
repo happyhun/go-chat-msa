@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { searchRooms, joinRoom, listJoinedRooms, ApiError } from '../api/client'
 import { useToast } from '../context/toast'
@@ -23,15 +23,19 @@ export default function LobbyPage() {
   const [error, setError] = useState('')
   const navigate = useNavigate()
   const toast = useToast()
+  const searchRequest = useRef({ id: 0 })
 
   const fetchRooms = useCallback(async (q: string, p: number) => {
+    const requestId = ++searchRequest.current.id
     setLoading(true)
     setError('')
     try {
       const data = await searchRooms(q, PAGE_SIZE, p * PAGE_SIZE)
+      if (requestId !== searchRequest.current.id) return
       setRooms(data.rooms ?? [])
       setTotalCount(data.total_count)
     } catch (err) {
+      if (requestId !== searchRequest.current.id) return
       setError(
         err instanceof ApiError
           ? err.message
@@ -40,7 +44,7 @@ export default function LobbyPage() {
       setRooms([])
       setTotalCount(0)
     } finally {
-      setLoading(false)
+      if (requestId === searchRequest.current.id) setLoading(false)
     }
   }, [])
 
@@ -54,8 +58,10 @@ export default function LobbyPage() {
   }, [])
 
   useEffect(() => {
+    const request = searchRequest.current
     fetchRooms('', 0)
     fetchJoined()
+    return () => { request.id++ }
   }, [fetchRooms, fetchJoined])
 
   const handleSearch = (e: React.FormEvent) => {

@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/stretchr/testify/assert"
 )
 
 const (
@@ -249,4 +250,101 @@ func (s *E2ESuite) generateUniqueUsername(prefix string) string {
 	b := make([]byte, randBytes)
 	rand.Read(b)
 	return fmt.Sprintf("%s%x", prefix, b)
+}
+
+func (s *E2ESuite) requirePersistedMessages(ctx context.Context, token, roomID string, accepted map[string]bool) {
+	s.T().Helper()
+	s.Require().EventuallyWithT(func(c *assert.CollectT) {
+		var response struct {
+			Messages []map[string]any `json:"messages"`
+		}
+		if !assert.NoError(c, s.makeRequest(ctx, http.MethodGet, "/rooms/"+roomID+"/messages?limit=100", nil, &response, token)) {
+			return
+		}
+		actual := make(map[string]bool)
+		for _, message := range response.Messages {
+			actual[messageID(message)] = true
+		}
+		assert.Len(c, response.Messages, len(accepted))
+		assert.Equal(c, accepted, actual)
+		counts, err := s.persistenceStreamCounts(ctx)
+		if assert.NoError(c, err) {
+			assert.Zero(c, counts["CHAT_PERSIST"])
+			assert.Zero(c, counts["CHAT_PERSIST_DLQ"])
+		}
+	}, 90*time.Second, time.Second)
+}
+
+func (s *E2ESuite) mongoProcessIdentity(ctx context.Context) (string, error) {
+	return s.kubectlOutput(ctx, "-n", s.namespace, "get", "pods", "-l", "app.kubernetes.io/name=mongo", "-o",
+		`jsonpath={range .items[*]}{.metadata.uid}{"/"}{.status.containerStatuses[?(@.name=="mongo")].containerID}{end}`)
+}
+
+func (s *E2ESuite) mongoProxyEnabled(ctx context.Context) (bool, error) {
+	out, err := s.kubectlOutput(ctx, "-n", s.namespace, "exec", "deployment/mongo", "-c", "mongo-proxy", "--", "/toxiproxy-cli", "list")
+	if err != nil {
+		return false, fmt.Errorf("MongoDB fault proxy unavailable; bootstrap the test overlay: %w", err)
+	}
+	for line := range strings.SplitSeq(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 4 && fields[0] == "mongo" {
+			switch fields[3] {
+			case "enabled":
+				return true, nil
+			case "disabled":
+				return false, nil
+			}
+		}
+	}
+	return false, fmt.Errorf("unexpected MongoDB proxy state: %q", out)
+}
+
+func (s *E2ESuite) setMongoProxyEnabled(ctx context.Context, enabled bool) error {
+	current, err := s.mongoProxyEnabled(ctx)
+	if err != nil || current == enabled {
+		return err
+	}
+	if err := s.runKubectl(ctx, "-n", s.namespace, "exec", "deployment/mongo", "-c", "mongo-proxy", "--", "/toxiproxy-cli", "toggle", "mongo"); err != nil {
+		return err
+	}
+	current, err = s.mongoProxyEnabled(ctx)
+	if err != nil {
+		return err
+	}
+	if current != enabled {
+		return fmt.Errorf("MongoDB proxy enabled=%t, want %t", current, enabled)
+	}
+	return nil
+}
+
+func (s *E2ESuite) persistenceStreamCounts(ctx context.Context) (map[string]uint64, error) {
+	out, err := s.kubectlOutput(ctx, "-n", s.namespace, "exec", "pod/nats-0", "-c", "nats", "--", "wget", "-qO-", "http://127.0.0.1:8222/jsz?streams=true")
+	if err != nil {
+		return nil, err
+	}
+	var response struct {
+		Accounts []struct {
+			Streams []struct {
+				Name  string `json:"name"`
+				State struct {
+					Messages uint64 `json:"messages"`
+				} `json:"state"`
+			} `json:"stream_detail"`
+		} `json:"account_details"`
+	}
+	if err := json.Unmarshal([]byte(out), &response); err != nil {
+		return nil, err
+	}
+	counts := make(map[string]uint64)
+	for _, account := range response.Accounts {
+		for _, stream := range account.Streams {
+			counts[stream.Name] = stream.State.Messages
+		}
+	}
+	for _, name := range []string{"CHAT_PERSIST", "CHAT_PERSIST_DLQ"} {
+		if _, ok := counts[name]; !ok {
+			return nil, fmt.Errorf("stream %s missing from monitoring response", name)
+		}
+	}
+	return counts, nil
 }

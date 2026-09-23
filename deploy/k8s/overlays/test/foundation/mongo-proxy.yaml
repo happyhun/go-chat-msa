@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mongo
+spec:
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/default-container: mongo
+    spec:
+      containers:
+        - name: mongo
+          resources:
+            requests:
+              memory: 256Mi
+            limits:
+              memory: 768Mi
+        - name: mongo-proxy
+          image: ghcr.io/shopify/toxiproxy:2.12.0
+          imagePullPolicy: IfNotPresent
+          args: ["-host=0.0.0.0", "-config=/config/proxies.json"]
+          ports:
+            - name: mongo-proxy
+              containerPort: 27018
+            - name: proxy-admin
+              containerPort: 8474
+          volumeMounts:
+            - name: mongo-proxy-config
+              mountPath: /config
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /version
+              port: proxy-admin
+            periodSeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /version
+              port: proxy-admin
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+      volumes:
+        - name: mongo-proxy-config
+          configMap:
+            name: mongo-proxy-config

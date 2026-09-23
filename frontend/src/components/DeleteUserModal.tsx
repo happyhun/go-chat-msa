@@ -46,7 +46,7 @@ export default function DeleteUserModal({ onConfirm, onCancel }: Props) {
   const handleFocusTrap = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key !== 'Tab') return
     const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
-      'input, button, [tabindex]:not([tabindex="-1"])',
+      'input:not(:disabled), button:not(:disabled), [tabindex]:not([tabindex="-1"]):not(:disabled)',
     )
     if (!focusable || focusable.length === 0) return
     const first = focusable[0]
