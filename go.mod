@@ -2,6 +2,8 @@ module go-chat-msa
 
 go 1.27
 
+ignore ./frontend
+
 require (
 	github.com/alicebob/miniredis/v2 v2.39.0
 	github.com/go-playground/validator/v10 v10.30.5

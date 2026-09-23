@@ -15,7 +15,7 @@ func TestInternalAuthMiddleware(t *testing.T) {
 
 	const secret = "test-internal-secret"
 
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 	handler := InternalAuthMiddleware(secret)(next)

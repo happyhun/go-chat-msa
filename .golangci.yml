@@ -6,7 +6,27 @@ linters:
     - revive
     - gocritic
     - gosec
+  settings:
+    revive:
+      enable-default-rules: true
+      rules:
+        - name: exported
+          disabled: true
+        - name: package-comments
+          disabled: true
+  exclusions:
+    paths:
+      - '^frontend/'
+    rules:
+      # Request cookies do not carry response-only security attributes.
+      - path: '^internal/apigateway/handler_token_test\.go$'
+        linters:
+          - gosec
+        text: 'G124:'
 
 formatters:
   enable:
     - goimports
+  exclusions:
+    paths:
+      - '^frontend/'

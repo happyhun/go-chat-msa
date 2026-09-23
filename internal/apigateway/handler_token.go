@@ -80,6 +80,7 @@ func (r *Router) handleCreateWSTicket(w http.ResponseWriter, req *http.Request) 
 }
 
 func (r *Router) setRefreshTokenCookie(w http.ResponseWriter, token string) {
+	// #nosec G124 -- Secure is enabled in production; local HTTP development is supported.
 	http.SetCookie(w, &http.Cookie{
 		Name:     "refresh_token",
 		Value:    token,
@@ -92,6 +93,7 @@ func (r *Router) setRefreshTokenCookie(w http.ResponseWriter, token string) {
 }
 
 func (r *Router) clearRefreshTokenCookie(w http.ResponseWriter) {
+	// #nosec G124 -- Match the production/development security attributes of the issued cookie.
 	http.SetCookie(w, &http.Cookie{
 		Name:     "refresh_token",
 		Value:    "",

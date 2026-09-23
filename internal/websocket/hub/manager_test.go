@@ -274,7 +274,7 @@ func TestManager_ReconnectWaitsForSessionPumps(t *testing.T) {
 		return nil
 	}
 	server, client := createTestWSPair(t)
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	require.NoError(t, registration.Commit(t.Context(), server, "user-1"))
 	require.NoError(t, client.WriteJSON(map[string]string{"content": "hello", "client_msg_id": "00000000-0000-4000-8000-000000000001"}))
 	select {
@@ -285,7 +285,7 @@ func TestManager_ReconnectWaitsForSessionPumps(t *testing.T) {
 	other, err := m.PrepareRegister(t.Context(), "room-2")
 	require.NoError(t, err)
 	otherServer, otherClient := createTestWSPair(t)
-	defer otherClient.Close()
+	defer func() { _ = otherClient.Close() }()
 	require.NoError(t, other.Commit(t.Context(), otherServer, "user-2"))
 	pending, err := m.PrepareRegister(t.Context(), "room-3")
 	require.NoError(t, err)

@@ -72,7 +72,7 @@ func TestService_ListMessages(t *testing.T) {
 		},
 		{
 			name:    "Failure: 룸 ID 누락 (InvalidArgument)",
-			mock:    func(m *mocks.MockRepository) {},
+			mock:    func(_ *mocks.MockRepository) {},
 			req:     &pb.ListMessagesRequest{RoomId: ""},
 			wantErr: true,
 			code:    codes.InvalidArgument,
@@ -160,14 +160,14 @@ func TestService_SyncMessages(t *testing.T) {
 		},
 		{
 			name:    "Failure: after_message_id 형식 오류 (InvalidArgument)",
-			mock:    func(m *mocks.MockRepository) {},
+			mock:    func(_ *mocks.MockRepository) {},
 			req:     &pb.SyncMessagesRequest{RoomId: "r1", AfterMessageId: "not-a-uuid"},
 			wantErr: true,
 			code:    codes.InvalidArgument,
 		},
 		{
 			name:    "Failure: 룸 ID 누락 (InvalidArgument)",
-			mock:    func(m *mocks.MockRepository) {},
+			mock:    func(_ *mocks.MockRepository) {},
 			req:     &pb.SyncMessagesRequest{RoomId: ""},
 			wantErr: true,
 			code:    codes.InvalidArgument,

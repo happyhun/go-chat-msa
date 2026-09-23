@@ -258,7 +258,8 @@ func (r *Router) handleDeleteRoom(w http.ResponseWriter, req *http.Request) {
 		defer cancel()
 		defer r.wg.Done()
 
-		url := fmt.Sprintf("%s/internal/rooms/%s/sessions", r.config.WebSocketAddr(), roomID)
+		url := fmt.Sprintf("%s/internal/rooms/%s/sessions", r.config.WebSocketAddr(), url.PathEscape(roomID))
+		// #nosec G704 -- The origin is configured internally; the room ID is an escaped path segment.
 		proxyReq, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
 		if err != nil {
 			slog.ErrorContext(ctx, "Failed to create request for room cleanup", "error", err, "room_id", roomID)
@@ -266,6 +267,7 @@ func (r *Router) handleDeleteRoom(w http.ResponseWriter, req *http.Request) {
 		}
 		proxyReq.Header.Set("X-Internal-Secret", r.config.Internal.Secret)
 
+		// #nosec G704 -- The internal client disables redirects and uses the configured WebSocket origin.
 		resp, err := r.httpClient.Do(proxyReq)
 		if err != nil {
 			slog.WarnContext(ctx, "Failed to close room sessions via websocket-service", "error", err, "room_id", roomID)
@@ -369,7 +371,7 @@ func (r *Router) handleListMessages(w http.ResponseWriter, req *http.Request) {
 		resp, err := r.chatClient.SyncMessages(req.Context(), &chatpb.SyncMessagesRequest{
 			RoomId:         roomID,
 			AfterMessageId: afterID,
-			Limit:          int32(limit),
+			Limit:          limit,
 			JoinedAt:       joinedAt,
 		})
 		if err != nil {
@@ -385,7 +387,7 @@ func (r *Router) handleListMessages(w http.ResponseWriter, req *http.Request) {
 
 	resp, err := r.chatClient.ListMessages(req.Context(), &chatpb.ListMessagesRequest{
 		RoomId:   roomID,
-		Limit:    int32(limit),
+		Limit:    limit,
 		JoinedAt: joinedAt,
 	})
 	if err != nil {
@@ -398,7 +400,7 @@ func (r *Router) handleListMessages(w http.ResponseWriter, req *http.Request) {
 	})
 }
 
-func parseMessageLimit(query url.Values) (int64, error) {
+func parseMessageLimit(query url.Values) (int32, error) {
 	raw := query.Get("limit")
 	if raw == "" {
 		return 0, nil
@@ -407,7 +409,7 @@ func parseMessageLimit(query url.Values) (int64, error) {
 	if err != nil || limit <= 0 {
 		return 0, fmt.Errorf("invalid limit parameter: %q", raw)
 	}
-	return limit, nil
+	return int32(limit), nil
 }
 
 func messagesFromProto(msgs []*chatpb.Message) []Message {
@@ -491,7 +493,8 @@ func (r *Router) broadcastSystemMessage(ctx context.Context, roomID, username, e
 		return
 	}
 
-	url := fmt.Sprintf("%s/internal/rooms/%s/system-messages", r.config.WebSocketAddr(), roomID)
+	url := fmt.Sprintf("%s/internal/rooms/%s/system-messages", r.config.WebSocketAddr(), url.PathEscape(roomID))
+	// #nosec G704 -- The origin is configured internally; the room ID is an escaped path segment.
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		slog.ErrorContext(ctx, "Failed to create broadcast system message request", "error", err)
@@ -500,6 +503,7 @@ func (r *Router) broadcastSystemMessage(ctx context.Context, roomID, username, e
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Internal-Secret", r.config.Internal.Secret)
 
+	// #nosec G704 -- The internal client disables redirects and uses the configured WebSocket origin.
 	resp, err := r.httpClient.Do(req)
 	if err != nil {
 		slog.ErrorContext(ctx, "Failed to send broadcast system message request", "error", err, "url", url)

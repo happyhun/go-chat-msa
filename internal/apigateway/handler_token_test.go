@@ -43,7 +43,7 @@ func TestRouter_HandleRefreshToken(t *testing.T) {
 		{
 			name:         "Failure: 리프레시 토큰 쿠키 누락",
 			hasCookie:    false,
-			mockBehavior: func(m *mocks.MockUserServiceClient) {},
+			mockBehavior: func(_ *mocks.MockUserServiceClient) {},
 			expectedCode: http.StatusUnauthorized,
 		},
 		{
@@ -114,7 +114,7 @@ func TestRouter_HandleRevokeToken(t *testing.T) {
 		{
 			name:         "Failure: 로그아웃 시 리프레시 토큰 쿠키 누락",
 			hasCookie:    false,
-			mockBehavior: func(m *mocks.MockUserServiceClient) {},
+			mockBehavior: func(_ *mocks.MockUserServiceClient) {},
 			expectedCode: http.StatusUnauthorized,
 		},
 	}

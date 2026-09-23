@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"math/rand/v2"
 	"sync"
 	"sync/atomic"
@@ -211,7 +212,9 @@ func (p *Persistence) observeState(ctx context.Context) {
 	infoCtx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
 	if info, err := p.consumer.Info(infoCtx); err == nil {
-		chatPending.Record(ctx, int64(info.NumPending)+int64(info.NumAckPending))
+		ackPending := int64(max(info.NumAckPending, 0))
+		pending := int64(min(info.NumPending, math.MaxInt64))
+		chatPending.Record(ctx, pending+min(ackPending, math.MaxInt64-pending))
 	}
 	stream, err := p.js.Stream(infoCtx, persistenceStream)
 	if err != nil {
@@ -323,7 +326,7 @@ func (p *Persistence) saveBatch(ctx context.Context, deliveries []jetstream.Msg,
 			success = false
 			attempt := 1
 			if md, me := d.Metadata(); me == nil {
-				attempt = int(md.NumDelivered)
+				attempt = int(min(md.NumDelivered, math.MaxInt))
 			}
 			p.retryMessage(ctx, d, retryDelay(attempt, []time.Duration{250 * time.Millisecond, time.Second, 3 * time.Second}))
 		}
@@ -396,6 +399,7 @@ func (p *Persistence) deadLetter(ctx context.Context, msg jetstream.Msg, reason 
 
 func retryDelay(attempt int, caps []time.Duration) time.Duration {
 	index := min(max(attempt-1, 0), len(caps)-1)
+	// #nosec G404 -- Retry jitter does not require cryptographic randomness.
 	return time.Duration(rand.Int64N(int64(caps[index])))
 }
 

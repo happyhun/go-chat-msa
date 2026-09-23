@@ -69,7 +69,7 @@ func TestService_CreateUser(t *testing.T) {
 		{
 			name: "Failure: 유저네임이 너무 짧은 경우 (InvalidArgument)",
 			fields: fields{
-				mockBehavior: func(m *dbmocks.MockQuerier) {},
+				mockBehavior: func(_ *dbmocks.MockQuerier) {},
 			},
 			req:     &pb.CreateUserRequest{Username: "a", Password: password},
 			wantErr: true,
@@ -78,7 +78,7 @@ func TestService_CreateUser(t *testing.T) {
 		{
 			name: "Failure: 유저네임이 너무 긴 경우 (InvalidArgument)",
 			fields: fields{
-				mockBehavior: func(m *dbmocks.MockQuerier) {},
+				mockBehavior: func(_ *dbmocks.MockQuerier) {},
 			},
 			req:     &pb.CreateUserRequest{Username: "verylongusername", Password: password},
 			wantErr: true,
@@ -87,7 +87,7 @@ func TestService_CreateUser(t *testing.T) {
 		{
 			name: "Failure: 유저네임에 특수문자가 포함된 경우 (InvalidArgument)",
 			fields: fields{
-				mockBehavior: func(m *dbmocks.MockQuerier) {},
+				mockBehavior: func(_ *dbmocks.MockQuerier) {},
 			},
 			req:     &pb.CreateUserRequest{Username: "user!", Password: password},
 			wantErr: true,
@@ -96,7 +96,7 @@ func TestService_CreateUser(t *testing.T) {
 		{
 			name: "Failure: 유저네임에 공백이 포함된 경우 (InvalidArgument)",
 			fields: fields{
-				mockBehavior: func(m *dbmocks.MockQuerier) {},
+				mockBehavior: func(_ *dbmocks.MockQuerier) {},
 			},
 			req:     &pb.CreateUserRequest{Username: "user name", Password: password},
 			wantErr: true,
@@ -122,7 +122,7 @@ func TestService_CreateUser(t *testing.T) {
 		{
 			name: "Failure: 비밀번호가 너무 짧은 경우 (InvalidArgument)",
 			fields: fields{
-				mockBehavior: func(m *dbmocks.MockQuerier) {},
+				mockBehavior: func(_ *dbmocks.MockQuerier) {},
 			},
 			req:     &pb.CreateUserRequest{Username: username, Password: "short"},
 			wantErr: true,
@@ -131,7 +131,7 @@ func TestService_CreateUser(t *testing.T) {
 		{
 			name: "Failure: 비밀번호 최소 길이를 만족하지 못하는 경우 (InvalidArgument)",
 			fields: fields{
-				mockBehavior: func(m *dbmocks.MockQuerier) {},
+				mockBehavior: func(_ *dbmocks.MockQuerier) {},
 			},
 			req:     &pb.CreateUserRequest{Username: username, Password: "Pass1234!"},
 			wantErr: true,
@@ -140,7 +140,7 @@ func TestService_CreateUser(t *testing.T) {
 		{
 			name: "Failure: 비밀번호 복잡도 미달 (2종류만 포함) (InvalidArgument)",
 			fields: fields{
-				mockBehavior: func(m *dbmocks.MockQuerier) {},
+				mockBehavior: func(_ *dbmocks.MockQuerier) {},
 			},
 			req:     &pb.CreateUserRequest{Username: username, Password: "password12345"},
 			wantErr: true,
@@ -404,7 +404,7 @@ func TestService_CreateRoom(t *testing.T) {
 				ManagerId: uid.String(),
 				Capacity:  0,
 			},
-			mockBehavior: func(m *dbmocks.MockQuerier) {},
+			mockBehavior: func(_ *dbmocks.MockQuerier) {},
 			wantErr:      true,
 			errCode:      codes.InvalidArgument,
 		},
@@ -415,7 +415,7 @@ func TestService_CreateRoom(t *testing.T) {
 				ManagerId: uid.String(),
 				Capacity:  1001,
 			},
-			mockBehavior: func(m *dbmocks.MockQuerier) {},
+			mockBehavior: func(_ *dbmocks.MockQuerier) {},
 			wantErr:      true,
 			errCode:      codes.InvalidArgument,
 		},
@@ -426,7 +426,7 @@ func TestService_CreateRoom(t *testing.T) {
 				ManagerId: uid.String(),
 				Capacity:  10,
 			},
-			mockBehavior: func(m *dbmocks.MockQuerier) {},
+			mockBehavior: func(_ *dbmocks.MockQuerier) {},
 			wantErr:      true,
 			errCode:      codes.InvalidArgument,
 		},
@@ -644,7 +644,7 @@ func TestService_SearchRooms(t *testing.T) {
 		{
 			name: "Failure: 검색 제한 상한 초과 (InvalidArgument)",
 			req:  &pb.SearchRoomsRequest{Query: "test", Limit: 101, Offset: 0},
-			mockBehavior: func(m *dbmocks.MockQuerier) {
+			mockBehavior: func(_ *dbmocks.MockQuerier) {
 
 			},
 			wantCount:  0,
@@ -841,7 +841,7 @@ func TestService_UpdateRoom(t *testing.T) {
 				Capacity:    500,
 				RequesterId: managerID.String(),
 			},
-			mockBehavior: func(m *dbmocks.MockQuerier) {},
+			mockBehavior: func(_ *dbmocks.MockQuerier) {},
 			wantErr:      true,
 			errCode:      codes.InvalidArgument,
 		},
@@ -853,7 +853,7 @@ func TestService_UpdateRoom(t *testing.T) {
 				Capacity:    500,
 				RequesterId: managerID.String(),
 			},
-			mockBehavior: func(m *dbmocks.MockQuerier) {},
+			mockBehavior: func(_ *dbmocks.MockQuerier) {},
 			wantErr:      true,
 			errCode:      codes.InvalidArgument,
 		},
@@ -865,7 +865,7 @@ func TestService_UpdateRoom(t *testing.T) {
 				Capacity:    0,
 				RequesterId: managerID.String(),
 			},
-			mockBehavior: func(m *dbmocks.MockQuerier) {},
+			mockBehavior: func(_ *dbmocks.MockQuerier) {},
 			wantErr:      true,
 			errCode:      codes.InvalidArgument,
 		},
@@ -877,7 +877,7 @@ func TestService_UpdateRoom(t *testing.T) {
 				Capacity:    1001,
 				RequesterId: managerID.String(),
 			},
-			mockBehavior: func(m *dbmocks.MockQuerier) {},
+			mockBehavior: func(_ *dbmocks.MockQuerier) {},
 			wantErr:      true,
 			errCode:      codes.InvalidArgument,
 		},
@@ -1080,7 +1080,7 @@ func TestService_DeleteRoom(t *testing.T) {
 				RoomId:      "invalid-uuid",
 				RequesterId: managerID.String(),
 			},
-			mockBehavior: func(m *dbmocks.MockQuerier) {},
+			mockBehavior: func(_ *dbmocks.MockQuerier) {},
 			wantErr:      true,
 			errCode:      codes.InvalidArgument,
 		},
@@ -1090,7 +1090,7 @@ func TestService_DeleteRoom(t *testing.T) {
 				RoomId:      roomID.String(),
 				RequesterId: "invalid-uuid",
 			},
-			mockBehavior: func(m *dbmocks.MockQuerier) {},
+			mockBehavior: func(_ *dbmocks.MockQuerier) {},
 			wantErr:      true,
 			errCode:      codes.InvalidArgument,
 		},
@@ -1186,7 +1186,7 @@ func createTestService(t testing.TB, mockQueries db.Querier) *Service {
 	t.Cleanup(h.Close)
 	return NewService(mockQueries, cfg, "test_secret", h).
 		WithRefreshTokenStore(&fakeRefreshTokenStore{}).
-		WithRunInTx(func(ctx context.Context, fn func(db.Querier) error) error {
+		WithRunInTx(func(_ context.Context, fn func(db.Querier) error) error {
 			return fn(mockQueries)
 		})
 }
@@ -1277,7 +1277,7 @@ func TestService_RefreshToken(t *testing.T) {
 		{
 			name:         "Failure: 존재하지 않는 리프레시 토큰 (Unauthenticated)",
 			req:          &pb.RefreshTokenRequest{RefreshToken: "invalid_token"},
-			mockBehavior: func(m *dbmocks.MockQuerier) {},
+			mockBehavior: func(_ *dbmocks.MockQuerier) {},
 			tokenStore: &fakeRefreshTokenStore{
 				validateFunc: func(context.Context, string) (RefreshTokenValidation, error) {
 					return RefreshTokenValidation{Status: RefreshTokenValidationInvalid}, nil
@@ -1306,7 +1306,7 @@ func TestService_RefreshToken(t *testing.T) {
 		{
 			name:         "Failure: 이미 사용된 토큰 재사용 시도 차단 (Reuse Detection - Unauthenticated)",
 			req:          &pb.RefreshTokenRequest{RefreshToken: "revoked_token"},
-			mockBehavior: func(m *dbmocks.MockQuerier) {},
+			mockBehavior: func(_ *dbmocks.MockQuerier) {},
 			tokenStore: &fakeRefreshTokenStore{
 				validateFunc: func(context.Context, string) (RefreshTokenValidation, error) {
 					return RefreshTokenValidation{Status: RefreshTokenValidationReused, UserID: fixedID.String()}, nil
@@ -1318,7 +1318,7 @@ func TestService_RefreshToken(t *testing.T) {
 		{
 			name:         "Failure: Redis 오류로 인한 갱신 실패",
 			req:          &pb.RefreshTokenRequest{RefreshToken: tokenStr},
-			mockBehavior: func(m *dbmocks.MockQuerier) {},
+			mockBehavior: func(_ *dbmocks.MockQuerier) {},
 			tokenStore: &fakeRefreshTokenStore{
 				validateFunc: func(context.Context, string) (RefreshTokenValidation, error) {
 					return RefreshTokenValidation{}, assert.AnError
@@ -1550,7 +1550,7 @@ func TestService_DeleteUser(t *testing.T) {
 		{
 			name:         "Failure: 잘못된 user_id 형식 (InvalidArgument)",
 			req:          &pb.DeleteUserRequest{UserId: "not-a-uuid", Password: password},
-			mockBehavior: func(m *dbmocks.MockQuerier) {},
+			mockBehavior: func(_ *dbmocks.MockQuerier) {},
 			wantErr:      true,
 			errCode:      codes.InvalidArgument,
 		},
@@ -1667,7 +1667,7 @@ func TestService_BatchGetUsers(t *testing.T) {
 		{
 			name:         "Success: 빈 ID 배열",
 			req:          &pb.BatchGetUsersRequest{UserIds: []string{}},
-			mockBehavior: func(m *dbmocks.MockQuerier) {},
+			mockBehavior: func(_ *dbmocks.MockQuerier) {},
 			wantLen:      0,
 		},
 		{
@@ -1696,7 +1696,7 @@ func TestService_BatchGetUsers(t *testing.T) {
 		{
 			name:         "Failure: 잘못된 UUID 포함",
 			req:          &pb.BatchGetUsersRequest{UserIds: []string{aliceID.String(), "not-a-uuid"}},
-			mockBehavior: func(m *dbmocks.MockQuerier) {},
+			mockBehavior: func(_ *dbmocks.MockQuerier) {},
 			wantErr:      true,
 			errCode:      codes.InvalidArgument,
 		},

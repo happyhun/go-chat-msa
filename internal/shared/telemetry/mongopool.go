@@ -15,8 +15,8 @@ var mongoPoolMeter = otel.Meter("go-chat-msa/metrics/mongo-pool")
 type mongoPoolCollector struct {
 	checkedOut atomic.Int64
 	open       atomic.Int64
-	created    atomic.Uint64
-	closed     atomic.Uint64
+	created    atomic.Int64
+	closed     atomic.Int64
 }
 
 func NewMongoPoolMonitor() *event.PoolMonitor {
@@ -53,7 +53,7 @@ func (c *mongoPoolCollector) registerMetrics() {
 	_, err = mongoPoolMeter.Int64ObservableCounter("gochat_mongo_pool_created",
 		metric.WithDescription("Cumulative number of connections created."),
 		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
-			o.Observe(int64(c.created.Load()))
+			o.Observe(c.created.Load())
 			return nil
 		}),
 	)
@@ -63,7 +63,7 @@ func (c *mongoPoolCollector) registerMetrics() {
 	_, err = mongoPoolMeter.Int64ObservableCounter("gochat_mongo_pool_closed",
 		metric.WithDescription("Cumulative number of connections closed."),
 		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
-			o.Observe(int64(c.closed.Load()))
+			o.Observe(c.closed.Load())
 			return nil
 		}),
 	)

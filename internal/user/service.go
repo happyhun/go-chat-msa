@@ -44,7 +44,7 @@ func NewService(dbConn db.Querier, cfg config.UserConfig, secretKey string, h *h
 		hasher:    h,
 		tokens:    missingRefreshTokenStore{},
 
-		runInTx: func(ctx context.Context, fn func(db.Querier) error) error {
+		runInTx: func(_ context.Context, fn func(db.Querier) error) error {
 			return fn(dbConn)
 		},
 	}
@@ -415,7 +415,11 @@ func (s *Service) ListJoinedRooms(ctx context.Context, req *pb.ListJoinedRoomsRe
 		return nil, status.Error(codes.Internal, "failed to list joined rooms")
 	}
 
-	return &pb.ListJoinedRoomsResponse{Rooms: userRoomsFromRows(rows)}, nil
+	rooms, err := userRoomsFromRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	return &pb.ListJoinedRoomsResponse{Rooms: rooms}, nil
 }
 
 func (s *Service) ListRoomMembers(ctx context.Context, req *pb.ListRoomMembersRequest) (*pb.ListRoomMembersResponse, error) {
@@ -465,7 +469,7 @@ func (s *Service) JoinRoom(ctx context.Context, req *pb.JoinRoomRequest) (*pb.Jo
 			return err
 		}
 
-		if int32(count) >= room.Capacity {
+		if count >= int64(room.Capacity) {
 			roomJoinTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("status", "error")))
 			return status.Error(codes.FailedPrecondition, "room is full")
 		}
@@ -520,10 +524,17 @@ func (s *Service) SearchRooms(ctx context.Context, req *pb.SearchRoomsRequest) (
 
 	var totalCount int32
 	if len(rows) > 0 {
-		totalCount = int32(rows[0].TotalCount)
+		totalCount, err = countToProto(rows[0].TotalCount)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	return &pb.SearchRoomsResponse{Rooms: roomsFromSearchRows(rows), TotalCount: totalCount}, nil
+	rooms, err := roomsFromSearchRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	return &pb.SearchRoomsResponse{Rooms: rooms, TotalCount: totalCount}, nil
 }
 
 func (s *Service) UpdateRoom(ctx context.Context, req *pb.UpdateRoomRequest) (*pb.UpdateRoomResponse, error) {
@@ -560,7 +571,7 @@ func (s *Service) UpdateRoom(ctx context.Context, req *pb.UpdateRoomRequest) (*p
 		if err != nil {
 			return status.Error(codes.Internal, "failed to get member count")
 		}
-		if int32(count) > req.Capacity {
+		if count > int64(req.Capacity) {
 			return status.Error(codes.FailedPrecondition, "capacity cannot be less than current member count")
 		}
 

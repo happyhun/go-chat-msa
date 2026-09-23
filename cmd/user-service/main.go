@@ -29,16 +29,16 @@ import (
 )
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
-	if err := run(ctx); err != nil {
+	if err := run(context.Background()); err != nil {
 		slog.ErrorContext(context.Background(), "application failed", "error", err)
 		os.Exit(1)
 	}
 }
 
 func run(ctx context.Context) error {
+	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	cfg, err := loadConfig()
 	if err != nil {
 		return err
@@ -126,14 +126,14 @@ func run(ctx context.Context) error {
 
 	reflection.Register(grpcServer)
 
-	return runServer(ctx, cfg, grpcServer, userService, healthServer)
+	return runServer(ctx, cfg, grpcServer, healthServer)
 }
 
 func loadConfig() (*user.Config, error) {
 	return config.LoadRuntime[user.Config]()
 }
 
-func runServer(ctx context.Context, cfg *user.Config, grpcServer *grpc.Server, userService *user.Service, healthServer *health.Server) error {
+func runServer(ctx context.Context, cfg *user.Config, grpcServer *grpc.Server, healthServer *health.Server) error {
 	lis, err := net.Listen("tcp", ":"+cfg.Port.UserGRPC)
 	if err != nil {
 		return err

@@ -65,14 +65,14 @@ func TestRouter_HandleListJoinedRooms(t *testing.T) {
 		{
 			name:         "Failure: Authorization 헤더 누락 (Unauthorized)",
 			token:        "",
-			mockBehavior: func(m *mocks.MockUserServiceClient) {},
+			mockBehavior: func(_ *mocks.MockUserServiceClient) {},
 			expectedCode: http.StatusUnauthorized,
 			expectedBody: map[string]any{"detail": "missing token"},
 		},
 		{
 			name:         "Failure: 잘못된 형식의 JWT 토큰 (Unauthorized)",
 			token:        "invalid.token.string",
-			mockBehavior: func(m *mocks.MockUserServiceClient) {},
+			mockBehavior: func(_ *mocks.MockUserServiceClient) {},
 			expectedCode: http.StatusUnauthorized,
 			expectedBody: map[string]any{"detail": "invalid token"},
 		},
@@ -166,7 +166,7 @@ func TestRouter_HandleCreateRoom(t *testing.T) {
 			name:         "Failure: 잘못된 형식의 요청 본문 (BadRequest)",
 			token:        validToken,
 			body:         "invalid-body",
-			mockBehavior: func(m *mocks.MockUserServiceClient) {},
+			mockBehavior: func(_ *mocks.MockUserServiceClient) {},
 			expectedCode: http.StatusBadRequest,
 		},
 	}
@@ -239,7 +239,7 @@ func TestRouter_HandleDeleteRoom(t *testing.T) {
 			name:         "Failure: 토큰 없이 삭제 시도 (Unauthorized)",
 			token:        "",
 			roomID:       "room-123",
-			mockBehavior: func(m *mocks.MockUserServiceClient) {},
+			mockBehavior: func(_ *mocks.MockUserServiceClient) {},
 			expectedCode: http.StatusUnauthorized,
 		},
 		{
@@ -321,7 +321,7 @@ func TestRouter_HandleJoinRoom(t *testing.T) {
 			name:         "Failure: 토큰 없이 참여 시도 (Unauthorized)",
 			token:        "",
 			roomID:       "room-123",
-			mockBehavior: func(m *mocks.MockUserServiceClient) {},
+			mockBehavior: func(_ *mocks.MockUserServiceClient) {},
 			expectedCode: http.StatusUnauthorized,
 		},
 		{
@@ -398,7 +398,7 @@ func TestRouter_HandleLeaveRoom(t *testing.T) {
 			name:         "Failure: 토큰 없이 나가기 시도 (Unauthorized)",
 			token:        "",
 			roomID:       "room-123",
-			mockBehavior: func(m *mocks.MockUserServiceClient) {},
+			mockBehavior: func(_ *mocks.MockUserServiceClient) {},
 			expectedCode: http.StatusUnauthorized,
 		},
 		{
@@ -482,7 +482,7 @@ func TestRouter_HandleSearchRooms(t *testing.T) {
 			query:        "test",
 			limit:        "abc",
 			offset:       "0",
-			mockBehavior: func(m *mocks.MockUserServiceClient) {},
+			mockBehavior: func(_ *mocks.MockUserServiceClient) {},
 			expectedCode: http.StatusBadRequest,
 		},
 		{
@@ -490,7 +490,7 @@ func TestRouter_HandleSearchRooms(t *testing.T) {
 			query:        "test",
 			limit:        "-1",
 			offset:       "0",
-			mockBehavior: func(m *mocks.MockUserServiceClient) {},
+			mockBehavior: func(_ *mocks.MockUserServiceClient) {},
 			expectedCode: http.StatusBadRequest,
 		},
 		{
@@ -498,7 +498,7 @@ func TestRouter_HandleSearchRooms(t *testing.T) {
 			query:        "test",
 			limit:        "999",
 			offset:       "0",
-			mockBehavior: func(m *mocks.MockUserServiceClient) {},
+			mockBehavior: func(_ *mocks.MockUserServiceClient) {},
 			expectedCode: http.StatusBadRequest,
 		},
 		{
@@ -506,7 +506,7 @@ func TestRouter_HandleSearchRooms(t *testing.T) {
 			query:        "test",
 			limit:        "10",
 			offset:       "xyz",
-			mockBehavior: func(m *mocks.MockUserServiceClient) {},
+			mockBehavior: func(_ *mocks.MockUserServiceClient) {},
 			expectedCode: http.StatusBadRequest,
 		},
 		{
@@ -601,7 +601,7 @@ func TestRouter_HandleUpdateRoom(t *testing.T) {
 			token:        "",
 			roomID:       "room-123",
 			body:         map[string]any{"name": "new name"},
-			mockBehavior: func(m *mocks.MockUserServiceClient) {},
+			mockBehavior: func(_ *mocks.MockUserServiceClient) {},
 			expectedCode: http.StatusUnauthorized,
 		},
 		{
@@ -609,7 +609,7 @@ func TestRouter_HandleUpdateRoom(t *testing.T) {
 			token:        validToken,
 			roomID:       "room-123",
 			body:         "invalid-body",
-			mockBehavior: func(m *mocks.MockUserServiceClient) {},
+			mockBehavior: func(_ *mocks.MockUserServiceClient) {},
 			expectedCode: http.StatusBadRequest,
 		},
 		{
@@ -708,7 +708,7 @@ func TestRouter_HandleMessages(t *testing.T) {
 			mockUser: func(m *mocks.MockUserServiceClient) {
 				m.EXPECT().GetMemberJoinedAt(mock.Anything, mock.Anything).Return(&userpb.GetMemberJoinedAtResponse{JoinedAt: timestamppb.Now()}, nil)
 			},
-			mockChat:     func(m *mocks.MockChatServiceClient) {},
+			mockChat:     func(_ *mocks.MockChatServiceClient) {},
 			expectedCode: http.StatusBadRequest,
 		},
 	}

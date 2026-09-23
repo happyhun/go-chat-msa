@@ -130,6 +130,7 @@ func NewManager(
 		closeRoomCh:       make(chan closeRoomReq),
 		closeAllCh:        make(chan closeAllReq),
 		sessionCloseDelay: func() time.Duration {
+			// #nosec G404 -- Session-close jitter does not require cryptographic randomness.
 			return time.Duration(rand.Int64N(int64(maxSessionCloseJitter)))
 		},
 		stoppedCh: make(chan struct{}),

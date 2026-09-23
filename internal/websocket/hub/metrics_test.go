@@ -27,8 +27,8 @@ func TestSession_CloseMetricsRecordedOnce(t *testing.T) {
 			defer func() { sessionsClosedTotal = previous }()
 
 			serverConn, clientConn := createTestWSPair(t)
-			defer serverConn.Close()
-			defer clientConn.Close()
+			defer func() { _ = serverConn.Close() }()
+			defer func() { _ = clientConn.Close() }()
 			s := newTestSession(serverConn, "user", "room", nil)
 			h := newTestHub("room")
 			h.sessions[s.id] = s

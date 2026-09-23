@@ -19,7 +19,7 @@ type ProblemDetail struct {
 	Detail string `json:"detail,omitempty"`
 }
 
-func ReadJSON(ctx context.Context, w http.ResponseWriter, r *http.Request, dst any) error {
+func ReadJSON(_ context.Context, w http.ResponseWriter, r *http.Request, dst any) error {
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
 
 	dec := json.NewDecoder(r.Body)

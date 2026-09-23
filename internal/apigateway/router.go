@@ -84,6 +84,9 @@ func NewRouter(
 		httpClient: &http.Client{
 			Transport: tr,
 			Timeout:   cfg.APIGateway.HTTPClient.Timeout,
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
 		},
 		redisClient: redisClient,
 		ticketStore: wsticket.NewStore(redisClient),

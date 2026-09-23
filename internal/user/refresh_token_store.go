@@ -79,9 +79,9 @@ func NewRedisRefreshTokenStore(client *redis.Client) *RedisRefreshTokenStore {
 }
 
 const (
-	refreshTokenActivePrefix = "auth:rt:active:"
-	refreshTokenUsedPrefix   = "auth:rt:used:"
-	refreshTokenUserPrefix   = "auth:rt:user:"
+	refreshTokenActivePrefix = "auth:rt:active:" // #nosec G101 -- Redis key namespace, not a credential.
+	refreshTokenUsedPrefix   = "auth:rt:used:"   // #nosec G101 -- Redis key namespace, not a credential.
+	refreshTokenUserPrefix   = "auth:rt:user:"   // #nosec G101 -- Redis key namespace, not a credential.
 )
 
 var issueRefreshTokenScript = redis.NewScript(`

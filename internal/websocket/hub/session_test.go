@@ -245,9 +245,9 @@ func TestSession_OverflowUnblocksRunningWriter(t *testing.T) {
 	}}
 	conn, _, err := dialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
 	require.NoError(t, err)
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	peer := <-peerCh
-	defer peer.Close()
+	defer func() { _ = peer.Close() }()
 	blocked.blockWrites.Store(true)
 	unregisterCh := make(chan *session, 1)
 	s := newTestSession(conn, "slow", "room", unregisterCh)

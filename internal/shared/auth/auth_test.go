@@ -120,7 +120,7 @@ func TestVerifyJWT(t *testing.T) {
 				token := jwt.NewWithClaims(jwt.SigningMethodHS256, validClaims())
 				s, _ := token.SignedString([]byte(secret))
 				parts := strings.Split(s, ".")
-				parts[2] = parts[2] + "tampered"
+				parts[2] += "tampered"
 				return strings.Join(parts, ".")
 			},
 			wantErr: true,

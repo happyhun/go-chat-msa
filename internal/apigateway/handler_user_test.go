@@ -54,7 +54,7 @@ func TestRouter_HandleCreateUser(t *testing.T) {
 		{
 			name:         "Failure: 잘못된 JSON 본문 요청",
 			body:         "invalid-json",
-			mockBehavior: func(m *mocks.MockUserServiceClient) {},
+			mockBehavior: func(_ *mocks.MockUserServiceClient) {},
 			expectedCode: http.StatusBadRequest,
 			expectedBody: map[string]any{"detail": "invalid request body"},
 		},
@@ -262,21 +262,21 @@ func TestRouter_HandleDeleteUser(t *testing.T) {
 			name:         "Failure: JWT 미들웨어 미통과 (Unauthorized)",
 			userIDInCtx:  "",
 			body:         DeleteUserRequest{Password: "SecurePass123!"},
-			mockBehavior: func(m *mocks.MockUserServiceClient) {},
+			mockBehavior: func(_ *mocks.MockUserServiceClient) {},
 			expectedCode: http.StatusUnauthorized,
 		},
 		{
 			name:         "Failure: 잘못된 JSON 본문",
 			userIDInCtx:  userID,
 			body:         "not-json",
-			mockBehavior: func(m *mocks.MockUserServiceClient) {},
+			mockBehavior: func(_ *mocks.MockUserServiceClient) {},
 			expectedCode: http.StatusBadRequest,
 		},
 		{
 			name:         "Failure: 비밀번호 누락",
 			userIDInCtx:  userID,
 			body:         DeleteUserRequest{Password: ""},
-			mockBehavior: func(m *mocks.MockUserServiceClient) {},
+			mockBehavior: func(_ *mocks.MockUserServiceClient) {},
 			expectedCode: http.StatusBadRequest,
 		},
 		{
@@ -403,19 +403,19 @@ func TestRouter_HandleBatchGetUsers(t *testing.T) {
 		{
 			name:         "Failure: ids 누락",
 			query:        "",
-			mockBehavior: func(m *mocks.MockUserServiceClient) {},
+			mockBehavior: func(_ *mocks.MockUserServiceClient) {},
 			expectedCode: http.StatusBadRequest,
 		},
 		{
 			name:         "Failure: 100 초과",
 			query:        strings.Repeat("ids="+aliceID+"&", 101),
-			mockBehavior: func(m *mocks.MockUserServiceClient) {},
+			mockBehavior: func(_ *mocks.MockUserServiceClient) {},
 			expectedCode: http.StatusBadRequest,
 		},
 		{
 			name:         "Failure: 잘못된 UUID",
 			query:        "ids=" + aliceID + "&ids=not-a-uuid",
-			mockBehavior: func(m *mocks.MockUserServiceClient) {},
+			mockBehavior: func(_ *mocks.MockUserServiceClient) {},
 			expectedCode: http.StatusBadRequest,
 		},
 		{

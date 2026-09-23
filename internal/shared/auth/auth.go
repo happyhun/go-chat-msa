@@ -28,7 +28,7 @@ func GenerateJWT(userID string, username string, secretKey string, duration time
 }
 
 func VerifyJWT(tokenString string, secretKey string) (*UserClaims, error) {
-	token, err := jwt.ParseWithClaims(tokenString, &UserClaims{}, func(token *jwt.Token) (any, error) {
+	token, err := jwt.ParseWithClaims(tokenString, &UserClaims{}, func(_ *jwt.Token) (any, error) {
 		return []byte(secretKey), nil
 	}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}))
 
