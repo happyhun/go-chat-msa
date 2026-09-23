@@ -30,14 +30,14 @@ func GenerateJWT(userID string, username string, secretKey string, duration time
 func VerifyJWT(tokenString string, secretKey string) (*UserClaims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &UserClaims{}, func(_ *jwt.Token) (any, error) {
 		return []byte(secretKey), nil
-	}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}))
+	}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}), jwt.WithExpirationRequired())
 
 	if err != nil {
 		return nil, err
 	}
 
 	claims, ok := token.Claims.(*UserClaims)
-	if !ok || !token.Valid {
+	if !ok || !token.Valid || claims.Subject == "" {
 		return nil, errors.New("invalid token claims")
 	}
 

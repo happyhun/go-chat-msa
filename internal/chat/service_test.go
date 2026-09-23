@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func TestService_ListMessages(t *testing.T) {
@@ -210,4 +211,24 @@ func TestService_SyncMessagesHasMore(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, res.Messages, 2, "limit + 1로 조회하고 limit개만 반환한다")
 	assert.True(t, res.HasMore)
+}
+
+func TestService_InvalidJoinedAt(t *testing.T) {
+	for _, ts := range []*timestamppb.Timestamp{
+		{Seconds: 253402300800},
+		{Seconds: -62135596801},
+		{Nanos: -1},
+		{Nanos: 1000000000},
+	} {
+		repo := mocks.NewMockRepository(t)
+		service := chat.NewService(repo, config.ChatConfig{})
+		history, err := service.ListMessages(t.Context(), &pb.ListMessagesRequest{RoomId: "room", JoinedAt: ts})
+		require.Nil(t, history)
+		require.Equal(t, codes.InvalidArgument, status.Code(err))
+		sync, err := service.SyncMessages(t.Context(), &pb.SyncMessagesRequest{RoomId: "room", JoinedAt: ts})
+		require.Nil(t, sync)
+		require.Equal(t, codes.InvalidArgument, status.Code(err))
+		repo.AssertNotCalled(t, "GetHistory", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+		repo.AssertNotCalled(t, "SyncMessages", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	}
 }

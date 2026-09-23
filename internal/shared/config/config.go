@@ -86,10 +86,10 @@ type RedisConfig struct {
 }
 
 type ManagerConfig struct {
-	WriteWait   time.Duration `mapstructure:"WRITE_WAIT" validate:"required"`
-	PongWait    time.Duration `mapstructure:"PONG_WAIT" validate:"required"`
-	PingPeriod  time.Duration `mapstructure:"PING_PERIOD" validate:"required"`
-	IdleTimeout time.Duration `mapstructure:"IDLE_TIMEOUT" validate:"required"`
+	WriteWait   time.Duration `mapstructure:"WRITE_WAIT" validate:"required,gt=0"`
+	PongWait    time.Duration `mapstructure:"PONG_WAIT" validate:"required,gt=0"`
+	PingPeriod  time.Duration `mapstructure:"PING_PERIOD" validate:"required,gt=0,ltfield=PongWait"`
+	IdleTimeout time.Duration `mapstructure:"IDLE_TIMEOUT" validate:"required,gt=0"`
 	MaxLength   int           `mapstructure:"MAX_LENGTH" validate:"required,min=1"`
 }
 
@@ -119,8 +119,8 @@ type RoomConfig struct {
 }
 
 type SearchConfig struct {
-	DefaultLimit int32 `mapstructure:"DEFAULT_LIMIT" validate:"required"`
-	MaxLimit     int32 `mapstructure:"MAX_LIMIT" validate:"required"`
+	DefaultLimit int32 `mapstructure:"DEFAULT_LIMIT" validate:"required,gt=0,ltefield=MaxLimit"`
+	MaxLimit     int32 `mapstructure:"MAX_LIMIT" validate:"required,gt=0"`
 }
 
 type ChatConfig struct {
@@ -140,13 +140,13 @@ type PersistenceConfig struct {
 }
 
 type HistoryConfig struct {
-	DefaultLimit int64 `mapstructure:"DEFAULT_LIMIT" validate:"required"`
-	MaxLimit     int64 `mapstructure:"MAX_LIMIT" validate:"required"`
+	DefaultLimit int64 `mapstructure:"DEFAULT_LIMIT" validate:"required,gt=0,ltefield=MaxLimit"`
+	MaxLimit     int64 `mapstructure:"MAX_LIMIT" validate:"required,gt=0,lt=9223372036854775807"`
 }
 
 type SyncConfig struct {
-	DefaultLimit int64 `mapstructure:"DEFAULT_LIMIT" validate:"required"`
-	MaxLimit     int64 `mapstructure:"MAX_LIMIT" validate:"required"`
+	DefaultLimit int64 `mapstructure:"DEFAULT_LIMIT" validate:"required,gt=0,ltefield=MaxLimit"`
+	MaxLimit     int64 `mapstructure:"MAX_LIMIT" validate:"required,gt=0,lt=9223372036854775807"`
 }
 
 type RateLimitConfig struct {

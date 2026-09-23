@@ -107,7 +107,7 @@ func (h *Hub) run(ctx context.Context) {
 	}()
 
 	idleTimer := time.NewTimer(h.idleTimeout)
-	idleTimer.Stop()
+	defer idleTimer.Stop()
 
 	for {
 		select {

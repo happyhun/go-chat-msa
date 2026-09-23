@@ -100,7 +100,9 @@ end
 
 redis.call("ZREMRANGEBYSCORE", user_index_key, "-inf", expires_at_ms - ttl_ms)
 redis.call("ZADD", user_index_key, expires_at_ms, digest)
-redis.call("PEXPIRE", user_index_key, ttl_ms)
+if redis.call("PTTL", user_index_key) < ttl_ms then
+	redis.call("PEXPIRE", user_index_key, ttl_ms)
+end
 return 1
 `)
 
@@ -157,7 +159,9 @@ if user_id then
 	redis.call("ZREMRANGEBYSCORE", user_index_key, "-inf", now_ms)
 	redis.call("ZREM", user_index_key, old_digest)
 	redis.call("ZADD", user_index_key, now_ms + ttl_ms, new_digest)
-	redis.call("PEXPIRE", user_index_key, ttl_ms)
+	if redis.call("PTTL", user_index_key) < ttl_ms then
+		redis.call("PEXPIRE", user_index_key, ttl_ms)
+	end
 	return {1, user_id}
 end
 

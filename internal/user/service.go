@@ -504,6 +504,9 @@ func (s *Service) JoinRoom(ctx context.Context, req *pb.JoinRoomRequest) (*pb.Jo
 }
 
 func (s *Service) SearchRooms(ctx context.Context, req *pb.SearchRoomsRequest) (*pb.SearchRoomsResponse, error) {
+	if req.Offset < 0 {
+		return nil, status.Error(codes.InvalidArgument, "offset must not be negative")
+	}
 	limit := req.Limit
 	if limit > s.config.Search.MaxLimit {
 		return nil, status.Error(codes.InvalidArgument, "limit exceeds maximum allowed")

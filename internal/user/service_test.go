@@ -1732,3 +1732,12 @@ func TestService_BatchGetUsers(t *testing.T) {
 		})
 	}
 }
+
+func TestService_SearchRoomsNegativeOffset(t *testing.T) {
+	queries := dbmocks.NewMockQuerier(t)
+	service := createTestService(t, queries)
+	response, err := service.SearchRooms(t.Context(), &pb.SearchRoomsRequest{Offset: -1})
+	require.Nil(t, response)
+	require.Equal(t, codes.InvalidArgument, status.Code(err))
+	queries.AssertNotCalled(t, "SearchRooms", mock.Anything, mock.Anything)
+}

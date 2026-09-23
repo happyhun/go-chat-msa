@@ -41,6 +41,9 @@ func (s *Service) ListMessages(ctx context.Context, req *pb.ListMessagesRequest)
 
 	var joinedAt time.Time
 	if req.JoinedAt != nil {
+		if err := req.JoinedAt.CheckValid(); err != nil {
+			return nil, status.Error(codes.InvalidArgument, "invalid joined_at")
+		}
 		joinedAt = req.JoinedAt.AsTime()
 	}
 
@@ -82,6 +85,9 @@ func (s *Service) SyncMessages(ctx context.Context, req *pb.SyncMessagesRequest)
 
 	var joinedAt time.Time
 	if req.JoinedAt != nil {
+		if err := req.JoinedAt.CheckValid(); err != nil {
+			return nil, status.Error(codes.InvalidArgument, "invalid joined_at")
+		}
 		joinedAt = req.JoinedAt.AsTime()
 	}
 

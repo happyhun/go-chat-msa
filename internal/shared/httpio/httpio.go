@@ -26,32 +26,32 @@ func ReadJSON(_ context.Context, w http.ResponseWriter, r *http.Request, dst any
 	dec.DisallowUnknownFields()
 
 	err := dec.Decode(dst)
-	if err != nil {
-		var syntaxError *json.SyntaxError
-		var unmarshalTypeError *json.UnmarshalTypeError
-
-		switch {
-		case errors.As(err, &syntaxError):
-			return fmt.Errorf("request body contains badly-formed JSON (at position %d)", syntaxError.Offset)
-		case errors.Is(err, io.ErrUnexpectedEOF):
-			return errors.New("request body contains badly-formed JSON")
-		case errors.As(err, &unmarshalTypeError):
-			return fmt.Errorf("request body contains an invalid value for the %q field (at position %d)", unmarshalTypeError.Field, unmarshalTypeError.Offset)
-		case errors.Is(err, io.EOF):
-			return errors.New("request body must not be empty")
-		case errors.As(err, new(*http.MaxBytesError)):
-			return errors.New("request body must not be larger than 1MB")
-		default:
-			return err
+	if err == nil {
+		err = dec.Decode(&struct{}{})
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if !errors.As(err, new(*http.MaxBytesError)) {
+			return errors.New("request body must only contain a single JSON object")
 		}
 	}
+	var syntaxError *json.SyntaxError
+	var unmarshalTypeError *json.UnmarshalTypeError
 
-	err = dec.Decode(&struct{}{})
-	if !errors.Is(err, io.EOF) {
-		return errors.New("request body must only contain a single JSON object")
+	switch {
+	case errors.As(err, &syntaxError):
+		return fmt.Errorf("request body contains badly-formed JSON (at position %d)", syntaxError.Offset)
+	case errors.Is(err, io.ErrUnexpectedEOF):
+		return errors.New("request body contains badly-formed JSON")
+	case errors.As(err, &unmarshalTypeError):
+		return fmt.Errorf("request body contains an invalid value for the %q field (at position %d)", unmarshalTypeError.Field, unmarshalTypeError.Offset)
+	case errors.Is(err, io.EOF):
+		return errors.New("request body must not be empty")
+	case errors.As(err, new(*http.MaxBytesError)):
+		return errors.New("request body must not be larger than 1MB")
+	default:
+		return err
 	}
-
-	return nil
 }
 
 func WriteJSON(ctx context.Context, w http.ResponseWriter, status int, data any) {

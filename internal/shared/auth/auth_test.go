@@ -169,3 +169,24 @@ func TestHashToken(t *testing.T) {
 		})
 	}
 }
+
+func TestVerifyJWTRequiredClaims(t *testing.T) {
+	for _, field := range []string{"expiration", "subject"} {
+		t.Run(field, func(t *testing.T) {
+			claims := UserClaims{
+				Subject:   "user",
+				ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+			}
+			if field == "expiration" {
+				claims.ExpiresAt = nil
+			} else {
+				claims.Subject = ""
+			}
+			token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte("secret"))
+			require.NoError(t, err)
+			got, err := VerifyJWT(token, "secret")
+			require.Error(t, err)
+			require.Nil(t, got)
+		})
+	}
+}

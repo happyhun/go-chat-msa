@@ -124,3 +124,13 @@ func TestWorkerPool_ContextCancel(t *testing.T) {
 		})
 	}
 }
+
+func TestEnqueueCanceledContext(t *testing.T) {
+	pool := &Pool{jobQueue: make(chan job, 100)}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	for range 100 {
+		require.ErrorIs(t, pool.enqueue(ctx, job{typ: jobHash}), context.Canceled)
+	}
+	require.Empty(t, pool.jobQueue)
+}

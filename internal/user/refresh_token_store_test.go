@@ -219,3 +219,28 @@ func mustGetRedisString(t *testing.T, mr *miniredis.Miniredis, key string) strin
 	require.NoError(t, err)
 	return value
 }
+
+func TestRedisRefreshTokenStore_ShorterTTLDoesNotLoseUserTokens(t *testing.T) {
+	for _, operation := range []string{"issue", "rotate"} {
+		t.Run(operation, func(t *testing.T) {
+			store, mr := newTestRefreshTokenStore(t)
+			ctx := t.Context()
+			require.NoError(t, store.Issue(ctx, "user", "long-lived", time.Hour))
+			switch operation {
+			case "issue":
+				require.NoError(t, store.Issue(ctx, "user", "short-lived", time.Minute))
+			case "rotate":
+				require.NoError(t, store.Issue(ctx, "user", "old", time.Hour))
+				rotation, err := store.Rotate(ctx, "old", "short-lived", time.Minute)
+				require.NoError(t, err)
+				require.Equal(t, RefreshTokenRotated, rotation.Status)
+			}
+			mr.FastForward(2 * time.Minute)
+			require.True(t, mr.Exists(refreshTokenUserPrefix+"user"))
+			require.NoError(t, store.RevokeUser(ctx, "user"))
+			validation, err := store.Validate(ctx, "long-lived")
+			require.NoError(t, err)
+			require.Equal(t, RefreshTokenValidationInvalid, validation.Status)
+		})
+	}
+}

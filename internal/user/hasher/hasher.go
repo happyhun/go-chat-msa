@@ -192,6 +192,10 @@ func (wp *Pool) enqueue(ctx context.Context, j job) error {
 
 	typeName := jobTypeName(j.typ)
 	typeAttr := attribute.String("type", typeName)
+	if err := ctx.Err(); err != nil {
+		hasherJobsTotal.Add(ctx, 1, metric.WithAttributes(typeAttr, attribute.String("status", "ctx_canceled")))
+		return err
+	}
 	select {
 	case wp.jobQueue <- j:
 		hasherQueueDepth.Record(ctx, float64(len(wp.jobQueue)))

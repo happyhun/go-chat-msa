@@ -52,6 +52,19 @@ func newTestHub(roomID string) *Hub {
 	return newHub(roomID, testSessionConfig(), time.Minute, nil, nil)
 }
 
+func TestHub_ExpiresWithoutRegistration(t *testing.T) {
+	h := newHub("room", testSessionConfig(), 10*time.Millisecond, nil, nil)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go h.run(ctx)
+	select {
+	case <-h.done():
+		require.True(t, h.isDraining())
+	case <-time.After(time.Second):
+		t.Fatal("hub without a registered session did not expire")
+	}
+}
+
 func testPacket(messageID, senderID, content string) deliverPacket {
 	return deliverPacket{
 		payload:    []byte(`{"id":"` + messageID + `","content":"` + content + `"}`),

@@ -143,13 +143,18 @@ func runServer(ctx context.Context, cfg *user.Config, grpcServer *grpc.Server, h
 
 	eg.Go(func() error {
 		slog.InfoContext(ctx, "Starting User Service", "port", cfg.Port.UserGRPC, "env", cfg.Env)
-		return grpcServer.Serve(lis)
+		if err := grpcServer.Serve(lis); err != nil && err != grpc.ErrServerStopped {
+			return err
+		}
+		return nil
 	})
 
 	eg.Go(func() error {
 		<-ctx.Done()
 		slog.InfoContext(ctx, "Shutting down User Service...")
 		setUserServingStatus(healthServer, grpc_health_v1.HealthCheckResponse_NOT_SERVING)
+		stop := time.AfterFunc(cfg.ShutdownTimeout, grpcServer.Stop)
+		defer stop.Stop()
 		grpcServer.GracefulStop()
 		slog.InfoContext(ctx, "User Service stopped gracefully")
 		return nil

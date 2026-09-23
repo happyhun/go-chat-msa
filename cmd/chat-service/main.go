@@ -141,7 +141,10 @@ func runServer(ctx context.Context, cfg *chat.Config, grpcServer *grpc.Server, h
 
 	eg.Go(func() error {
 		slog.InfoContext(ctx, "Starting Chat Service", "port", cfg.Port.ChatGRPC, "env", cfg.Env)
-		return grpcServer.Serve(lis)
+		if err := grpcServer.Serve(lis); err != nil && err != grpc.ErrServerStopped {
+			return err
+		}
+		return nil
 	})
 
 	eg.Go(func() error {
