@@ -1,0 +1,43 @@
+{
+  "name": "go-chat-msa",
+  "version": "1.0.0",
+  "description": "Go로 만든 MSA 채팅 서버이며, 저지연 메시징과 유연한 수평 확장을 목표로 합니다.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "test": "test"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/happyhun/go-chat-msa.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/happyhun/go-chat-msa/issues"
+  },
+  "homepage": "https://github.com/happyhun/go-chat-msa#readme",
+  "devDependencies": {
+    "@nanonets/graft": "^0.19.0"
+  },
+  "allowScripts": {
+    "@nanonets/graft@0.19.0": true,
+    "tree-sitter@0.21.1": true,
+    "tree-sitter@0.22.4": true,
+    "tree-sitter-go@0.23.4": true,
+    "tree-sitter-java@0.23.5": true,
+    "tree-sitter-javascript@0.23.1": true,
+    "tree-sitter-kotlin@0.3.8": true,
+    "tree-sitter-php@0.23.12": true,
+    "tree-sitter-python@0.21.0": true,
+    "@davisvaughan/tree-sitter-r@1.3.0": true,
+    "tree-sitter-typescript@0.23.2": true,
+    "tree-sitter-cli@0.23.2": true,
+    "tree-sitter-swift@0.7.1": true
+  }
+}
