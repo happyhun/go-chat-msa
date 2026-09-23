@@ -1,6 +1,12 @@
 version: "2"
 
 linters:
-  exclusions:
-    paths:
-      - frontend/node_modules
+  default: standard
+  enable:
+    - revive
+    - gocritic
+    - gosec
+
+formatters:
+  enable:
+    - goimports

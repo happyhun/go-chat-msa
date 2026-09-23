@@ -1,8 +1,9 @@
 package middleware
 
-import "slices"
-
-import "net/http"
+import (
+	"net/http"
+	"slices"
+)
 
 func ChainMiddleware(h http.HandlerFunc, mws ...func(http.Handler) http.Handler) http.Handler {
 	var final http.Handler = h

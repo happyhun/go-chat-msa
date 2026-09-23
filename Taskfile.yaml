@@ -1,0 +1,10 @@
+version: "3"
+
+tasks:
+  check:
+    desc: Fix, format, lint, and scan for vulnerabilities
+    cmds:
+      - go fix ./...
+      - golangci-lint fmt
+      - golangci-lint run
+      - govulncheck ./...
