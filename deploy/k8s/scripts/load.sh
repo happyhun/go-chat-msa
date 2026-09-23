@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+KUBECTL=(kubectl --context "${KUBE_CONTEXT:-kind-${KIND_CLUSTER:-go-chat}}")
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 K8S_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${K8S_DIR}/../.." && pwd)"
@@ -12,6 +14,18 @@ JOB_NAME="${K6_JOB_NAME:-k6-c10k}"
 TIMEOUT="${K6_LOAD_TIMEOUT:-30m}"
 FOLLOW_LOGS="${K6_FOLLOW_LOGS:-true}"
 MAX_LOG_REQUESTS="${K6_MAX_LOG_REQUESTS:-4}"
+LOG_PID=""
+
+stop_log_follow() {
+  if [[ -n "${LOG_PID}" ]]; then
+    kill "${LOG_PID}" 2>/dev/null || true
+    wait "${LOG_PID}" 2>/dev/null || true
+    LOG_PID=""
+  fi
+}
+trap stop_log_follow EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 log() {
   printf '\n[%s] %s\n' "$(date +%H:%M:%S)" "$*"
@@ -23,9 +37,9 @@ literal_arg() {
 
 create_script_configmap() {
   log "creating configmap/k6-load-scripts"
-  kubectl -n "${NAMESPACE}" create configmap k6-load-scripts \
+  "${KUBECTL[@]}" -n "${NAMESPACE}" create configmap k6-load-scripts \
     "--from-file=${REPO_ROOT}/test/load" \
-    --dry-run=client -o yaml | kubectl apply -f -
+    --dry-run=client -o yaml | "${KUBECTL[@]}" apply -f -
 }
 
 create_env_configmap() {
@@ -43,15 +57,15 @@ create_env_configmap() {
   done
 
   log "creating configmap/k6-load-env"
-  kubectl -n "${NAMESPACE}" create configmap k6-load-env \
+  "${KUBECTL[@]}" -n "${NAMESPACE}" create configmap k6-load-env \
     "${args[@]}" \
-    --dry-run=client -o yaml | kubectl apply -f -
+    --dry-run=client -o yaml | "${KUBECTL[@]}" apply -f -
 }
 
 delete_previous_job() {
   log "deleting previous job/${JOB_NAME}"
-  kubectl -n "${NAMESPACE}" delete "job/${JOB_NAME}" --ignore-not-found=true
-  kubectl -n "${NAMESPACE}" wait --for=delete "job/${JOB_NAME}" --timeout=60s >/dev/null 2>&1 || true
+  "${KUBECTL[@]}" -n "${NAMESPACE}" delete "job/${JOB_NAME}" --ignore-not-found=true
+  "${KUBECTL[@]}" -n "${NAMESPACE}" wait --for=delete "job/${JOB_NAME}" --timeout=60s >/dev/null 2>&1 || true
 }
 
 reset_qa_hpa_start_state() {
@@ -60,50 +74,66 @@ reset_qa_hpa_start_state() {
   fi
 
   log "resetting websocket-service to 1 replica before HPA test"
-  kubectl -n "${NAMESPACE}" delete hpa websocket-service --ignore-not-found=true
-  kubectl -n "${NAMESPACE}" wait --for=delete hpa/websocket-service --timeout=60s >/dev/null 2>&1 || true
-  kubectl -n "${NAMESPACE}" scale deployment/websocket-service --replicas=1
-  kubectl -n "${NAMESPACE}" rollout status deployment/websocket-service --timeout=120s
-  kubectl -n "${NAMESPACE}" wait --for=condition=Available deployment/websocket-service --timeout=120s
+  "${KUBECTL[@]}" -n "${NAMESPACE}" delete hpa websocket-service --ignore-not-found=true
+  "${KUBECTL[@]}" -n "${NAMESPACE}" wait --for=delete hpa/websocket-service --timeout=60s >/dev/null 2>&1 || true
+  "${KUBECTL[@]}" -n "${NAMESPACE}" scale deployment/websocket-service --replicas=1
+  "${KUBECTL[@]}" -n "${NAMESPACE}" rollout status deployment/websocket-service --timeout=120s
+  "${KUBECTL[@]}" -n "${NAMESPACE}" wait --for=condition=Available deployment/websocket-service --timeout=120s
 
   log "reapplying websocket-service HPA"
-  kubectl -n "${NAMESPACE}" apply -f "${K8S_DIR}/overlays/qa/apps/websocket-service-hpa.yaml"
-  kubectl -n "${NAMESPACE}" wait --for=condition=AbleToScale hpa/websocket-service --timeout=60s >/dev/null 2>&1 || true
+  "${KUBECTL[@]}" -n "${NAMESPACE}" apply -f "${K8S_DIR}/overlays/qa/apps/websocket-service-hpa.yaml"
+  "${KUBECTL[@]}" -n "${NAMESPACE}" wait --for=condition=AbleToScale hpa/websocket-service --timeout=60s >/dev/null 2>&1 || true
 }
 
-wait_for_pods() {
-  local i
-  for i in {1..60}; do
-    if kubectl -n "${NAMESPACE}" get pod -l "job-name=${JOB_NAME}" -o name | grep -q .; then
-      return 0
-    fi
-    sleep 1
-  done
-  return 1
+start_log_follow() {
+  local remaining="$1"
+  local pods
+  if [[ "${FOLLOW_LOGS}" != "true" || -n "${LOG_PID}" ]]; then
+    return
+  fi
+  pods="$("${KUBECTL[@]}" --request-timeout="${remaining}s" -n "${NAMESPACE}" \
+    get pods -l "job-name=${JOB_NAME}" -o name 2>/dev/null)" || return 0
+  if [[ -z "${pods}" ]]; then
+    return
+  fi
+  "${KUBECTL[@]}" -n "${NAMESPACE}" logs -l "job-name=${JOB_NAME}" \
+    --follow --all-containers=true --prefix=true --tail=-1 \
+    "--pod-running-timeout=${remaining}s" \
+    "--max-log-requests=${MAX_LOG_REQUESTS}" &
+  LOG_PID=$!
 }
 
 wait_for_job_finished() {
-  local end
+  local end="$1"
+  local remaining
+  local delay
   local status
   local reason
   local message
 
-  end=$((SECONDS + $(timeout_to_seconds "${TIMEOUT}")))
   while ((SECONDS < end)); do
-    status="$(kubectl -n "${NAMESPACE}" get "job/${JOB_NAME}" \
+    remaining=$((end - SECONDS))
+    start_log_follow "${remaining}"
+    remaining=$((end - SECONDS))
+    if ((remaining <= 0)); then
+      break
+    fi
+    status="$("${KUBECTL[@]}" --request-timeout="${remaining}s" -n "${NAMESPACE}" get "job/${JOB_NAME}" \
       -o jsonpath='{range .status.conditions[*]}{.type}={.status}{";"}{end}' 2>/dev/null || true)"
     if [[ "${status}" == *"Complete=True"* ]]; then
       return 0
     fi
     if [[ "${status}" == *"Failed=True"* ]]; then
-      reason="$(kubectl -n "${NAMESPACE}" get "job/${JOB_NAME}" \
+      reason="$("${KUBECTL[@]}" --request-timeout=5s -n "${NAMESPACE}" get "job/${JOB_NAME}" \
         -o jsonpath='{range .status.conditions[?(@.type=="Failed")]}{.reason}{end}' 2>/dev/null || true)"
-      message="$(kubectl -n "${NAMESPACE}" get "job/${JOB_NAME}" \
+      message="$("${KUBECTL[@]}" --request-timeout=5s -n "${NAMESPACE}" get "job/${JOB_NAME}" \
         -o jsonpath='{range .status.conditions[?(@.type=="Failed")]}{.message}{end}' 2>/dev/null || true)"
       printf 'job/%s failed: %s %s\n' "${JOB_NAME}" "${reason}" "${message}" >&2
       return 1
     fi
-    sleep 5
+    delay=$((end - SECONDS))
+    if ((delay > 5)); then delay=5; fi
+    if ((delay > 0)); then sleep "${delay}"; fi
   done
 
   printf 'timed out waiting for job/%s after %s\n' "${JOB_NAME}" "${TIMEOUT}" >&2
@@ -112,25 +142,37 @@ wait_for_job_finished() {
 
 timeout_to_seconds() {
   local value="$1"
-  case "${value}" in
-    *s) printf '%s\n' "${value%s}" ;;
-    *m) printf '%s\n' "$(( ${value%m} * 60 ))" ;;
-    *h) printf '%s\n' "$(( ${value%h} * 3600 ))" ;;
-    *) printf '%s\n' "${value}" ;;
+  if [[ ! "${value}" =~ ^([0-9]+)([smh]?)$ ]]; then
+    printf 'invalid K6_LOAD_TIMEOUT: %s (expected a positive integer with optional s, m or h)\n' "${value}" >&2
+    return 1
+  fi
+  local seconds=$((10#${BASH_REMATCH[1]}))
+  case "${BASH_REMATCH[2]}" in
+    m) seconds=$((seconds * 60)) ;;
+    h) seconds=$((seconds * 3600)) ;;
   esac
+  if ((seconds <= 0)); then
+    printf 'K6_LOAD_TIMEOUT must be positive\n' >&2
+    return 1
+  fi
+  printf '%s\n' "${seconds}"
 }
 
 dump_failure_context() {
-  kubectl -n "${NAMESPACE}" describe "job/${JOB_NAME}" || true
-  kubectl -n "${NAMESPACE}" get pods -l "job-name=${JOB_NAME}" -o wide || true
-  kubectl -n "${NAMESPACE}" logs -l "job-name=${JOB_NAME}" \
+  "${KUBECTL[@]}" --request-timeout=5s -n "${NAMESPACE}" describe "job/${JOB_NAME}" || true
+  "${KUBECTL[@]}" --request-timeout=5s -n "${NAMESPACE}" get pods -l "job-name=${JOB_NAME}" -o wide || true
+  "${KUBECTL[@]}" --request-timeout=5s -n "${NAMESPACE}" logs -l "job-name=${JOB_NAME}" \
     --all-containers=true \
     --prefix=true \
-    --tail=200 \
+    --pod-running-timeout=5s --tail=200 \
     "--max-log-requests=${MAX_LOG_REQUESTS}" || true
 }
 
 main() {
+  local timeout_seconds
+  local deadline
+  timeout_seconds="$(timeout_to_seconds "${TIMEOUT}")"
+
   cd "${REPO_ROOT}"
 
   if [[ ! -d "${OVERLAY_DIR}" ]]; then
@@ -144,24 +186,13 @@ main() {
   reset_qa_hpa_start_state
 
   log "starting job/${JOB_NAME}"
-  kubectl apply -k "${OVERLAY_DIR}"
+  "${KUBECTL[@]}" apply -k "${OVERLAY_DIR}"
 
-  if [[ "${FOLLOW_LOGS}" == "true" ]]; then
-    wait_for_pods || true
-    kubectl -n "${NAMESPACE}" wait \
-      --for=condition=Ready pod \
-      -l "job-name=${JOB_NAME}" \
-      --timeout=60s >/dev/null 2>&1 || true
-    kubectl -n "${NAMESPACE}" logs -l "job-name=${JOB_NAME}" \
-      --follow \
-      --all-containers=true \
-      --prefix=true \
-      --tail=-1 \
-      "--max-log-requests=${MAX_LOG_REQUESTS}" || true
-  fi
+  deadline=$((SECONDS + timeout_seconds))
 
   log "waiting for job/${JOB_NAME}"
-  if ! wait_for_job_finished; then
+  if ! wait_for_job_finished "${deadline}"; then
+    stop_log_follow
     dump_failure_context
     return 1
   fi

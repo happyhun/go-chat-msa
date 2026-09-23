@@ -70,19 +70,4 @@ spec:
             failureThreshold: 5
       volumes:
         - name: data
-          persistentVolumeClaim:
-            claimName: mongo-data
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: mongo-data
-  labels:
-    app.kubernetes.io/name: mongo
-    app.kubernetes.io/component: data
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 8Gi
+          emptyDir: {}

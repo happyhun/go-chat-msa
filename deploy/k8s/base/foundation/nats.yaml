@@ -114,15 +114,8 @@ spec:
             periodSeconds: 5
             timeoutSeconds: 5
       volumes:
+        - name: data
+          emptyDir: {}
         - name: nats-config
           configMap:
             name: nats-config
-  volumeClaimTemplates:
-    - metadata:
-        name: data
-      spec:
-        accessModes:
-          - ReadWriteOnce
-        resources:
-          requests:
-            storage: 2Gi

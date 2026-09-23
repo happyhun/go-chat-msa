@@ -1,8 +1,10 @@
-SHELL := /usr/bin/env bash
+SHELL := /usr/bin/env bash -e -o pipefail
 .NOTPARALLEL:
 
 KIND_CLUSTER ?= go-chat
 KIND_CONFIG ?= deploy/k8s/clusters/kind-local.yaml
+export KUBE_CONTEXT = kind-$(KIND_CLUSTER)
+KUBECTL = kubectl --context='$(KUBE_CONTEXT)'
 KUBECTL_TIMEOUT ?= 180s
 K6_JOB_NAME ?= k6-c10k
 K6_LOAD_TIMEOUT ?= 30m
@@ -10,31 +12,9 @@ K6_FOLLOW_LOGS ?= true
 K6_MAX_LOG_REQUESTS ?= 4
 
 GO_SERVICES := api-gateway websocket-service user-service chat-service
-K8S_KUSTOMIZE_TARGETS := \
-	deploy/k8s/base \
-	deploy/k8s/base/foundation \
-	deploy/k8s/base/observability \
-	deploy/k8s/base/migrations \
-	deploy/k8s/base/apps \
-	deploy/k8s/base/load \
-	deploy/k8s/overlays/dev \
-	deploy/k8s/overlays/dev/foundation \
-	deploy/k8s/overlays/dev/observability \
-	deploy/k8s/overlays/dev/migrations \
-	deploy/k8s/overlays/dev/apps \
-	deploy/k8s/overlays/dev/load \
-	deploy/k8s/overlays/test \
-	deploy/k8s/overlays/test/foundation \
-	deploy/k8s/overlays/test/observability \
-	deploy/k8s/overlays/test/migrations \
-	deploy/k8s/overlays/test/apps \
-	deploy/k8s/overlays/test/load \
-	deploy/k8s/overlays/qa \
-	deploy/k8s/overlays/qa/foundation \
-	deploy/k8s/overlays/qa/observability \
-	deploy/k8s/overlays/qa/migrations \
-	deploy/k8s/overlays/qa/apps \
-	deploy/k8s/overlays/qa/load
+K8S_ENVS := dev test qa
+K8S_ROOTS := deploy/k8s/base $(addprefix deploy/k8s/overlays/,$(K8S_ENVS))
+K8S_KUSTOMIZE_TARGETS := $(foreach root,$(K8S_ROOTS),$(root) $(addprefix $(root)/,foundation observability migrations apps load))
 
 .PHONY: help
 help:
@@ -44,10 +24,10 @@ help:
 	@printf '  make qa-up           Create kind cluster, build/load qa images, bootstrap qa overlay\n'
 	@printf '  make dev-load        Run k6 C10K load test with 4 k6 worker pods\n'
 	@printf '  make qa-load         Run k6 HPA consistency test in qa Kubernetes namespace\n'
-	@printf '  make k8s-validate    Render all Kustomize bases/overlays\n'
-	@printf '  make dev-down        Delete dev namespace\n'
-	@printf '  make test-down       Delete test namespace\n'
-	@printf '  make qa-down         Delete qa namespace\n'
+	@printf '  make k8s-validate     Render all Kustomize bases/overlays\n'
+	@printf '  make dev-down        Delete dev namespace and associated RBAC\n'
+	@printf '  make test-down       Delete test namespace and associated RBAC\n'
+	@printf '  make qa-down         Delete qa namespace and associated RBAC\n'
 	@printf '  make kind-delete     Delete local kind cluster\n'
 
 .PHONY: check-kubectl
@@ -70,29 +50,29 @@ k8s-validate: check-kubectl
 
 .PHONY: kind-up
 kind-up: check-prereqs
-	@if kind get clusters | grep -qx '$(KIND_CLUSTER)'; then \
+	@clusters=$$(kind get clusters); \
+	if grep -qx '$(KIND_CLUSTER)' <<< "$$clusters"; then \
 		printf 'kind cluster already exists: $(KIND_CLUSTER)\n'; \
-		kubectl config use-context 'kind-$(KIND_CLUSTER)' >/dev/null; \
 	else \
 		kind create cluster --name '$(KIND_CLUSTER)' --config '$(KIND_CONFIG)'; \
 	fi
 	@$(MAKE) kind-tune
-	@kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.15.1/deploy/static/provider/kind/deploy.yaml
-	@kubectl -n ingress-nginx patch configmap ingress-nginx-controller \
+	@$(KUBECTL) apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.15.1/deploy/static/provider/kind/deploy.yaml
+	@$(KUBECTL) -n ingress-nginx patch configmap ingress-nginx-controller \
 		--type=merge \
 		-p '{"data":{"use-forwarded-headers":"true","compute-full-forwarded-for":"true"}}'
-	@kubectl -n ingress-nginx patch deployment ingress-nginx-controller \
+	@$(KUBECTL) -n ingress-nginx patch deployment ingress-nginx-controller \
 		--type=merge \
 		-p '{"spec":{"template":{"spec":{"nodeSelector":{"kubernetes.io/os":"linux","ingress-ready":"true"},"securityContext":{"sysctls":[{"name":"net.core.somaxconn","value":"65535"},{"name":"net.ipv4.ip_local_port_range","value":"10240 65535"}]}}}}}'
-	@kubectl wait --namespace ingress-nginx \
+	@$(KUBECTL) wait --namespace ingress-nginx \
 		--for=condition=ready pod \
 		--selector=app.kubernetes.io/component=controller \
 		--timeout='$(KUBECTL_TIMEOUT)'
 
 .PHONY: kind-tune
 kind-tune: check-prereqs
-	@kubectl config use-context 'kind-$(KIND_CLUSTER)' >/dev/null
-	@for node in $$(kind get nodes --name '$(KIND_CLUSTER)'); do \
+	@nodes=$$(kind get nodes --name '$(KIND_CLUSTER)'); \
+	for node in $$nodes; do \
 		printf 'tuning kernel sysctls on %s\n' "$$node"; \
 		docker exec "$$node" sysctl -w net.core.somaxconn=65535 >/dev/null; \
 		docker exec "$$node" sysctl -w net.ipv4.ip_local_port_range='10240 65535' >/dev/null; \
@@ -115,46 +95,20 @@ kind-tune: check-prereqs
 			fi; \
 			if [ "$$changed" = 1 ]; then systemctl restart kubelet; fi'; \
 	done
-	@kubectl wait --for=condition=Ready nodes --all --timeout='$(KUBECTL_TIMEOUT)'
+	@$(KUBECTL) wait --for=condition=Ready nodes --all --timeout='$(KUBECTL_TIMEOUT)'
 
-.PHONY: build-load-dev-images
-build-load-dev-images: kind-up
+.PHONY: $(addprefix build-load-,$(addsuffix -images,$(K8S_ENVS)))
+$(addprefix build-load-,$(addsuffix -images,$(K8S_ENVS))): build-load-%-images: kind-up
 	@for service in $(GO_SERVICES); do \
-		docker build --build-arg SERVICE_NAME="$$service" -t "go-chat-msa/$$service:dev" .; \
-		kind load docker-image --name '$(KIND_CLUSTER)' "go-chat-msa/$$service:dev"; \
+		docker build --build-arg SERVICE_NAME="$$service" -t "go-chat-msa/$$service:$*" .; \
+		kind load docker-image --name '$(KIND_CLUSTER)' "go-chat-msa/$$service:$*"; \
 	done
-	@docker build -t go-chat-msa/frontend:dev ./frontend
-	@kind load docker-image --name '$(KIND_CLUSTER)' go-chat-msa/frontend:dev
+	@docker build -t go-chat-msa/frontend:$* ./frontend
+	@kind load docker-image --name '$(KIND_CLUSTER)' go-chat-msa/frontend:$*
 
-.PHONY: build-load-test-images
-build-load-test-images: kind-up
-	@for service in $(GO_SERVICES); do \
-		docker build --build-arg SERVICE_NAME="$$service" -t "go-chat-msa/$$service:test" .; \
-		kind load docker-image --name '$(KIND_CLUSTER)' "go-chat-msa/$$service:test"; \
-	done
-	@docker build -t go-chat-msa/frontend:test ./frontend
-	@kind load docker-image --name '$(KIND_CLUSTER)' go-chat-msa/frontend:test
-
-.PHONY: build-load-qa-images
-build-load-qa-images: kind-up
-	@for service in $(GO_SERVICES); do \
-		docker build --build-arg SERVICE_NAME="$$service" -t "go-chat-msa/$$service:qa" .; \
-		kind load docker-image --name '$(KIND_CLUSTER)' "go-chat-msa/$$service:qa"; \
-	done
-	@docker build -t go-chat-msa/frontend:qa ./frontend
-	@kind load docker-image --name '$(KIND_CLUSTER)' go-chat-msa/frontend:qa
-
-.PHONY: dev-up
-dev-up: kind-up build-load-dev-images
-	@K8S_ENV=dev NAMESPACE=go-chat-dev KUBECTL_TIMEOUT='$(KUBECTL_TIMEOUT)' bash deploy/k8s/scripts/bootstrap.sh
-
-.PHONY: test-up
-test-up: kind-up build-load-test-images
-	@K8S_ENV=test NAMESPACE=go-chat-test KUBECTL_TIMEOUT='$(KUBECTL_TIMEOUT)' bash deploy/k8s/scripts/bootstrap.sh
-
-.PHONY: qa-up
-qa-up: kind-up build-load-qa-images
-	@K8S_ENV=qa NAMESPACE=go-chat-qa KUBECTL_TIMEOUT='$(KUBECTL_TIMEOUT)' bash deploy/k8s/scripts/bootstrap.sh
+.PHONY: $(addsuffix -up,$(K8S_ENVS))
+$(addsuffix -up,$(K8S_ENVS)): %-up: build-load-%-images
+	@K8S_ENV=$* NAMESPACE=go-chat-$* KUBECTL_TIMEOUT='$(KUBECTL_TIMEOUT)' bash deploy/k8s/scripts/bootstrap.sh
 
 .PHONY: dev-load
 dev-load: check-kubectl
@@ -176,20 +130,17 @@ qa-load: check-kubectl
 	K6_MAX_LOG_REQUESTS='1' \
 	bash deploy/k8s/scripts/load.sh
 
-.PHONY: dev-down
-dev-down:
-	kubectl delete namespace go-chat-dev --ignore-not-found=true
-
-.PHONY: test-down
-test-down:
-	kubectl delete namespace go-chat-test --ignore-not-found=true
-
-.PHONY: qa-down
-qa-down:
-	kubectl delete apiservice v1beta1.custom.metrics.k8s.io --ignore-not-found=true
-	kubectl delete clusterrole gochat-prometheus-adapter --ignore-not-found=true
-	kubectl delete clusterrolebinding gochat-prometheus-adapter gochat-prometheus-adapter-auth-delegator --ignore-not-found=true
-	kubectl delete namespace go-chat-qa --ignore-not-found=true
+.PHONY: $(addsuffix -down,$(K8S_ENVS))
+$(addsuffix -down,$(K8S_ENVS)): %-down: check-kubectl
+	@if [ '$*' = qa ]; then \
+		$(KUBECTL) delete apiservice v1beta1.custom.metrics.k8s.io --ignore-not-found=true; \
+		$(KUBECTL) delete clusterrole gochat-prometheus-adapter --ignore-not-found=true; \
+		$(KUBECTL) delete clusterrolebinding gochat-prometheus-adapter gochat-prometheus-adapter-auth-delegator --ignore-not-found=true; \
+		$(KUBECTL) -n kube-system delete rolebinding gochat-prometheus-adapter-auth-reader --ignore-not-found=true; \
+	fi
+	@$(KUBECTL) delete clusterrolebinding gochat-alloy-cadvisor-$* --ignore-not-found=true
+	@$(KUBECTL) delete clusterrole gochat-alloy-cadvisor-$* --ignore-not-found=true
+	@$(KUBECTL) delete namespace go-chat-$* --ignore-not-found=true
 
 .PHONY: kind-delete
 kind-delete:

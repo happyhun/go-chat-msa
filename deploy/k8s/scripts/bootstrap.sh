@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+KUBECTL=(kubectl --context "${KUBE_CONTEXT:-kind-${KIND_CLUSTER:-go-chat}}")
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 K8S_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${K8S_DIR}/../.." && pwd)"
@@ -31,27 +33,27 @@ log() {
 apply_kustomize() {
   local path="$1"
   log "kubectl apply -k ${path}"
-  kubectl apply -k "${path}"
+  "${KUBECTL[@]}" apply -k "${path}"
 }
 
 apply_file_if_exists() {
   local path="$1"
   if [[ -f "${path}" ]]; then
     log "kubectl apply -f ${path}"
-    kubectl apply -f "${path}"
+    "${KUBECTL[@]}" apply -f "${path}"
   fi
 }
 
 ensure_namespace() {
   log "ensuring namespace/${NAMESPACE}"
-  kubectl create namespace "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
+  "${KUBECTL[@]}" create namespace "${NAMESPACE}" --dry-run=client -o yaml | "${KUBECTL[@]}" apply -f -
 }
 
 wait_rollout() {
   local deployment
   for deployment in "$@"; do
     log "waiting for deployment/${deployment}"
-    kubectl -n "${NAMESPACE}" rollout status "deployment/${deployment}" --timeout="${TIMEOUT}"
+    "${KUBECTL[@]}" -n "${NAMESPACE}" rollout status "deployment/${deployment}" --timeout="${TIMEOUT}"
   done
 }
 
@@ -59,7 +61,7 @@ wait_rollout_if_exists() {
   local deployments=()
   local deployment
   for deployment in "$@"; do
-    if kubectl -n "${NAMESPACE}" get "deployment/${deployment}" >/dev/null 2>&1; then
+    if "${KUBECTL[@]}" -n "${NAMESPACE}" get "deployment/${deployment}" >/dev/null 2>&1; then
       deployments+=("${deployment}")
     fi
   done
@@ -74,9 +76,9 @@ create_configmap_from_file() {
   local file="$3"
 
   log "creating configmap/${name} from ${file}"
-  kubectl -n "${NAMESPACE}" create configmap "${name}" \
+  "${KUBECTL[@]}" -n "${NAMESPACE}" create configmap "${name}" \
     "--from-file=${key}=${file}" \
-    --dry-run=client -o yaml | kubectl apply -f -
+    --dry-run=client -o yaml | "${KUBECTL[@]}" apply -f -
 }
 
 create_configmap_from_dir() {
@@ -84,9 +86,9 @@ create_configmap_from_dir() {
   local dir="$2"
 
   log "creating configmap/${name} from ${dir}"
-  kubectl -n "${NAMESPACE}" create configmap "${name}" \
+  "${KUBECTL[@]}" -n "${NAMESPACE}" create configmap "${name}" \
     "--from-file=${dir}" \
-    --dry-run=client -o yaml | kubectl apply -f -
+    --dry-run=client -o yaml | "${KUBECTL[@]}" apply -f -
 }
 
 create_alloy_configmap() {
@@ -125,37 +127,37 @@ create_load_test_configmaps() {
 
 delete_previous_migration_jobs() {
   log "deleting previous migration jobs"
-  kubectl -n "${NAMESPACE}" delete job postgres-migrate mongo-migrate --ignore-not-found=true
-  kubectl -n "${NAMESPACE}" wait --for=delete job/postgres-migrate --timeout=60s 2>/dev/null || true
-  kubectl -n "${NAMESPACE}" wait --for=delete job/mongo-migrate --timeout=60s 2>/dev/null || true
+  "${KUBECTL[@]}" -n "${NAMESPACE}" delete job postgres-migrate mongo-migrate --ignore-not-found=true
+  "${KUBECTL[@]}" -n "${NAMESPACE}" wait --for=delete job/postgres-migrate --timeout=60s 2>/dev/null || true
+  "${KUBECTL[@]}" -n "${NAMESPACE}" wait --for=delete job/mongo-migrate --timeout=60s 2>/dev/null || true
 }
 
 wait_job_complete() {
   local job="$1"
 
   log "waiting for job/${job}"
-  if ! kubectl -n "${NAMESPACE}" wait --for=condition=complete "job/${job}" --timeout="${TIMEOUT}"; then
-    kubectl -n "${NAMESPACE}" describe "job/${job}" || true
-    kubectl -n "${NAMESPACE}" logs "job/${job}" --all-containers=true --tail=200 || true
+  if ! "${KUBECTL[@]}" -n "${NAMESPACE}" wait --for=condition=complete "job/${job}" --timeout="${TIMEOUT}"; then
+    "${KUBECTL[@]}" -n "${NAMESPACE}" describe "job/${job}" || true
+    "${KUBECTL[@]}" -n "${NAMESPACE}" logs "job/${job}" --all-containers=true --tail=200 || true
     return 1
   fi
 }
 
 restart_backend_apps() {
   log "restarting core backend deployments after image/config apply"
-  kubectl -n "${NAMESPACE}" rollout restart \
+  "${KUBECTL[@]}" -n "${NAMESPACE}" rollout restart \
     deployment/user-service \
     deployment/chat-service
   wait_rollout user-service chat-service
 
   log "restarting websocket deployment after core backend rollout"
-  kubectl -n "${NAMESPACE}" rollout restart deployment/websocket-service
+  "${KUBECTL[@]}" -n "${NAMESPACE}" rollout restart deployment/websocket-service
   wait_rollout websocket-service
 }
 
 restart_edge_apps() {
   log "restarting edge deployments after backend rollout"
-  kubectl -n "${NAMESPACE}" rollout restart \
+  "${KUBECTL[@]}" -n "${NAMESPACE}" rollout restart \
     deployment/api-gateway \
     deployment/frontend \
     deployment/swagger-ui
@@ -172,7 +174,7 @@ main() {
   ensure_namespace
   apply_kustomize "${OVERLAY_DIR}/foundation"
   wait_rollout postgres mongo redis
-  kubectl -n "${NAMESPACE}" rollout status statefulset/nats --timeout="${TIMEOUT}"
+  "${KUBECTL[@]}" -n "${NAMESPACE}" rollout status statefulset/nats --timeout="${TIMEOUT}"
 
   create_observability_configmaps
   apply_file_if_exists "${OVERLAY_DIR}/observability/prometheus-adapter-auth-reader.yaml"
