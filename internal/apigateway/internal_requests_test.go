@@ -22,7 +22,7 @@ import (
 
 func TestInternalRequestsEscapeRoomIDAndRejectRedirects(t *testing.T) {
 	t.Parallel()
-	for _, operation := range []string{"broadcast", "cleanup"} {
+	for _, operation := range []string{"broadcast", "broadcast after cancellation", "cleanup"} {
 		t.Run(operation, func(t *testing.T) {
 			t.Parallel()
 			var redirected atomic.Bool
@@ -31,7 +31,7 @@ func TestInternalRequestsEscapeRoomIDAndRejectRedirects(t *testing.T) {
 				w.WriteHeader(http.StatusNoContent)
 			}))
 			defer target.Close()
-			requests := make(chan string, 1)
+			requests := make(chan string, 2)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests <- r.RequestURI
 				assert.Equal(t, "internal-secret", r.Header.Get("X-Internal-Secret"))
@@ -53,9 +53,17 @@ func TestInternalRequestsEscapeRoomIDAndRejectRedirects(t *testing.T) {
 			defer router.httpClient.CloseIdleConnections()
 			const roomID = "room/other?query=1#fragment"
 			suffix := "system-messages"
-			if operation == "broadcast" {
+			roomIDs := []string{roomID}
+			switch operation {
+			case "broadcast":
 				router.broadcastSystemMessage(t.Context(), roomID, "user", "join")
-			} else {
+			case "broadcast after cancellation":
+				ctx, cancel := context.WithCancel(t.Context())
+				cancel()
+				roomIDs = append(roomIDs, "second-room")
+				router.broadcastSystemMessagesAsync(ctx, "user", "leave", roomIDs...)
+				router.wg.Wait()
+			case "cleanup":
 				suffix = "sessions"
 				userClient.EXPECT().DeleteRoom(mock.Anything, &userpb.DeleteRoomRequest{RoomId: roomID, RequesterId: "user"}).
 					Return(&userpb.DeleteRoomResponse{}, nil)
@@ -67,11 +75,13 @@ func TestInternalRequestsEscapeRoomIDAndRejectRedirects(t *testing.T) {
 				router.wg.Wait()
 				assert.Equal(t, http.StatusNoContent, recorder.Code)
 			}
-			select {
-			case uri := <-requests:
-				assert.Equal(t, "/internal/rooms/room%2Fother%3Fquery=1%23fragment/"+suffix, uri)
-			default:
-				t.Fatal("internal request was not received")
+			for _, id := range roomIDs {
+				select {
+				case uri := <-requests:
+					assert.Equal(t, "/internal/rooms/"+url.PathEscape(id)+"/"+suffix, uri)
+				default:
+					t.Fatal("internal request was not received")
+				}
 			}
 			assert.False(t, redirected.Load())
 		})

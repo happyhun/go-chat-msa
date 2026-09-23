@@ -1,7 +1,6 @@
 package apigateway
 
 import (
-	"context"
 	"log/slog"
 	"net/http"
 
@@ -137,18 +136,7 @@ func (r *Router) handleDeleteUser(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	username := r.getUsername(req.Context())
-	bgCtx := context.WithoutCancel(req.Context())
-	timeoutCtx, cancel := context.WithTimeout(bgCtx, r.config.APIGateway.HTTPClient.Timeout)
-
-	r.wg.Add(1)
-	go func(ctx context.Context, roomIDs []string, username string) {
-		defer cancel()
-		defer r.wg.Done()
-		for _, roomID := range roomIDs {
-			r.broadcastSystemMessage(ctx, roomID, username, event.SystemEventLeave)
-		}
-	}(timeoutCtx, resp.LeftRoomIds, username)
+	r.broadcastSystemMessagesAsync(req.Context(), r.getUsername(req.Context()), event.SystemEventLeave, resp.LeftRoomIds...)
 }
 
 func (r *Router) handleBatchGetUsers(w http.ResponseWriter, req *http.Request) {

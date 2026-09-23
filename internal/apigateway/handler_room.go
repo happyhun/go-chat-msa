@@ -299,16 +299,7 @@ func (r *Router) handleJoinRoom(w http.ResponseWriter, req *http.Request) {
 
 	w.WriteHeader(http.StatusNoContent)
 
-	username := r.getUsername(req.Context())
-	bgCtx := context.WithoutCancel(req.Context())
-	timeoutCtx, cancel := context.WithTimeout(bgCtx, r.config.APIGateway.HTTPClient.Timeout)
-
-	r.wg.Add(1)
-	go func() {
-		defer cancel()
-		defer r.wg.Done()
-		r.broadcastSystemMessage(timeoutCtx, roomID, username, event.SystemEventJoin)
-	}()
+	r.broadcastSystemMessagesAsync(req.Context(), r.getUsername(req.Context()), event.SystemEventJoin, roomID)
 }
 
 func (r *Router) handleLeaveRoom(w http.ResponseWriter, req *http.Request) {
@@ -329,16 +320,7 @@ func (r *Router) handleLeaveRoom(w http.ResponseWriter, req *http.Request) {
 
 	w.WriteHeader(http.StatusNoContent)
 
-	username := r.getUsername(req.Context())
-	bgCtx := context.WithoutCancel(req.Context())
-	timeoutCtx, cancel := context.WithTimeout(bgCtx, r.config.APIGateway.HTTPClient.Timeout)
-
-	r.wg.Add(1)
-	go func() {
-		defer cancel()
-		defer r.wg.Done()
-		r.broadcastSystemMessage(timeoutCtx, roomID, username, event.SystemEventLeave)
-	}()
+	r.broadcastSystemMessagesAsync(req.Context(), r.getUsername(req.Context()), event.SystemEventLeave, roomID)
 }
 
 func (r *Router) handleListMessages(w http.ResponseWriter, req *http.Request) {
@@ -479,6 +461,19 @@ func (r *Router) getUsername(ctx context.Context) string {
 		return "Unknown"
 	}
 	return username
+}
+
+func (r *Router) broadcastSystemMessagesAsync(ctx context.Context, username, eventType string, roomIDs ...string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), r.config.APIGateway.HTTPClient.Timeout)
+
+	r.wg.Add(1)
+	go func() {
+		defer cancel()
+		defer r.wg.Done()
+		for _, roomID := range roomIDs {
+			r.broadcastSystemMessage(ctx, roomID, username, eventType)
+		}
+	}()
 }
 
 func (r *Router) broadcastSystemMessage(ctx context.Context, roomID, username, eventType string) {
