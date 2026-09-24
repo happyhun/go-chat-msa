@@ -2,7 +2,7 @@
 
 Go로 만든 MSA 채팅 서버이며, 저지연 메시징과 유연한 수평 확장을 목표로 합니다.
 
-Kubernetes 위에서 무상태 웹소켓 서비스를 운영하며, NATS로 메시지를 전달하고 JetStream으로 영속화합니다.
+Kubernetes 위에서 무상태 웹소켓 서비스를 운영하며, JetStream에 기록한 메시지를 NATS로 전달하고 MongoDB에 비동기로 저장합니다.
 
 관측성 확보를 위해 OpenTelemetry 기반 Grafana 스택을 도입했습니다.
 
@@ -15,16 +15,16 @@ Kubernetes 위에서 무상태 웹소켓 서비스를 운영하며, NATS로 메�
 
 ### 관측성 기반의 병목 개선
 
-k6 부하 테스트로 10,000명 동시 접속, 2K Ingress, 200K Egress 환경에서 메시지 P99 레이턴시 50ms를 달성했습니다.
-Docker Compose 기준에서 병목을 제거해 P99 25ms 수준을 확보했고, 이후 K8s 전환과 NATS JetStream 도입 후 동일 머신에서 P99 50ms를 기록했습니다.
+k6 부하 테스트로 10,000명 동시 접속, 2K Ingress, 200K Egress 환경에서 메시지 P99 레이턴시 19ms를 기록했습니다.
+Docker Compose 기준에서 병목을 제거해 최대 워커 P99 25ms를 확보했고, 현재 Kubernetes·NATS 구성에서는 4개 워커 모두 `<50ms` 기준을 통과했습니다.
 
 | 병목 | 증상 | 원인 | 개선 | 결과 |
 | :--- | :--- | :--- | :--- | :--- |
 | Bcrypt CPU 병목 | 10K 가입·로그인 구간에서 HTTP 실패율 99.55%, P99 10s+ 발생 | 요청마다 `bcrypt` 해싱 고루틴이 제한 없이 생성되어 CPU 경합 발생. <br> 타임아웃 후 즉시 재시도되며 로그인 요청이 400,000회 이상으로 폭증 | CPU 코어 수 기준 워커 풀로 동시 해싱 수 제한. <br> 큐 포화 시 `ErrQueueFull` 반환, <br> k6에는 Jitter 백오프 적용 | HTTP 실패율 99.55% → 81%, P99 10s+ → 5.32s |
-| k6 측정 병목 | k6에서 측정한 메시지 레이턴시가 10초 초과 | 단일 k6 프로세스가 초당 200K 수신 메시지를 JSON 파싱하며 JS 싱글스레드 CPU 포화. <br> 메시지 수신 처리가 밀려 측정값이 서버 측보다 훨씬 느리게 기록 | k6 워커를 4개로 분리하고, 전체 VU 중 1%만 메시지를 파싱하는 Probe 패턴 적용 | 클라이언트 병목 해소로 서버 측과 유사한 레이턴시 확보 |
+| k6 측정 병목 | k6에서 측정한 메시지 레이턴시가 10초 초과 | 단일 프로세스의 메트릭 수집·집계에 초당 약 200K 메시지의 계측 부하 집중. <br> 고부하에서 공용 샘플 채널이 일시적으로 포화되면 수신 처리가 대기하며 테일 레이턴시가 커질 수 있음 | k6 워커를 4개로 분리해 수집·집계 경로를 분산하고, Probe 1%로 echo 지연을 측정하며, Probe·Reconnector만 수신 메시지를 파싱 | 클라이언트 병목 해소로 서버 측과 유사한 레이턴시 확보 |
 | 메시지 저장 병목 | 드랍이나 에러 없이 서버 Egress P99 1초, <br> k6 msg_latency P99 2초 발생 | 메시지마다 개별 gRPC 저장 호출을 수행해 초당 약 2,000회 gRPC RTT와 MongoDB write 발생. <br> 단일 호스트에서 저장 경로가 WebSocket 송신 처리와 syscall 경합 | 고정 워커가 500건 단위로 `BatchCreateMessages` 호출. <br> 100ms 타이머로 플러시하고, 저장 실패는 재시도 큐에서 처리 | 서버 Egress P99 1초 → 5ms, <br> k6 msg_latency P99 2초 → 25ms |
 
-상세 병목 분석은 [Docker Compose C10K 병목과 해결 기록](docs/DOCKER_C10K_TROUBLESHOOTING.md)에 정리했습니다.
+위 표는 초기 병목을 해결한 과정입니다. 상세 분석은 [Docker Compose C10K 병목과 해결 기록](docs/DOCKER_C10K_TROUBLESHOOTING.md), 현재 구성의 측정값은 [NATS C10K 보고서](docs/K8S_NATS_C10K_REPORT.md)에 정리했습니다.
 
 ## 스크린샷
 
@@ -73,7 +73,7 @@ flowchart TB
     Client["브라우저"]
 
     subgraph K8s ["Kubernetes 환경"]
-        Ingress["Ingress"]
+        Ingress["Traefik Gateway<br/>Gateway API"]
 
         subgraph Services ["애플리케이션 서비스"]
             AGW["API Gateway"]
@@ -130,7 +130,7 @@ WebSocket 연결은 여러 웹소켓 서비스 인스턴스에 분산됩니다.
 각 인스턴스는 채팅방 ID 기반의 NATS Pub/Sub으로 메시지를 받아, 같은 방의 로컬 세션에 브로드캐스트합니다.
 
 이 구조의 목적은 여러 인스턴스가 같은 방의 연결을 나눠 처리하며 유연하게 수평 확장하는 것입니다.
-웹소켓 서비스는 연결과 로컬 Hub를 관리하고, 메시지 영속화는 JetStream이 담당합니다.
+웹소켓 서비스는 연결과 로컬 Hub를 관리하고, JetStream은 저장 대기 메시지를 보관하며 채팅 서비스가 MongoDB에 저장합니다.
 
 연결 시에는 API 게이트웨이가 발급한 일회성 티켓과 방 멤버십을 확인하고, NATS 구독을 준비한 뒤 WebSocket 연결을 수락합니다.
 참여·나가기 알림과 방 종료는 API 게이트웨이가 내부 HTTP로 요청하며, 요청받은 인스턴스가 Core NATS로 전파해 각 인스턴스의 로컬 세션에 반영합니다.
@@ -139,7 +139,7 @@ WebSocket 연결은 여러 웹소켓 서비스 인스턴스에 분산됩니다.
 축소나 재시작으로 연결이 끊기면 클라이언트가 새 티켓을 발급받아 재연결하고, 연결이 끊긴 동안의 메시지는 MongoDB에 저장된 이력을 조회해 복구합니다.
 
 NATS 연결 단절을 감지하면 readiness를 내리고 기존 세션을 종료합니다.
-방 구독의 slow consumer나 전달 지연 한도 초과를 감지한 경우에도 해당 방의 로컬 세션을 종료해 재연결과 메시지 복구를 유도합니다.
+NATS slow consumer로 유실을 감지하면 NATS를 재연결하고 해당 Pod의 모든 세션을 종료합니다. 전달 지연 한도 초과는 해당 방의 로컬 세션을, 전송 큐 포화는 해당 세션을 종료해 재연결과 메시지 복구를 유도합니다.
 
 ### 웹소켓 서비스 계층 구조
 
@@ -191,7 +191,7 @@ MongoDB에 배치 저장한 뒤 메시지별로 ACK하며, 워커 종료로 ACK�
 
 클라이언트는 조회 시작점을 마지막 수신 ID보다 앞선 시점으로 되감고, 고정한 시작점부터 일정 시간 반복 조회합니다.
 시작점을 최신 메시지로 옮기지 않아야 그보다 작은 ID로 뒤늦게 저장된 메시지도 포함할 수 있기 때문입니다.
-조회 결과는 실시간 메시지와 합쳐 ID 기준으로 정렬하고 중복을 제거합니다.
+조회 결과는 실시간 메시지와 합쳐 UUIDv7 ID로 정렬하고, 서버 ID·클라이언트 메시지 키로 중복을 제거합니다. 재연결 외에도 화면 포커스 복귀와 주기적인 동기화로 늦게 저장된 메시지를 보충합니다.
 
 ### bcrypt 워커 풀
 
@@ -248,9 +248,11 @@ flowchart LR
 | 로그 | Loki | 이벤트 기록 검색, `trace_id` 기준 요청 추적 |
 | 메트릭 | Prometheus | API 레이턴시, 오류율, WebSocket·NATS 지표 확인 |
 | 트레이스 | Tempo | HTTP/gRPC/Redis/DB 호출 흐름 추적 |
-| 프로파일 | Pyroscope | CPU 사용과 코드 병목 분석 |
+| 프로파일 | Pyroscope | CPU·힙 메모리·goroutine과 코드 병목 분석 |
 
 Grafana 대시보드는 전체 상태에서 시작해 API, 실시간 메시지, 저장소, 런타임을 목적에 맞게 확인할 수 있도록 구성했습니다.
+
+NATS 경계에서 트레이스가 이어지지 않는 메시지 전달·저장 경로는 전용 메트릭과 프로파일로 확인합니다. 전달 지연과 함께 발행 실패·큐 포화·저장 적체·DLQ를 살펴봅니다.
 
 상세 계측 항목은 [텔레메트리 카탈로그](docs/TELEMETRY_CATALOG.md)에 정리했습니다.
 
@@ -261,7 +263,7 @@ Kubernetes 매니페스트는 `base`와 환경별 오버레이로 나눕니다. 
 | 환경 | 주요 설정 | 용도 |
 | :--- | :--- | :--- |
 | `dev` | 웹소켓 서비스 Pod 2개 | 개발·C10K 부하 테스트 |
-| `test` | 각 마이크로서비스 Pod 2개 | 다중 Pod E2E·저장 장애 복구 |
+| `test` | Go 서비스별 Pod 2개, Toxiproxy | 다중 Pod E2E·MongoDB 연결 장애 복구 |
 | `qa` | 웹소켓 서비스 Pod 1~2개 자동 확장(HPA), Pod당 목표 연결 100개 | 확장·재연결 검증, 별도 강제 축소 실험 |
 
 API 게이트웨이와 웹소켓 서비스는 ClusterIP, 사용자 서비스와 채팅 서비스는 Headless Service를 사용합니다. 채팅 서비스는 메시지 수락과 MongoDB 조회의 준비 상태를 분리해, DB 장애가 웹소켓 송수신 경로의 준비 상태를 해제하지 않게 합니다.
@@ -270,20 +272,15 @@ API 게이트웨이와 웹소켓 서비스는 ClusterIP, 사용자 서비스와 
 
 ```bash
 go test ./...
-golangci-lint run
-go test -count=1 -tags=integration ./...
-npm --prefix frontend ci
-npm --prefix frontend test
-npm --prefix frontend run lint
-npm --prefix frontend run build
-make k8s-validate
+go test -tags=integration ./...
+go tool task check
 ```
 
 E2E는 `test` 환경을 준비한 뒤 실행합니다.
 
 ```bash
 make test-up
-go test -count=1 -tags=e2e ./test/e2e
+go test -tags=e2e ./test/e2e
 ```
 
 ### 부하·HPA 검증
@@ -300,7 +297,7 @@ make qa-up
 make qa-load
 ```
 
-두 부하 시나리오는 클러스터 내부 Service에 직접 요청하며 Ingress 구간은 측정하지 않습니다. `qa-load`는 웹소켓 서비스 Pod를 1개로 되돌린 뒤 HPA 확장을 검증합니다. 활성 연결 중 2→1 강제 축소는 [HPA 보고서](docs/K8S_JETSTREAM_HPA_REPORT.md#연결-유지-중-websocket-scale-in)의 추가 절차로 수행했습니다.
+두 부하 시나리오는 클러스터 내부 Service에 직접 요청하며 Traefik 구간은 측정하지 않습니다. `qa-load`는 웹소켓 서비스 Pod를 1개로 되돌린 뒤 HPA 확장과 재연결·복구를 검증합니다.
 
 ### 정리
 
@@ -311,53 +308,46 @@ make qa-down
 make kind-delete
 ```
 
-`*-down`은 해당 namespace와 PVC를 삭제합니다. `kind-delete`는 클러스터 전체와 그 데이터를 삭제합니다.
+`*-down`은 해당 namespace와 관련 RBAC을 삭제합니다. `kind-delete`는 클러스터 전체와 그 데이터를 삭제합니다.
+현재 로컬 환경의 저장소는 `emptyDir`을 사용하므로 Pod 교체 시 데이터가 사라집니다.
 
 ## 검증 결과
 
-아래는 2026-09-16에 실행한 JetStream 구성의 검증 결과입니다.
+아래는 2026-09-24에 실행한 Kubernetes·NATS 구성의 C10K 결과입니다.
 
 ### C10K 부하 테스트
 
-로컬 kind Kubernetes v1.37.0의 `dev` 환경에서 k6 워커 4개, 목표 10,000 VU, 100개 방으로 측정했습니다. 웹소켓 서비스·채팅 서비스·NATS의 Pod 수는 각각 2·1·1개입니다.
+로컬 kind Kubernetes v1.37.0의 `dev` 환경에서 k6 v2.3.0 워커 4개, 목표 10,000 VU, 100개 방으로 측정했습니다. 웹소켓 서비스·채팅 서비스·NATS의 Pod 수는 각각 2·1·1개입니다.
 
 | 항목 | 결과 |
 | :--- | :--- |
-| 활성 웹소켓 연결 관측 최대 | 9,996개 |
-| 송신 시도 / echo 지연 표본 | 1,185,961 / 11,666건 |
-| 워커별 메시지 P99 | 38.82 / 36.83 / 42.00 / 50.00ms |
+| 활성 웹소켓 연결 관측 최대 | 9,993개 |
+| 송신 시도 / echo 지연 표본 | 1,187,289 / 6,971건 |
+| 워커별 메시지 P99 | 19 / 16 / 12 / 12ms |
+| 서버 Fanout / Egress 최대 P99 | 1.53 / 8.86ms |
 | 송신 오류 / 메시지 타임아웃 | 0 / 0 |
 | OOM / Pod 재시작 | 0 / 0 |
 | 종료 후 저장 대기 메시지 / DLQ 메시지 | 0 / 0 |
-| `<50ms` 기준 | 워커 4 실패, k6 exit code 99 |
+| `<50ms` 기준 | 4개 워커 모두 PASS |
 
-지연은 표본 측정용 가상 사용자(VU)의 송신부터 자신의 메시지를 돌려받는 echo까지 측정한 값입니다. 워커별 P99를 전체 요청의 통합 P99로 해석하거나, 오류·저장 대기 메시지 0만으로 전체 메시지 무손실을 판단하지 않습니다. 과거 43ms·31ms 결과와는 실행 조건이 달라 JetStream만의 비용을 분리할 수 없습니다.
+지연은 표본 측정용 가상 사용자(VU)의 송신부터 자신의 메시지를 돌려받는 echo까지 측정한 값입니다. 워커별 P99를 전체 요청의 통합 P99로 해석하거나, 오류·저장 대기 메시지 0만으로 전체 메시지 무손실을 판단하지 않습니다. 서버 값은 Pod별 전체 실행 P99 중 최댓값입니다.
 
-환경과 집계 기준은 [JetStream C10K 보고서](docs/K8S_JETSTREAM_C10K_REPORT.md)에 있습니다.
+환경과 서비스별 자원 사용량은 [NATS C10K 보고서](docs/K8S_NATS_C10K_REPORT.md)에 있습니다.
 
 ### 웹소켓 서비스 HPA·장애 복구
 
-로컬 kind `qa` 환경에서 HPA 1→2 확장과 별도 강제 2→1 축소를 검증했습니다.
+로컬 kind `qa` 환경에서 HPA 1→2 확장과 별도 강제 2→1 축소를 검증했습니다. 확장·축소 중 메시지 송수신과 재연결 후 이력 동기화가 정상 동작했고, 최종 누락·중복 없이 메시지 정합성을 확인했습니다. 모든 k6 통과 기준을 충족했습니다.
 
-| 시나리오 | 관측 결과 |
-| :--- | :--- |
-| HPA 확장 | 송신·echo·MongoDB 문서 각각 11,985건 |
-| 활성 연결 중 강제 축소 | 송신·echo·MongoDB 문서 각각 12,239건, 계획되지 않은 연결 종료 99건 |
-| 위 두 실행 | DB 미반영·echo 타임아웃·동기화 오류·최종 누락·중복 실시간 전달 0 |
-| MongoDB 중단·복구, 채팅 서비스 재시작·Pod 1→3→1, 같은 PVC의 NATS 재시작 | 단계별 누적 echo ID 10→18→26→34건과 최종 DB 집합 일치 |
-| 장애 복구 단계 종료 | 누락·논리 중복·저장 대기 메시지·DLQ 메시지 0 |
+`test` E2E는 MongoDB 연결 장애와 저장 워커 재시작·Pod 수 변경을 다룹니다. echo로 확인한 메시지 집합과 최종 DB 결과를 대조하고, 중복·저장 대기량·DLQ를 함께 확인합니다.
 
-HPA 결과는 echo로 확인한 ID 집합을 기준으로 합니다. 직접 `PubAck`와 DB를 대조한 별도 통합 테스트는 정상 메시지 52건 범위입니다. 장시간 장애, 네트워크 지연 주입, NATS 중단 중 신규 송신, 호스트·디스크 손실은 이 실행으로 검증하지 않았습니다.
-
-재현 절차와 해석 범위는 [JetStream HPA·장애 복구 보고서](docs/K8S_JETSTREAM_HPA_REPORT.md)에 있습니다.
+검증 범위와 장애 주입 방식은 [설계 문서](docs/DESIGN.md#62-장애-복구와-정합성-검증)에 정리했습니다.
 
 ## 더 살펴보기
 
 | 문서 | 내용 |
 | :--- | :--- |
 | [DESIGN.md](docs/DESIGN.md) | 전체 설계와 트레이드오프 |
-| [K8S_JETSTREAM_C10K_REPORT.md](docs/K8S_JETSTREAM_C10K_REPORT.md) | JetStream 구성의 C10K 결과 |
-| [K8S_JETSTREAM_HPA_REPORT.md](docs/K8S_JETSTREAM_HPA_REPORT.md) | HPA 확장·강제 축소, 저장 장애 복구 결과 |
+| [K8S_NATS_C10K_REPORT.md](docs/K8S_NATS_C10K_REPORT.md) | NATS 구성의 C10K 결과 |
 | [RFC-0002](docs/rfcs/0002-jetstream-durable-message-persistence.md) | JetStream 채택 결정·검증 결과·후속 과제 |
 | [K8S_C10K_REPORT.md](docs/K8S_C10K_REPORT.md) | JetStream 도입 전 Kubernetes C10K 기록 |
 | [TELEMETRY_CATALOG.md](docs/TELEMETRY_CATALOG.md) | 로그/메트릭/트레이스/프로파일 카탈로그 |
