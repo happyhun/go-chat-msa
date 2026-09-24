@@ -1,4 +1,5 @@
-import { useEffect, useId, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useId, useRef } from 'react'
+import { useDialog } from '../hooks/useDialog'
 
 interface Props {
   title: string
@@ -23,39 +24,10 @@ export default function ConfirmModal({
 }: Props) {
   const titleId = useId()
   const descriptionId = useId()
-  const dialogRef = useRef<HTMLDivElement>(null)
   const cancelRef = useRef<HTMLButtonElement>(null)
   const confirmRef = useRef<HTMLButtonElement>(null)
 
-  useEffect(() => {
-    if (danger) cancelRef.current?.focus()
-    else confirmRef.current?.focus()
-  }, [danger])
-
-  useEffect(() => {
-    const handleKey = (e: globalThis.KeyboardEvent) => {
-      if (e.key === 'Escape' && !loading) onCancel()
-    }
-    document.addEventListener('keydown', handleKey)
-    return () => document.removeEventListener('keydown', handleKey)
-  }, [loading, onCancel])
-
-  const handleFocusTrap = (e: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (e.key !== 'Tab') return
-    const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
-      'button, [tabindex]:not([tabindex="-1"])',
-    )
-    if (!focusable || focusable.length === 0) return
-    const first = focusable[0]
-    const last = focusable[focusable.length - 1]
-    if (e.shiftKey && document.activeElement === first) {
-      e.preventDefault()
-      last.focus()
-    } else if (!e.shiftKey && document.activeElement === last) {
-      e.preventDefault()
-      first.focus()
-    }
-  }
+  const { dialogRef, handleFocusTrap } = useDialog(onCancel, loading, danger ? cancelRef : confirmRef)
 
   return (
     <div
@@ -64,6 +36,7 @@ export default function ConfirmModal({
     >
       <div
         ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
