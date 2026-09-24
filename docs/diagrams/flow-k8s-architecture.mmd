@@ -1,105 +1,64 @@
 ---
+title: 시스템 개요 — Kubernetes 실행 아키텍처
 config:
   layout: elk
+  theme: neutral
+  flowchart:
+    wrappingWidth: 240
 ---
 flowchart TB
-    subgraph External ["외부"]
-        direction LR
-        Client["브라우저"]
+    Client["브라우저"] -->|"HTTP / WebSocket"| Edge["Traefik Gateway<br/>Gateway API · HTTPRoute"]
+    Edge -->|"/ · /docs"| Web["Frontend · Swagger UI"]
+
+    subgraph Services ["애플리케이션 서비스"]
+        AGW["API Gateway<br/>REST · 인증 · 티켓 발급"]
+        WSS["WebSocket Service<br/>연결 · 방별 브로드캐스트"]
+        US["User Service<br/>사용자 · 방 · 멤버십"]
+        CS["Chat Service<br/>메시지 저장 · 이력 조회"]
+        AGW -->|"gRPC"| US
+        AGW -->|"gRPC"| CS
+        AGW -->|"내부 HTTP · 방 알림·종료"| WSS
+        WSS -->|"gRPC · 멤버십"| US
     end
+    Edge -->|"/api · prefix 제거"| AGW
+    Edge <-->|"/ws"| WSS
 
-    subgraph K8s ["Kubernetes 환경"]
-        direction TB
-
-        Ingress["Ingress nginx"]
-
-        subgraph Runtime ["서비스 런타임"]
-            direction TB
-
-            subgraph Services ["애플리케이션 서비스"]
-                direction TB
-
-                subgraph Gateway ["진입 계층"]
-                    direction LR
-                    AGW["API Gateway"]
-                    WSS["WebSocket Service"]
-                end
-
-                subgraph Domain ["도메인 계층"]
-                    direction LR
-                    US["User Service"]
-                    CS["Chat Service"]
-                end
-            end
-
-            subgraph NATS ["NATS"]
-                direction TB
-                Core["Core Pub/Sub"]
-                JS[("JetStream")]
-            end
-
-            subgraph State ["상태 저장소"]
-                direction LR
-
-                subgraph Data ["영속 저장소"]
-                    direction LR
-                    PG[("PostgreSQL")]
-                    MG[("MongoDB")]
-                end
-
-                subgraph Control ["제어 상태 저장소"]
-                    direction LR
-                    RD[("Redis")]
-                end
-            end
-        end
-
-        subgraph Observability ["관측성"]
-            direction LR
-            Alloy["Alloy"]
-            NATSExporter["NATS exporter"]
-            K8sMetrics["kube-state-metrics · cAdvisor"]
-            Prometheus[("Prometheus")]
-            Loki[("Loki")]
-            Tempo[("Tempo")]
-            Pyroscope[("Pyroscope")]
-            Grafana["Grafana"]
-        end
+    subgraph Messaging ["메시징 · NATS"]
+        JS[("JetStream<br/>채팅 기록")]
+        Core["Core Pub/Sub<br/>채팅 · 시스템 알림 · 방 종료"]
+        JS -->|"RePublish"| Core
     end
-
-    Client == "HTTP / WebSocket" ==> Ingress
-    Ingress -- "/api · REST 요청" --> AGW
-    Ingress <-->|"/ws · WebSocket 송수신"| WSS
-    Ingress -- "/grafana · 대시보드 요청" --> Grafana
-
-    AGW -- "gRPC · 사용자·방 관리" --> US
-    AGW -- "gRPC · 메시지 조회" --> CS
-    AGW -- "내부 HTTP · 참여·나가기 알림, 방 종료" --> WSS
-    WSS -- "gRPC · 멤버십 확인" --> US
-
     WSS <-->|"채팅 발행 · PubAck"| JS
-    JS -- "기록 후 RePublish" --> Core
-    WSS <-->|"시스템 알림·방 종료 발행 / 채팅·이벤트 구독"| Core
-    CS <-->|"durable Pull · 메시지 전달·ACK·NAK·DLQ"| JS
+    WSS <-->|"발행·구독"| Core
+    CS <-->|"durable pull · ACK"| JS
 
-    US -- "사용자·방·멤버십 저장·조회" --> PG
-    US -- "refresh token 관리" --> RD
-    CS -- "메시지 배치 저장·조회" --> MG
-    AGW -- "티켓 발급·요청 제한" --> RD
-    WSS -- "티켓 소비·연결 제한" --> RD
-    MG ~~~ RD
+    subgraph State ["저장소"]
+        PG[("PostgreSQL<br/>사용자 · 방 · 멤버십")]
+        MG[("MongoDB<br/>메시지 이력")]
+        RD[("Redis<br/>토큰 · 티켓 · 요청 제한")]
+    end
+    US --> PG
+    CS --> MG
+    US -->|"refresh token"| RD
+    AGW -->|"티켓 발급 · 요청 제한"| RD
+    WSS -->|"티켓 소비 · 연결 제한"| RD
 
-    Services -. "OTLP 메트릭·트레이스 push<br/>Pod 로그 수집" .-> Alloy
-    State -. "Pod 로그 수집" .-> Alloy
-    NATS -. "Pod 로그 수집" .-> Alloy
-    Services -. "프로파일 push" .-> Pyroscope
-    NATS -. "모니터링 API 응답" .-> NATSExporter
-    NATSExporter -. "메트릭 수집" .-> Alloy
-    K8sMetrics -. "메트릭 수집" .-> Alloy
-    Alloy -- "메트릭 전송" --> Prometheus
-    Alloy -- "로그 전송" --> Loki
-    Alloy -- "트레이스 전송" --> Tempo
-    Grafana -- "메트릭 조회" --> Prometheus
-    Grafana -- "로그 조회" --> Loki
-    Grafana -- "트레이스 조회" --> Tempo
-    Grafana -- "프로파일 조회" --> Pyroscope
+    subgraph Observability ["관측성 · 점선은 수집·조회 경로"]
+        Sources["서비스 OTLP · Pod 로그<br/>NATS exporter · K8s 메트릭"]
+        Alloy["Alloy<br/>수집 · 전달"]
+        Signals[("Prometheus · Loki · Tempo<br/>메트릭 · 로그 · 트레이스")]
+        Profiles[("Pyroscope<br/>서비스 프로파일 push")]
+        Grafana["Grafana"]
+        Sources -.-> Alloy
+        Alloy -.-> Signals
+        Grafana -. "조회" .-> Signals
+        Grafana -. "조회" .-> Profiles
+    end
+    Edge -. "/grafana" .-> Grafana
+
+    classDef service fill:#eaf2ff,stroke:#4778ad,color:#183650
+    classDef messaging fill:#fff3da,stroke:#aa7b26,color:#513b16
+    classDef storage fill:#e9f5ef,stroke:#56866c,color:#244633
+    class AGW,WSS,US,CS service
+    class JS,Core messaging
+    class PG,MG,RD storage

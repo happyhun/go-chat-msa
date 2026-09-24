@@ -1,48 +1,80 @@
+---
+title: 연결 상세 — WebSocket 준비·확정·취소
+config:
+  theme: base
+  themeVariables:
+    actorBkg: '#f8fafc'
+    actorBorder: '#64748b'
+    actorTextColor: '#0f172a'
+    actorLineColor: '#cbd5e1'
+    signalColor: '#334155'
+    signalTextColor: '#0f172a'
+    noteBkgColor: '#ffffff'
+    noteBorderColor: '#94a3b8'
+    noteTextColor: '#334155'
+    labelBoxBkgColor: '#f8fafc'
+    labelBoxBorderColor: '#94a3b8'
+    labelTextColor: '#334155'
+    loopTextColor: '#334155'
+  sequence:
+    mirrorActors: false
+    actorMargin: 30
+    messageMargin: 25
+---
 sequenceDiagram
     autonumber
     participant C as 클라이언트
-    participant I as Ingress / Service
-    participant R as websocket Router
+    participant R as WS Router
     participant Redis as Redis
-    participant U as user-service
+    participant U as User Service
     participant M as Manager
-    participant N as NATS
+    participant N as NATS Core
     participant H as 로컬 Hub
 
-    C->>I: GET /ws?room_id=...&ticket=...
-    I->>R: 준비된 Pod로 연결 분산
-    R->>Redis: IP 제한·티켓 GETDEL
-    Redis-->>R: user_id
-    R->>U: 방 멤버십 확인
-    U-->>R: 가입 정보
-    R->>M: PrepareRegister(room_id)
-    opt 로컬 Hub 없음
-        M->>N: Subscribe room.msg.roomID
-        M->>N: Flush
-        N-->>M: 구독 준비 결과
+    rect rgb(241, 246, 255)
+        Note over C,H: 1. 요청 검증
+        C->>R: GET /ws?room_id=...&ticket=...
+        Note over C,R: Traefik Gateway가 준비된 Pod로 연결 분산
+        R->>Redis: IP 제한 확인 · 티켓 GETDEL
+        Redis-->>R: user_id
+        R->>R: room_id 형식 검증
+        R->>U: VerifyRoomMember
+        U-->>R: 검증 결과
+        Note over C,U: 실패 시 HTTP 응답으로 종료<br/>429 요청 제한 · 401 티켓 · 400 room_id<br/>403 미가입 · 500 의존 서비스 오류
     end
-    alt 준비 실패
-        M-->>R: 준비 오류
-        R-->>C: HTTP 오류 · 일시 사용 불가는 503
-    else 준비 성공
+
+    rect rgb(238, 248, 242)
+        Note over C,H: 2. 방 구독 준비
+        R->>M: PrepareRegister(room_id)
+        M->>M: NATS 연결 상태 · Hub 종료 여부 확인
+        opt 로컬 Hub 없음
+            M->>N: Subscribe room.msg.roomID · Flush
+            N-->>M: 구독 준비 결과
+        end
+        break 준비 실패
+            M-->>R: 준비 오류
+            R-->>C: HTTP 오류<br/>일시 사용 불가 시 503 · Retry-After: 1
+        end
         M->>H: 새 Hub 시작 또는 기존 Hub 재사용
         M-->>R: Registration
-        R->>R: Origin 검사·WebSocket upgrade
-        alt upgrade 실패
+    end
+
+    rect rgb(255, 248, 234)
+        Note over C,H: 3. Upgrade와 세션 등록
+        R->>R: Origin 검사 · WebSocket upgrade
+        break Upgrade 실패
             R->>M: Cancel
             R-->>C: HTTP 오류
-        else upgrade 성공
-            R-->>C: 101 Switching Protocols
-            R->>M: Commit(conn, user_id)
-            alt 등록 성공
-                M->>H: 고유 session ID로 등록
-                H->>H: readPump / writePump 시작
-                Note over C,H: 같은 사용자의 여러 연결 허용
-            else 등록 실패
-                M-->>R: 등록 오류
-                R->>M: Cancel
-                R-->>C: 업그레이드된 연결 닫기
-            end
         end
-        Note over M,H: Cancel 후 세션·대기 등록이 없는 Hub 정리
+        R-->>C: 101 Switching Protocols
+        R->>M: Commit(conn, user_id)
+        alt 등록 성공
+            M->>H: 고유 session ID로 등록
+            H->>H: readPump / writePump 시작
+        else 등록 실패
+            M-->>R: 등록 오류
+            R->>M: Cancel
+            R-->>C: 연결 닫기
+        end
     end
+    Note over M,H: 같은 사용자의 여러 세션 허용<br/>취소·등록 실패 시 이번 준비에서 만든 Hub만 정리 대상<br/>활성 세션이 없으면 종료 후 구독 해제

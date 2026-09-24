@@ -1,49 +1,78 @@
+---
+title: 복구 상세 — 재연결과 저장 지연을 고려한 반복 조회
+config:
+  theme: base
+  themeVariables:
+    actorBkg: '#f8fafc'
+    actorBorder: '#64748b'
+    actorTextColor: '#0f172a'
+    actorLineColor: '#cbd5e1'
+    signalColor: '#334155'
+    signalTextColor: '#0f172a'
+    noteBkgColor: '#ffffff'
+    noteBorderColor: '#94a3b8'
+    noteTextColor: '#334155'
+    labelBoxBkgColor: '#f8fafc'
+    labelBoxBorderColor: '#94a3b8'
+    labelTextColor: '#334155'
+    loopTextColor: '#334155'
+  sequence:
+    mirrorActors: false
+    actorMargin: 30
+    messageMargin: 25
+---
 sequenceDiagram
     autonumber
     participant C as 클라이언트
-    participant Old as 종료할 WS Pod
-    participant API as api-gateway
-    participant New as 새 연결 WS Pod
-    participant JS as NATS JetStream / Core
-    participant Chat as chat-service
+    participant WS as WS Pod
+    participant API as API Gateway
+    participant JS as NATS JetStream
+    participant Chat as Chat Service
     participant DB as MongoDB
 
-    C->>Old: 사용자 chat frame
-    Old->>JS: chat.persist.roomID 발행
-    par 발행 응답
-        JS-->>Old: PubAck
-    and 실시간 전달
-        JS-->>Old: room.msg.roomID RePublish
-        Old-->>C: echo · frame_no
+    rect rgb(241, 246, 255)
+        Note over C,DB: 1. 연결 단절과 재접속
+        C->>WS: chat · client_msg_id
+        WS->>JS: chat.persist.roomID 발행
+        JS-->>WS: PubAck · 브로커 기록 확인
+        Note over WS,JS: PubAck는 클라이언트 수신 확인이 아님<br/>실시간 echo와 MongoDB 저장은 별도 진행
+        WS-->>C: 연결 종료
+        Note over C,WS: Pod 종료 · NATS 단절·slow consumer<br/>전달 지연 초과 · 세션 큐 overflow 등
+        C->>C: jitter backoff
+        C->>API: POST /api/auth/ws-ticket
+        API-->>C: 새 ticket
+        C->>WS: /ws 재접속 · Traefik Gateway 경유
+        Note over C,WS: 동일 또는 다른 Pod로 연결<br/>검증·등록 상세는 seq-websocket 참고
+        WS-->>C: 101 Switching Protocols
+        Note over C,API: 자동 재시도 최대 20회 · 티켓 발급 401·403·429 시 중단<br/>30초 이상 연결 유지 후 끊기면 재시도 횟수 초기화
     end
-    Note over Old: scale-in 또는 Pod 재시작
-    Old-->>C: 연결 종료 · shutdown
-    Old->>JS: 방 구독 해제
-    Note over C: jitter backoff·새 연결 시도
-    C->>API: POST /api/auth/ws-ticket
-    API-->>C: 새 ticket
-    C->>New: /ws 연결 · Ingress 경유
-    New->>New: 티켓 소비·멤버십 확인
-    New->>JS: 방 구독 + Flush
-    New-->>C: Upgrade·세션 등록
-    C->>C: 고정 recovery anchor · 2초 되감기
-    par 비동기 저장 · 연결 종료와 독립적으로 진행
-        Chat->>JS: shared durable consumer pull
-        JS-->>Chat: 저장 대기 메시지
-        Chat->>DB: worker 배치 저장
-        DB-->>Chat: 성공
-        Chat->>JS: 원본 ACK
-    and 복구 조회
-        loop 최대 60초 · 매 반복은 같은 anchor에서 시작
-            C->>API: GET /api/rooms/roomID/messages?after_id=cursor
-            Note over API: user-service에서 가입 시각 확인
-            API->>Chat: SyncMessages
-            Chat->>DB: 가입 시각 이후·ID 오름차순 조회
-            DB-->>Chat: 저장된 메시지
-            Chat-->>API: messages + has_more
-            API-->>C: messages + has_more
-            C->>C: ID·클라이언트 키로 중복 제거·정렬
-            Note over C: has_more이면 페이지 cursor만 전진<br/>마지막 페이지 뒤 jitter backoff·anchor부터 재조회
+
+    rect rgb(238, 248, 242)
+        Note over C,DB: 2. 복구 기준점 설정
+        C->>C: onConnected → recover
+        Note over C,API: 마지막 수신 ID를 2초 되감기<br/>기존 anchor와 더 이른 값을 sessionStorage에 유지
+    end
+
+    rect rgb(255, 248, 234)
+        Note over C,DB: 3. 저장 지연을 고려한 반복 조회
+        par 비동기 저장 · WS 연결과 독립
+            Chat->>JS: shared durable pull
+            JS-->>Chat: 저장 대기 메시지
+            Chat->>DB: 배치 저장
+            DB-->>Chat: 성공 또는 동일 내용 중복
+            Chat->>JS: 원본 ACK
+        and 이력 복구
+            loop 최대 60초 · 매 반복은 고정 anchor에서 시작
+                C->>API: GET /api/rooms/roomID/messages<br/>after_id=cursor · limit=1000
+                Note over API: User Service에서<br/>멤버십·가입 시각 확인
+                API->>Chat: SyncMessages<br/>cursor + joined_at
+                Chat->>DB: 가입 시각 이후 · cursor 초과<br/>ID 오름차순 조회
+                DB-->>Chat: 저장된 메시지
+                Chat-->>API: messages + has_more
+                API-->>C: messages + has_more
+                C->>C: 중복 제거 · ID 정렬
+                Note over C,API: has_more이면 페이지 cursor 전진<br/>마지막 페이지 뒤 backoff · 같은 anchor부터 재조회
+            end
         end
     end
-    Note over C,DB: 빈 응답으로 anchor를 전진시키지 않음<br/>별도로 30초마다 최근 cursor sync<br/>재시도 기간 밖의 완전성은 보장하지 않음
+    Note over C,DB: 빈 응답으로 anchor를 전진시키지 않음 · 조회 기간 밖의 완전성은 보장하지 않음<br/>focus·수동 복구·재전송에도 recover · 별도로 30초마다 최근 ID를 2초 되감아 동기화<br/>시스템 알림은 저장·복구 제외

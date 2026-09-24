@@ -1,23 +1,38 @@
+---
+title: 메시지 개요 — 실시간 전달과 비동기 저장·복구
+config:
+  theme: neutral
+  flowchart:
+    wrappingWidth: 240
+---
 flowchart TB
-    Client[클라이언트<br/>client_msg_id 유지] --> Validate[Session<br/>제한·형식·본문 검증]
-    Validate --> Publish[Manager<br/>UUIDv7 생성·동기 발행]
-    Publish --> JS[(CHAT_PERSIST<br/>chat.persist.roomID)]
-    JS -->|PubAck| Accepted[서버 수락 확인]
-    JS -->|stream write 후 RePublish| Core[Core NATS<br/>room.msg.roomID]
-    Core --> Hubs[구독한 모든 Pod<br/>로컬 Hub fan-out]
-    Hubs --> Frame[세션 큐<br/>frame_no 포함]
-    Frame --> Merge[프론트엔드<br/>중복 제거·UUIDv7 정렬]
+    Client["클라이언트 전송<br/>재전송 시 client_msg_id 유지"] --> WS["WebSocket Service<br/>검증 · UUIDv7 생성 · 발행"]
+    WS -->|"발행 · PubAck 대기"| JS[("NATS JetStream<br/>CHAT_PERSIST · 브로커 기록")]
 
-    JS -->|shared durable pull| Worker[chat-service worker<br/>최대 500개 / 100ms]
-    Worker -->|유효한 chat| Mongo[(MongoDB InsertMany<br/>unordered · w:1 j:true)]
-    Mongo -->|성공·같은 내용의 중복| Ack[원본 ACK]
-    Mongo -->|일시 오류·결과 불명| Retry[delayed NAK<br/>연속 실패 시 pull 중단·probe]
-    Mongo -->|영구 충돌·검증 오류| DLQ[DLQ publish]
-    Worker -->|파싱·검증 실패| DLQ
-    DLQ -->|DLQ PubAck 성공| Ack
-    DLQ -->|발행 실패| DLQRetry[30초 delayed NAK<br/>원본 유지]
+    subgraph Live ["1. 실시간 전달"]
+        Core["NATS Core<br/>방별 메시지 구독"] --> Hubs["구독한 모든 WS Pod<br/>로컬 Hub → 세션"]
+        Hubs --> Echo["WebSocket 전달<br/>발신자에게도 echo"]
+        System["참여·나가기 알림<br/>저장·복구 제외"] -. "직접 발행" .-> Core
+    end
+    JS -->|"기록 후 RePublish"| Core
 
-    Trigger[reconnect · frame gap<br/>focus · 수동 복구] --> Recovery[고정 anchor · 2초 되감기<br/>최대 60초 REST 반복 조회]
-    Recovery --> Query[api-gateway → chat-service<br/>MongoDB 이력 조회]
-    Query --> Merge
-    System[참여·나가기 시스템 알림] -->|Core 발행 · 저장 제외| Core
+    subgraph Persistence ["2. 비동기 저장"]
+        Worker["Chat Service<br/>shared durable pull"] --> Save["MongoDB 배치 저장"]
+        Save -->|"성공 · 동일 내용 중복"| Ack["원본 ACK"]
+        Save -. "일시 오류" .-> Retry["delayed NAK · 재시도<br/>연속 실패 시 pull 중단·probe"]
+        Worker -. "잘못된 메시지" .-> DLQ["DLQ 기록 후 원본 ACK<br/>DLQ 실패 시 원본 재시도"]
+        Save -. "영구 오류" .-> DLQ
+    end
+    JS --> Worker
+
+    subgraph Recovery ["3. 이력 복구"]
+        Trigger["접속 · focus · 재전송<br/>수동 복구 · 주기 동기화"] --> API["API Gateway<br/>멤버십 확인"]
+        API --> Read["Chat Service<br/>MongoDB에 저장된 이력 조회"]
+    end
+    JS ~~~ Trigger
+    Echo --> Merge["클라이언트 반영<br/>ID·클라이언트 키로 중복 제거<br/>ID 정렬"]
+    Read --> Merge
+
+    style Live fill:#f1f6ff,stroke:#4778ad,color:#183650
+    style Persistence fill:#fff8ea,stroke:#aa7b26,color:#513b16
+    style Recovery fill:#eef8f2,stroke:#56866c,color:#244633

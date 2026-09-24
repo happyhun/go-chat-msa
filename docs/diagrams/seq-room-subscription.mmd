@@ -1,30 +1,67 @@
+---
+title: 구독 상세 — 여러 Pod의 방 구독과 로컬 Hub 생명주기
+config:
+  theme: base
+  themeVariables:
+    actorBkg: '#f8fafc'
+    actorBorder: '#64748b'
+    actorTextColor: '#0f172a'
+    actorLineColor: '#cbd5e1'
+    signalColor: '#334155'
+    signalTextColor: '#0f172a'
+    noteBkgColor: '#ffffff'
+    noteBorderColor: '#94a3b8'
+    noteTextColor: '#334155'
+    labelBoxBkgColor: '#f8fafc'
+    labelBoxBorderColor: '#94a3b8'
+    labelTextColor: '#334155'
+    loopTextColor: '#334155'
+  sequence:
+    mirrorActors: false
+    actorMargin: 30
+    messageMargin: 25
+---
 sequenceDiagram
     autonumber
     participant A as 클라이언트 A
-    participant B as 클라이언트 B
-    participant WA as websocket-service A
-    participant WB as websocket-service B
-    participant U as user-service
+    participant WA as WS Pod A
     participant N as NATS Core
+    participant WB as WS Pod B
+    participant B as 클라이언트 B
+    participant U as User Service
 
-    A->>WA: 새 연결 · 티켓 검증 후
-    WA->>U: 방 멤버십 확인
-    U-->>WA: 가입 확인
-    WA->>N: Subscribe room.msg.roomID + Flush
-    N-->>WA: 준비 완료
-    WA-->>A: Upgrade·로컬 Hub 등록
-    B->>WB: 같은 방 새 연결 · 티켓 검증 후
-    WB->>U: 방 멤버십 확인
-    U-->>WB: 가입 확인
-    WB->>N: Subscribe 같은 room.msg.roomID + Flush
-    N-->>WB: 준비 완료
-    WB-->>B: Upgrade·로컬 Hub 등록
-    Note over WA,N: 일반 subscription · queue group 없음
-    N-->>WA: JetStream RePublish 메시지
-    N-->>WB: 같은 메시지
-    WA-->>A: 로컬 fan-out
-    WB-->>B: 로컬 fan-out
-    A->>WA: 연결 종료
-    Note over WA: 마지막 세션 종료 후 idle timeout
-    WA->>N: Unsubscribe
-    Note over WB,N: B의 방 구독과 연결은 유지
+    rect rgb(241, 246, 255)
+        Note over A,U: 1. Pod별 방 구독 생성
+        A->>WA: 새 연결 · 티켓 검증 후
+        WA->>U: 방 멤버십 확인
+        U-->>WA: 가입 확인
+        WA->>N: Subscribe room.msg.roomID · Flush
+        N-->>WA: 준비 완료
+        WA-->>A: Upgrade · 로컬 Hub 등록
+        B->>WB: 같은 방 새 연결 · 티켓 검증 후
+        WB->>U: 방 멤버십 확인
+        U-->>WB: 가입 확인
+        WB->>N: 같은 subject 구독 · Flush
+        N-->>WB: 준비 완료
+        WB-->>B: Upgrade · 로컬 Hub 등록
+        Note over WA,WB: 로컬 Hub가 없을 때만 구독 생성<br/>같은 Pod·방의 후속 연결은 Hub·구독 재사용
+    end
+
+    rect rgb(238, 248, 242)
+        Note over A,U: 2. 모든 구독 Pod에 전달
+        Note over WA,WB: 일반 subscription · queue group 없음
+        N-->>WA: JetStream RePublish 메시지
+        N-->>WB: 같은 메시지
+        WA-->>A: 로컬 fan-out
+        WB-->>B: 로컬 fan-out
+    end
+
+    rect rgb(255, 248, 234)
+        Note over A,U: 3. 빈 Hub 정리
+        A->>WA: 마지막 세션 연결 종료
+        Note over WA: idle timeout 대기<br/>새 세션 등록 시 타이머 취소
+        WA->>WA: 계속 비어 있으면 Hub 종료
+        WA->>N: Unsubscribe room.msg.roomID
+        Note over WB,B: B의 구독·연결은 유지
+    end
+    Note over WA,WB: 방 메시지 구독과 별도로 각 Pod는 시작 시<br/>room.event.*를 구독해 방 종료 이벤트 수신

@@ -1,30 +1,71 @@
+---
+title: 인증 상세 — 로그인·토큰 갱신·일회성 티켓
+config:
+  theme: base
+  themeVariables:
+    actorBkg: '#f8fafc'
+    actorBorder: '#64748b'
+    actorTextColor: '#0f172a'
+    actorLineColor: '#cbd5e1'
+    signalColor: '#334155'
+    signalTextColor: '#0f172a'
+    noteBkgColor: '#ffffff'
+    noteBorderColor: '#94a3b8'
+    noteTextColor: '#334155'
+    labelBoxBkgColor: '#f8fafc'
+    labelBoxBorderColor: '#94a3b8'
+    labelTextColor: '#334155'
+    loopTextColor: '#334155'
+  sequence:
+    mirrorActors: false
+    actorMargin: 30
+    messageMargin: 25
+---
 sequenceDiagram
     autonumber
     participant C as 클라이언트
-    participant API as api-gateway
-    participant U as user-service
+    participant API as API Gateway
+    participant U as User Service
     participant PG as PostgreSQL
     participant R as Redis
-    participant WS as websocket-service
+    participant WS as WS Service
 
-    C->>API: POST /api/auth/token
-    API->>U: VerifyUser gRPC
-    U->>PG: 사용자 조회
-    PG-->>U: 비밀번호 해시
-    U->>U: bcrypt 검증
-    U->>R: 해시한 refresh token 상태 저장
-    U-->>API: access token + refresh token
-    API-->>C: access token + HttpOnly cookie
+    rect rgb(241, 246, 255)
+        Note over C,WS: 1. 로그인
+        C->>API: POST /api/auth/token
+        API->>U: VerifyUser
+        U->>PG: 사용자 조회
+        PG-->>U: 비밀번호 해시
+        U->>U: bcrypt 검증
+        U->>R: 해시한 refresh token 저장
+        U-->>API: access token + refresh token
+        API-->>C: access token + HttpOnly cookie
+    end
 
-    C->>API: POST /api/auth/ws-ticket · Bearer JWT
-    API->>API: JWT 검증·사용자별 요청 제한
-    API->>R: ws:ticket:UUID 저장 · TTL 30초
-    API-->>C: 일회성 ticket
-    C->>WS: GET /ws?room_id=...&ticket=... · Ingress 경유
-    WS->>R: GETDEL ws:ticket:UUID
-    R-->>WS: user_id
-    WS->>U: 방 멤버십 확인
-    U-->>WS: 검증 결과
-    WS->>WS: 방 구독 flush·Hub 준비
-    WS-->>C: 101 Switching Protocols
-    Note over C,WS: 연결 실패·재연결 시 새 티켓 발급
+    rect rgb(238, 248, 242)
+        Note over C,WS: 2. 필요 시 토큰 갱신
+        opt access token 갱신 필요
+            C->>API: POST /api/auth/token/refresh<br/>refresh cookie
+            API->>U: RefreshToken
+            U->>R: refresh token 검증
+            U->>PG: 사용자 재조회
+            U->>R: refresh token 원자적 회전
+            U-->>API: 새 access token + refresh token
+            API-->>C: 새 access token + HttpOnly cookie
+        end
+        Note over U,R: 재사용 감지 시 인증 거부<br/>해당 사용자의 refresh token 폐기
+    end
+
+    rect rgb(255, 248, 234)
+        Note over C,WS: 3. 매 연결 시도마다 티켓 발급·소비
+        C->>API: POST /api/auth/ws-ticket<br/>Bearer JWT
+        API->>API: JWT 검증 · 사용자별 요청 제한
+        API->>R: ws:ticket:UUID 저장<br/>TTL 기본 30초 · 설정 가능
+        API-->>C: 일회성 ticket
+        C->>WS: GET /ws?room_id=...&ticket=...
+        WS->>R: IP 제한 확인 · 티켓 GETDEL
+        R-->>WS: user_id
+        WS->>U: 방 멤버십 확인
+        U-->>WS: 검증 결과
+    end
+    Note over C,WS: 소비된 티켓은 재사용 불가<br/>Traefik Gateway 경유 · 이후 연결 준비·등록은 seq-websocket 참고
