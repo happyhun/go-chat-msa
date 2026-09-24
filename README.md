@@ -348,7 +348,7 @@ make kind-delete
 | :--- | :--- |
 | [DESIGN.md](docs/DESIGN.md) | 전체 설계와 트레이드오프 |
 | [K8S_NATS_C10K_REPORT.md](docs/K8S_NATS_C10K_REPORT.md) | NATS 구성의 C10K 결과 |
-| [RFC-0002](docs/rfcs/0002-jetstream-durable-message-persistence.md) | JetStream 채택 결정·검증 결과·후속 과제 |
+| [RFC-0001](docs/rfcs/0001-nats-message-pipeline.md) | NATS 전달·저장·복구의 채택 근거와 트레이드오프 |
 | [K8S_C10K_REPORT.md](docs/K8S_C10K_REPORT.md) | JetStream 도입 전 Kubernetes C10K 기록 |
 | [TELEMETRY_CATALOG.md](docs/TELEMETRY_CATALOG.md) | 로그/메트릭/트레이스/프로파일 카탈로그 |
 | [DOCKER_C10K_REPORT.md](docs/DOCKER_C10K_REPORT.md) | Docker Compose C10K 성능 기준 |
