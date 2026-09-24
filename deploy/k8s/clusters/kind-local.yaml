@@ -23,6 +23,3 @@ nodes:
     image: kindest/node:v1.37.0
   - role: worker
     image: kindest/node:v1.37.0
-networking:
-  disableDefaultCNI: true
-  podSubnet: 10.244.0.0/16

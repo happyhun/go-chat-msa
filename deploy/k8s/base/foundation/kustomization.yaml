@@ -7,7 +7,6 @@ resources:
   - redis.yaml
   - nats.yaml
   - gateway.yaml
-  - network-policy.yaml
 configMapGenerator:
   - name: nats-config
     files:
