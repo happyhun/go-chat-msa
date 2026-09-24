@@ -56,6 +56,6 @@ main() {
   wait_rollout user-service chat-service websocket-service api-gateway frontend swagger-ui
   "${KUBECTL[@]}" -n "${NAMESPACE}" wait --for=condition=Programmed gateway/gochat --timeout="${TIMEOUT}"
   log "Ready: http://${K8S_ENV}.gochat.localhost:30080/"
-  log "Grafana login: admin / dev_grafana_password"
+  log "Grafana (no login required): http://${K8S_ENV}.gochat.localhost:30080/grafana/"
 }
 main "$@"
