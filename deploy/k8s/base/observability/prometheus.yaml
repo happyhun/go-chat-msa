@@ -71,12 +71,6 @@ spec:
               port: http
             periodSeconds: 10
             timeoutSeconds: 5
-          resources:
-            requests:
-              cpu: 100m
-              memory: 256Mi
-            limits:
-              memory: 1Gi
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

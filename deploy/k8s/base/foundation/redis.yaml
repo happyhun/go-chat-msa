@@ -59,12 +59,6 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 5
-          resources:
-            requests:
-              cpu: 50m
-              memory: 64Mi
-            limits:
-              memory: 256Mi
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

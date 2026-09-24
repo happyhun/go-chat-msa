@@ -9,7 +9,7 @@ KUBECTL = kubectl --context='$(KUBE_CONTEXT)'
 KUBECTL_TIMEOUT ?= 300s
 K6_JOB_NAME ?= k6-c10k
 K6_LOAD_TIMEOUT ?= 30m
-K6_FOLLOW_LOGS ?= true
+K6_FOLLOW_LOGS ?= false
 K6_MAX_LOG_REQUESTS ?= 4
 
 GO_SERVICES := api-gateway websocket-service user-service chat-service

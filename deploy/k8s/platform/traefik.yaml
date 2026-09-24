@@ -141,12 +141,6 @@ spec:
               hostPort: 80
             - name: health
               containerPort: 9000
-          resources:
-            requests:
-              cpu: 100m
-              memory: 64Mi
-            limits:
-              memory: 512Mi
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

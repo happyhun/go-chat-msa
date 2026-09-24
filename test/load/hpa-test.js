@@ -1,4 +1,6 @@
+import exec from 'k6/execution';
 import http from 'k6/http';
+// Handshake 응답의 HTTP 503을 구분해 재시도하기 위해 k6/ws를 사용한다.
 import ws from 'k6/ws';
 import { sleep } from 'k6';
 import { Counter, Trend } from 'k6/metrics';
@@ -20,7 +22,6 @@ const PATHS = {
     MESSAGES: (id) => `/rooms/${id}/messages`,
 };
 
-const RUN_ID = Math.random().toString(36).substring(2, 6);
 const TARGET_VUS = 300;
 const TOTAL_ROOMS = 30;
 const ROOM_CAPACITY = 100;
@@ -60,13 +61,6 @@ const unresolvedObserved = new Counter('unresolved_observed');
 const liveMissed = new Counter('live_missed');
 const finalMissing = new Counter('final_missing');
 const duplicateDelivered = new Counter('duplicate_delivered');
-
-function clientMessageUUID() {
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (character) => {
-        const random = Math.floor(Math.random() * 16);
-        return (character === 'x' ? random : (random & 3) | 8).toString(16);
-    });
-}
 
 function rewindMessageId(id, rewindMs = SYNC_REWIND_MS) {
     const match = UUID_V7_PATTERN.exec(id);
@@ -110,12 +104,13 @@ export const options = {
 };
 
 export function setup() {
-    console.log(`[setup] hpa run=${RUN_ID} vus=${TARGET_VUS} rooms=${TOTAL_ROOMS}`);
+    const runId = crypto.randomUUID().slice(0, 6);
+    console.log(`[setup] hpa run=${runId} vus=${TARGET_VUS} rooms=${TOTAL_ROOMS}`);
 
     const healthRes = http.get(`${BASE_URL}${PATHS.HEALTH}`, { timeout: '3s' });
     if (healthRes.status !== 200) throw new Error(`서비스 미준비: ${healthRes.status}`);
 
-    const adminUser = `ha${RUN_ID}`;
+    const adminUser = `ha${runId}`;
     const adminBody = JSON.stringify({ username: adminUser, password: 'AdminPass123!' });
     const jsonHeader = { 'Content-Type': 'application/json' };
 
@@ -133,10 +128,10 @@ export function setup() {
     if (!token) throw new Error('admin 토큰 없음');
 
     const authHeader = { ...jsonHeader, Authorization: `Bearer ${token}` };
-    const rooms = {};
+    const rooms = [];
 
     for (let i = 0; i < TOTAL_ROOMS; i++) {
-        const roomName = `hpa-${RUN_ID}-${i}`;
+        const roomName = `hpa-${runId}-${i}`;
         const res = http.post(
             `${BASE_URL}${PATHS.ROOMS}`,
             JSON.stringify({ name: roomName, capacity: ROOM_CAPACITY }),
@@ -156,31 +151,32 @@ export function setup() {
         sleep(0.05);
     }
 
-    return { rooms };
+    return { runId, rooms };
 }
 
-let session = {
+const session = {
     token: null,
     roomId: null,
     username: null,
+    senderId: null,
+    connections: 0,
     fakeIp: null,
-    msgCount: 0,
     lastId: null,
     unresolvedIds: [],
 };
 
-export default function (data) {
-    const globalVu = __VU;
+export default function hpaHandoffConsistency({ runId, rooms }) {
+    const globalVu = exec.vu.idInTest;
     session.fakeIp = `10.1.${Math.floor(globalVu / 256)}.${globalVu % 256}`;
 
-    if (!authenticate(globalVu)) {
+    if (!authenticate(runId, globalVu)) {
         sleep(5);
         return;
     }
 
     if (!session.roomId) {
         const roomIdx = (globalVu - 1) % TOTAL_ROOMS;
-        session.roomId = data.rooms[roomIdx];
+        session.roomId = rooms[roomIdx];
     }
 
     try {
@@ -190,7 +186,7 @@ export default function (data) {
             });
             return { success: res.status === 200 || res.status === 204 || res.status === 409, res };
         }, 'JoinRoom');
-    } catch (_) {
+    } catch {
         joinErrors.add(1);
         sleep(5);
         return;
@@ -219,10 +215,10 @@ export default function (data) {
     sleep(1);
 }
 
-function authenticate(globalVu) {
+function authenticate(runId, globalVu) {
     if (session.token) return true;
 
-    session.username = `h${RUN_ID}${globalVu}`;
+    session.username = `h${runId}${globalVu}`;
     const body = JSON.stringify({ username: session.username, password: 'Password123!' });
     const headers = withForwardedFor({ 'Content-Type': 'application/json' });
 
@@ -238,9 +234,10 @@ function authenticate(globalVu) {
         }, 'Login');
 
         session.token = loginRes.json('access_token');
+        if (!session.token) throw new Error('로그인 응답에 토큰 없음');
         session.senderId = loginRes.json('user_id');
         return true;
-    } catch (_) {
+    } catch {
         authErrors.add(1);
         return false;
     }
@@ -254,10 +251,61 @@ function acquireTicket() {
             });
             return { success: res.status === 200, res };
         }, 'WSTicket');
-        return ticketRes.json('ticket');
-    } catch (_) {
+        const ticket = ticketRes.json('ticket');
+        if (!ticket) throw new Error('WebSocket 티켓 없음');
+        return ticket;
+    } catch {
         ticketErrors.add(1);
         return null;
+    }
+}
+
+function expirePendingMessages(pending) {
+    const now = Date.now();
+    for (const [id, sentAt] of pending) {
+        if (now - sentAt > MSG_TIMEOUT) {
+            msgTimeouts.add(1);
+            pending.delete(id);
+        }
+    }
+}
+
+function receiveChatMessage(raw, pending, seenClientMsgIds, receivedIds, acceptedIds) {
+    try {
+        const msg = JSON.parse(raw);
+        if (msg.id) {
+            receivedIds.add(msg.id);
+            if (msg.id > (session.lastId || '')) session.lastId = msg.id;
+        }
+        if (msg.client_msg_id) {
+            const key = `${msg.room_id}:${msg.sender_id}:${msg.client_msg_id}`;
+            if (seenClientMsgIds.has(key)) {
+                duplicateDelivered.add(1);
+            } else {
+                seenClientMsgIds.add(key);
+            }
+            const sentAt = pending.get(msg.client_msg_id);
+            if (sentAt !== undefined) {
+                msgLatency.add(Date.now() - sentAt);
+                pending.delete(msg.client_msg_id);
+                acceptedIds.add(msg.id);
+                acceptedReceipts.add(1);
+                console.log(`receipt:${JSON.stringify({ id: msg.id, room_id: session.roomId, client_msg_id: msg.client_msg_id })}`);
+            }
+        }
+    } catch { }
+}
+
+function sendChatMessage(socket, pending) {
+    const clientMsgId = crypto.randomUUID();
+    pending.set(clientMsgId, Date.now());
+    msgAttempts.add(1);
+    console.log(`attempt:${JSON.stringify({ room_id: session.roomId, sender_id: session.senderId, client_msg_id: clientMsgId })}`);
+    try {
+        socket.send(JSON.stringify({ type: 'chat', content: MSG_BODY, client_msg_id: clientMsgId }));
+    } catch {
+        msgPublishErrors.add(1);
+        pending.delete(clientMsgId);
     }
 }
 
@@ -289,75 +337,33 @@ function connectWebSocket(ticket, sessionStartCursor, receivedIds, acceptedIds) 
     const seenClientMsgIds = new Set();
     let intentionalClose = false;
 
-    const connRes = ws.connect(connUrl, { headers: withForwardedFor({}) }, function (socket) {
-        socket.on('open', function () {
+    const connRes = ws.connect(connUrl, { headers: withForwardedFor({}) }, (socket) => {
+        socket.on('open', () => {
             const stopSendingAt = Date.now() + WS_SESSION_DURATION - MSG_TIMEOUT;
-            session.connections = (session.connections || 0) + 1;
+            session.connections++;
             const receivedBeforeSync = receivedIds.size;
             fetchAtSessionStart(sessionStartCursor, receivedIds);
             if (session.connections > 1) {
                 wsReconnects.add(1);
                 reconnectRecovered.add(receivedIds.size - receivedBeforeSync);
             }
-            socket.setTimeout(function () {
+            socket.setTimeout(() => {
                 fetchAtSessionStart(rewindMessageId(sessionStartCursor || ''), receivedIds);
                 resolveUnresolved(receivedIds);
             }, SYNC_REWIND_MS);
-            socket.setTimeout(function () {
+            socket.setTimeout(() => {
                 intentionalClose = true;
                 socket.close();
             }, WS_SESSION_DURATION);
-            socket.setInterval(function () {
+            socket.setInterval(() => {
                 if (Date.now() >= stopSendingAt) return;
-                session.msgCount++;
-                const clientMsgId = clientMessageUUID();
-                pending.set(clientMsgId, Date.now());
-                msgAttempts.add(1);
-                console.log(`attempt:${JSON.stringify({ room_id: session.roomId, sender_id: session.senderId, client_msg_id: clientMsgId })}`);
-                try {
-                    socket.send(JSON.stringify({ type: 'chat', content: MSG_BODY, client_msg_id: clientMsgId }));
-                } catch (_) {
-                    msgPublishErrors.add(1);
-                    pending.delete(clientMsgId);
-                }
+                sendChatMessage(socket, pending);
             }, MSG_INTERVAL);
-            socket.setInterval(function () {
-                const now = Date.now();
-                for (const [id, sentAt] of pending) {
-                    if (now - sentAt > MSG_TIMEOUT) {
-                        msgTimeouts.add(1);
-                        pending.delete(id);
-                    }
-                }
-            }, MSG_TIMEOUT);
+            socket.setInterval(() => expirePendingMessages(pending), MSG_TIMEOUT);
         });
 
-        socket.on('message', function (raw) {
-            try {
-                const msg = JSON.parse(raw);
-                if (msg.id) {
-                    receivedIds.add(msg.id);
-                    if (msg.id > (session.lastId || '')) session.lastId = msg.id;
-                }
-                if (msg.client_msg_id) {
-                    const key = `${msg.room_id}:${msg.sender_id}:${msg.client_msg_id}`;
-                    if (seenClientMsgIds.has(key)) {
-                        duplicateDelivered.add(1);
-                    } else {
-                        seenClientMsgIds.add(key);
-                    }
-                    const sentAt = pending.get(msg.client_msg_id);
-                    if (sentAt) {
-                        msgLatency.add(Date.now() - sentAt);
-                        pending.delete(msg.client_msg_id);
-                        acceptedIds.add(msg.id);
-                        acceptedReceipts.add(1);
-                        console.log(`receipt:${JSON.stringify({ id: msg.id, room_id: session.roomId, client_msg_id: msg.client_msg_id })}`);
-                    }
-                }
-            } catch (_) { }
-        });
-        socket.on('close', function () {
+        socket.on('message', (raw) => receiveChatMessage(raw, pending, seenClientMsgIds, receivedIds, acceptedIds));
+        socket.on('close', () => {
             if (!intentionalClose) wsUnplannedCloses.add(1);
             msgTimeouts.add(pending.size);
             pending.clear();
@@ -429,7 +435,7 @@ function verifyAccepted(fromId, acceptedIds) {
             cursor = result.maxId;
         }
         if (missing.size === 0) break;
-        const wait = Math.min(Math.max(0, deadline - Date.now()), 10000, 250 * Math.pow(2, Math.min(attempt++, 6)));
+        const wait = Math.min(Math.max(0, deadline - Date.now()), 10000, 250 * 2 ** Math.min(attempt++, 6));
         sleep(wait * (0.5 + Math.random() / 2) / 1000);
     }
     acceptedMissing.add(missing.size);
@@ -448,22 +454,22 @@ function requestMessages(afterId, limit, metric, timeoutMs = 5000) {
             const maxId = ids.reduce((max, id) => (id > max ? id : max), afterId || '');
             return { ok: true, ids, maxId, hasMore: Boolean(res.json('has_more')) };
         }
-    } catch (_) { }
+    } catch { }
     syncErrors.add(1);
     return { ok: false, ids: [], maxId: afterId || '', hasMore: false };
 }
 
-function retryWithBackoff(fn, label, maxRetries = 3) {
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
+function retryWithBackoff(request, label, maxAttempts = 3) {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
         try {
-            const result = fn();
+            const result = request();
             if (result.success) return result.res;
             if (result.res?.status === 401) throw new Error('Unauthorized');
         } catch (e) {
             if (e.message === 'Unauthorized') throw e;
         }
-        if (attempt + 1 >= maxRetries) throw new Error(`${label} failed after ${maxRetries} attempts`);
-        sleep((Math.pow(2, attempt + 1) * 100 + Math.random() * 50) / 1000);
+        if (attempt + 1 >= maxAttempts) throw new Error(`${label} failed after ${maxAttempts} attempts`);
+        sleep((2 ** (attempt + 1) * 100 + Math.random() * 50) / 1000);
     }
 }
 

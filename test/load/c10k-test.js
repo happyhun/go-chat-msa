@@ -1,3 +1,4 @@
+import exec from 'k6/execution';
 import http from 'k6/http';
 import ws from 'k6/ws';
 import { sleep } from 'k6';
@@ -20,9 +21,8 @@ const PATHS = {
     MESSAGES: (id) => `/rooms/${id}/messages`,
 };
 
-const RUN_ID = Math.random().toString(36).substring(2, 5);
-const VU_OFFSET = __ENV.K6_VU_OFFSET ? parseInt(__ENV.K6_VU_OFFSET, 10) : 0;
-const TARGET_VUS = __ENV.K6_TARGET_VUS ? parseInt(__ENV.K6_TARGET_VUS, 10) : 10000;
+const VU_OFFSET = integerEnv('K6_VU_OFFSET', 0, 0);
+const TARGET_VUS = integerEnv('K6_TARGET_VUS', 10000, 1);
 const TOTAL_ROOMS = Math.max(1, Math.floor(TARGET_VUS / 100));
 const MSG_INTERVAL = 5000;
 const MSG_TIMEOUT = 10000;
@@ -46,14 +46,11 @@ const msgPublishErrors = new Counter('msg_publish_errors');
 const wsOpens = new Counter('ws_opens');
 const wsCloses = new Counter('ws_closes');
 
-function clientMessageUUID() {
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (character) => {
-        const random = Math.floor(Math.random() * 16);
-        return (character === 'x' ? random : (random & 3) | 8).toString(16);
-    });
-}
-
 export const options = {
+    systemTags: [
+        'proto', 'subproto', 'status', 'method', 'name', 'group', 'check',
+        'error', 'error_code', 'tls_version', 'scenario', 'service', 'expected_response',
+    ],
     scenarios: {
         c10k_challenge: {
             executor: 'ramping-vus',
@@ -69,26 +66,27 @@ export const options = {
     },
     summaryTrendStats: ['avg', 'min', 'med', 'max', 'p(90)', 'p(95)', 'p(99)'],
     thresholds: {
-        'msg_latency': ['p(99)<50'],
-        'msg_latency_samples': ['count>0'],
-        'history_fetch_duration': ['p(99)<100'],
-        'sync_fetch_duration': ['p(99)<100'],
-        'auth_errors': ['count<1'],
-        'join_errors': ['count<1'],
-        'ticket_errors': ['count<1'],
-        'ws_connect_errors': ['count<1'],
-        'msg_timeouts': ['count<1'],
-        'msg_publish_errors': ['count<1'],
+        msg_latency: ['p(99)<50'],
+        msg_latency_samples: ['count>0'],
+        history_fetch_duration: ['p(99)<100'],
+        sync_fetch_duration: ['p(99)<100'],
+        auth_errors: ['count<1'],
+        join_errors: ['count<1'],
+        ticket_errors: ['count<1'],
+        ws_connect_errors: ['count<1'],
+        msg_timeouts: ['count<1'],
+        msg_publish_errors: ['count<1'],
     },
 };
 
 export function setup() {
-    console.log(`[setup] run=${RUN_ID} offset=${VU_OFFSET} vus=${TARGET_VUS} rooms=${TOTAL_ROOMS}`);
+    const runId = crypto.randomUUID().slice(0, 6);
+    console.log(`[setup] run=${runId} offset=${VU_OFFSET} vus=${TARGET_VUS} rooms=${TOTAL_ROOMS}`);
 
-    const healthRes = http.get(`${BASE_URL}${PATHS.HEALTH}`, { timeout: '3s' });
+    const healthRes = http.get(`${BASE_URL}${PATHS.HEALTH}`, { timeout: '3s', responseType: 'none' });
     if (healthRes.status !== 200) throw new Error(`서비스 미준비: ${healthRes.status}`);
 
-    const adminUser = `a${RUN_ID}${VU_OFFSET}`;
+    const adminUser = `a${runId}${VU_OFFSET}`;
     const adminBody = JSON.stringify({ username: adminUser, password: 'AdminPass123!' });
     const jsonHeader = { 'Content-Type': 'application/json' };
 
@@ -105,11 +103,11 @@ export function setup() {
     const token = loginRes.json('access_token');
     if (!token) throw new Error('admin 토큰 없음');
 
-    const authHeader = { ...jsonHeader, 'Authorization': `Bearer ${token}` };
-    const rooms = {};
+    const authHeader = { ...jsonHeader, Authorization: `Bearer ${token}` };
+    const rooms = [];
 
     for (let i = 0; i < TOTAL_ROOMS; i++) {
-        const roomName = `r${RUN_ID}${VU_OFFSET}${i}`;
+        const roomName = `r${runId}${VU_OFFSET}${i}`;
         const res = http.post(
             `${BASE_URL}${PATHS.ROOMS}`,
             JSON.stringify({ name: roomName, capacity: 1000 }),
@@ -119,7 +117,10 @@ export function setup() {
         if (res.status === 201) {
             rooms[i] = res.json('room_id');
         } else if (res.status === 409) {
-            const listRes = http.get(`${BASE_URL}${PATHS.ROOMS}?q=${roomName}&limit=100`, { headers: authHeader });
+            const listRes = http.get(`${BASE_URL}${PATHS.ROOMS}?q=${roomName}&limit=100`, {
+                headers: authHeader,
+                tags: { name: 'GET /rooms' },
+            });
             const found = listRes.json('rooms').find(r => r.name === roomName);
             if (found) rooms[i] = found.id;
             else throw new Error(`방 목록에서 ${roomName} 못 찾음`);
@@ -129,54 +130,64 @@ export function setup() {
         sleep(0.1);
     }
 
-    return { rooms };
+    return { runId, rooms };
 }
 
-let session = {
-    token: null, roomId: null, username: null,
-    fakeIp: null, msgCount: 0, lastId: null, iteration: 0,
+const session = {
+    token: null,
+    roomId: null,
+    username: null,
+    fakeIp: null,
+    lastId: null,
 };
 
-export default function (data) {
-    const globalVu = __VU + VU_OFFSET;
+export default function c10kChallenge({ runId, rooms }) {
+    const globalVu = exec.vu.idInTest + VU_OFFSET;
     const role = resolveRole(globalVu);
-    session.iteration++;
 
     const fakeIp = `10.0.${Math.floor(globalVu / 256)}.${globalVu % 256}`;
     session.fakeIp = fakeIp;
-    if (!authenticate(globalVu, fakeIp)) { sleep(5); return; }
+    if (!authenticate(runId, globalVu, fakeIp)) {
+        sleep(5);
+        return;
+    }
 
     const authHeader = authHeaders();
 
     if (!session.roomId) {
-        const roomIdx = role.isChurner
-            ? ((__VU - 1 + session.iteration) % TOTAL_ROOMS)
-            : ((__VU - 1) % TOTAL_ROOMS);
-        session.roomId = data.rooms[roomIdx];
+        session.roomId = rooms[resolveRoomIndex(globalVu, role)];
     }
 
     try {
         retryWithBackoff(() => {
             const res = http.put(`${BASE_URL}${PATHS.MEMBERSHIP(session.roomId)}`, null, {
                 headers: authHeader,
+                responseType: 'none',
+                tags: { name: 'PUT /rooms/:id/members/me' },
             });
             return { success: res.status === 200 || res.status === 204 || res.status === 409, res };
         }, 'JoinRoom');
-    } catch (e) {
+    } catch {
         joinErrors.add(1);
-        sleep(5); return;
+        sleep(5);
+        return;
     }
 
     fetchMessages();
 
     const ticket = acquireTicket();
-    if (!ticket) { sleep(5); return; }
+    if (!ticket) {
+        sleep(5);
+        return;
+    }
 
     chatOverWebSocket(ticket, role, fakeIp);
 
     if (role.isChurner && TOTAL_ROOMS > 1) {
         http.del(`${BASE_URL}${PATHS.MEMBERSHIP(session.roomId)}`, null, {
             headers: authHeader,
+            responseType: 'none',
+            tags: { name: 'DELETE /rooms/:id/members/me' },
         });
         session.roomId = null;
         session.lastId = null;
@@ -185,22 +196,37 @@ export default function (data) {
     sleep(1);
 }
 
-function retryWithBackoff(fn, label, maxRetries = 3) {
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
+function integerEnv(name, fallback, minimum) {
+    const value = Number(__ENV[name] ?? fallback);
+    if (!Number.isSafeInteger(value) || value < minimum) {
+        throw new Error(`${name} must be an integer >= ${minimum}`);
+    }
+    return value;
+}
+
+function retryWithBackoff(request, label, maxAttempts = 3) {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
         try {
-            const result = fn();
+            const result = request();
             if (result.success) return result.res;
             if (result.res?.status === 401) throw new Error('Unauthorized');
         } catch (e) {
             if (e.message === 'Unauthorized') throw e;
         }
-        if (attempt + 1 >= maxRetries) throw new Error(`${label} failed after ${maxRetries} attempts`);
-        sleep((Math.pow(2, attempt + 1) * 100 + Math.random() * 50) / 1000);
+        if (attempt + 1 >= maxAttempts) throw new Error(`${label} failed after ${maxAttempts} attempts`);
+        sleep((2 ** (attempt + 1) * 100 + Math.random() * 50) / 1000);
     }
 }
 
 function resolveRole(globalVu) {
-    const bucket = globalVu % 100;
+    let bucket = globalVu % 100;
+    if (TARGET_VUS >= 100) {
+        const localIndex = globalVu - VU_OFFSET - 1;
+        const roomIndex = localIndex % TOTAL_ROOMS;
+        const memberIndex = Math.floor(localIndex / TOTAL_ROOMS);
+        // 방별 100명 중 probe 1명, churner 2명, reconnector 7명을 선정한다.
+        bucket = memberIndex < 100 ? (memberIndex + roomIndex) % 100 : 99;
+    }
     const isChurner = bucket >= 1 && bucket < 3;
     const isReconnector = bucket >= 3 && bucket < 10;
     return {
@@ -211,22 +237,28 @@ function resolveRole(globalVu) {
     };
 }
 
+function resolveRoomIndex(globalVu, role) {
+    const localVu = globalVu - VU_OFFSET;
+    const roomOffset = role.isChurner ? exec.vu.iterationInScenario + 1 : 0;
+    return (localVu - 1 + roomOffset) % TOTAL_ROOMS;
+}
+
 function withForwardedFor(headers, fakeIp) {
     return fakeIp ? { ...headers, 'X-Forwarded-For': fakeIp } : headers;
 }
 
 function authHeaders(extra = {}) {
-    return withForwardedFor({ ...extra, 'Authorization': `Bearer ${session.token}` }, session.fakeIp);
+    return withForwardedFor({ ...extra, Authorization: `Bearer ${session.token}` }, session.fakeIp);
 }
 
-function authenticate(globalVu, fakeIp) {
+function authenticate(runId, globalVu, fakeIp) {
     if (session.token) return true;
-    session.username = `u${RUN_ID}${globalVu}`;
+    session.username = `u${runId}${globalVu}`;
     const body = JSON.stringify({ username: session.username, password: 'Password123!' });
     const headers = withForwardedFor({ 'Content-Type': 'application/json' }, fakeIp);
     try {
         retryWithBackoff(() => {
-            const res = http.post(`${BASE_URL}${PATHS.SIGNUP}`, body, { headers });
+            const res = http.post(`${BASE_URL}${PATHS.SIGNUP}`, body, { headers, responseType: 'none' });
             return { success: res.status === 201 || res.status === 409, res };
         }, 'Signup');
         const loginRes = retryWithBackoff(() => {
@@ -234,8 +266,9 @@ function authenticate(globalVu, fakeIp) {
             return { success: res.status === 200, res };
         }, 'Login');
         session.token = loginRes.json('access_token');
+        if (!session.token) throw new Error('로그인 응답에 토큰 없음');
         return true;
-    } catch (e) {
+    } catch {
         authErrors.add(1);
         return false;
     }
@@ -258,7 +291,7 @@ function fetchMessages() {
         try {
             const res = http.get(
                 `${BASE_URL}${PATHS.MESSAGES(session.roomId)}${query}`,
-                { headers: authHeaders() },
+                { headers: authHeaders(), tags: { name: 'GET /rooms/:id/messages' } },
             );
             if (res.status !== 200) return;
 
@@ -270,7 +303,7 @@ function fetchMessages() {
 
             if (!res.json('has_more') || maxId === '') return;
             cursor = maxId;
-        } catch (_) {
+        } catch {
             return;
         }
     }
@@ -284,82 +317,89 @@ function acquireTicket() {
             });
             return { success: res.status === 200, res };
         }, 'WSTicket');
-        return ticketRes.json('ticket');
-    } catch (e) {
+        const ticket = ticketRes.json('ticket');
+        if (!ticket) throw new Error('WebSocket 티켓 없음');
+        return ticket;
+    } catch {
         ticketErrors.add(1);
         return null;
     }
 }
 
-function sendChatMessage(socket, role, pendingProbes) {
-    session.msgCount++;
-    const clientMsgId = clientMessageUUID();
-    const sentAt = Date.now();
+function sendChatMessage(socket, pendingProbes) {
+    const clientMsgId = crypto.randomUUID();
     msgSent.add(1);
-    if (role.isProbe) pendingProbes.set(clientMsgId, sentAt);
+    if (pendingProbes) pendingProbes.set(clientMsgId, Date.now());
     const payload = JSON.stringify({ type: 'chat', content: MSG_BODY, client_msg_id: clientMsgId });
 
     try {
         socket.send(payload);
-    } catch (_) {
+    } catch {
         msgPublishErrors.add(1);
-        pendingProbes.delete(clientMsgId);
+        pendingProbes?.delete(clientMsgId);
+    }
+}
+
+function expirePendingMessages(pending) {
+    const now = Date.now();
+    for (const [id, sentAt] of pending) {
+        if (now - sentAt > MSG_TIMEOUT) {
+            msgTimeouts.add(1);
+            pending.delete(id);
+        }
+    }
+}
+
+function receiveChatMessage(raw, role, pendingProbes) {
+    let msg;
+    try {
+        msg = JSON.parse(raw);
+    } catch {
+        return;
+    }
+    if (role.isReconnector && msg.id && msg.id > (session.lastId || '')) {
+        session.lastId = msg.id;
+    }
+    if (!role.isProbe || !msg.client_msg_id) return;
+    const sentAt = pendingProbes.get(msg.client_msg_id);
+    if (sentAt !== undefined) {
+        msgLatency.add(Date.now() - sentAt);
+        msgLatencySamples.add(1);
+        pendingProbes.delete(msg.client_msg_id);
     }
 }
 
 function chatOverWebSocket(ticket, role, fakeIp) {
     const connUrl = `${WS_URL}?ticket=${ticket}&room_id=${session.roomId}`;
-    const pendingProbes = new Map();
+    const pendingProbes = role.isProbe ? new Map() : null;
     let intentionalClose = false;
-    const connRes = ws.connect(connUrl, { headers: { 'X-Forwarded-For': fakeIp } }, function (socket) {
-        socket.on('open', function () {
+    const connRes = ws.connect(connUrl, {
+        headers: { 'X-Forwarded-For': fakeIp },
+        tags: { name: 'WS /ws' },
+    }, (socket) => {
+        socket.on('open', () => {
             wsOpens.add(1);
             if (role.isTransient) {
-                socket.setTimeout(function () {
+                socket.setTimeout(() => {
                     intentionalClose = true;
                     socket.close();
                 }, WS_SESSION_DURATION);
             }
-            socket.setInterval(function () { sendChatMessage(socket, role, pendingProbes); }, MSG_INTERVAL);
+            socket.setInterval(() => sendChatMessage(socket, pendingProbes), MSG_INTERVAL);
             if (role.isProbe) {
-                socket.setInterval(function () {
-                    const now = Date.now();
-                    for (const [id, sentAt] of pendingProbes) {
-                        if (now - sentAt > MSG_TIMEOUT) {
-                            msgTimeouts.add(1);
-                            pendingProbes.delete(id);
-                        }
-                    }
-                }, MSG_TIMEOUT);
+                socket.setInterval(() => expirePendingMessages(pendingProbes), MSG_TIMEOUT);
             }
         });
 
         if (role.isProbe || role.isReconnector) {
-            socket.on('message', function (raw) {
-                let msg;
-                try {
-                    msg = JSON.parse(raw);
-                } catch (_) {
-                    return;
-                }
-                if (role.isReconnector && msg.id && msg.id > (session.lastId || '')) {
-                    session.lastId = msg.id;
-                }
-                if (!role.isProbe || !msg.client_msg_id) return;
-                const sentAt = pendingProbes.get(msg.client_msg_id);
-                if (sentAt) {
-                    msgLatency.add(Date.now() - sentAt);
-                    msgLatencySamples.add(1);
-                    pendingProbes.delete(msg.client_msg_id);
-                }
-            });
+            socket.on('message', (raw) => receiveChatMessage(raw, role, pendingProbes));
         }
 
-        socket.on('close', function (code) {
+        socket.on('close', (code) => {
             wsCloses.add(1);
             const normalClose = intentionalClose || code === 1000 || code === 1001;
             if (role.isProbe && !normalClose) msgTimeouts.add(pendingProbes.size);
-            pendingProbes.clear();
+            pendingProbes?.clear();
         });
     });
     if (connRes.status !== 101) wsConnectErrors.add(1);

@@ -78,12 +78,6 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 5
-          resources:
-            requests:
-              cpu: 25m
-              memory: 64Mi
-            limits:
-              memory: 256Mi
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -127,12 +121,6 @@ spec:
             capabilities:
               drop:
                 - ALL
-          resources:
-            requests:
-              cpu: 25m
-              memory: 32Mi
-            limits:
-              memory: 128Mi
           volumeMounts:
             - name: swagger-html
               mountPath: /assets
