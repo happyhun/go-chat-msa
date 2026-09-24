@@ -354,8 +354,8 @@ export function leaveRoom(id: string) {
   return request<void>(`/api/rooms/${id}/members/me`, { method: 'DELETE' })
 }
 
-export function listRoomMembers(roomId: string) {
-  return request<{ members: import('../types').RoomMember[] }>(`/api/rooms/${roomId}/members`)
+export function listRoomMembers(roomId: string, signal?: AbortSignal) {
+  return request<{ members: import('../types').RoomMember[] }>(`/api/rooms/${roomId}/members`, { signal })
 }
 
 // Messages

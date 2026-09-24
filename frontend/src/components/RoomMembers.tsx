@@ -6,10 +6,12 @@ interface Props {
   userMap: ReadonlyMap<string, string>
   userId: string
   managerId: string | null
+  error: string
+  onRefresh: () => void
   onClose: () => void
 }
 
-export default function RoomMembers({ memberIds, userMap, userId, managerId, onClose }: Props) {
+export default function RoomMembers({ memberIds, userMap, userId, managerId, error, onRefresh, onClose }: Props) {
   const membersTitleId = useId()
   const closeRef = useRef<HTMLButtonElement>(null)
   const { dialogRef, handleFocusTrap } = useDialog(onClose, false, closeRef)
@@ -41,6 +43,12 @@ export default function RoomMembers({ memberIds, userMap, userId, managerId, onC
             </svg>
           </button>
         </div>
+        {error && (
+          <div role="status" className="bg-amber-50 px-4 py-3 text-xs text-amber-800">
+            {error}
+            <button onClick={onRefresh} className="ml-2 underline">다시 확인</button>
+          </div>
+        )}
         <div className="flex-1 overflow-y-auto">
           {memberIds.map((id) => (
             <div key={id} className="px-4 py-3 flex items-center justify-between border-b border-gray-50">

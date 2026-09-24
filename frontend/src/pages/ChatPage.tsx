@@ -27,7 +27,7 @@ function ChatRoom({ roomId, userId, initialRoomName, onReload }: { roomId: strin
   const autoScrollRef = useRef(true)
   const {
     messages, disconnectReason, sendError, loading, loadError,
-    userMap, memberIds, managerId, roomName, connected, exhausted,
+    userMap, memberIds, membersError, refreshMembers, managerId, roomName, connected, exhausted,
     sendMessage, retryMessage, recover, disconnect, reconnect,
   } = useChatRoom(roomId, userId, initialRoomName)
 
@@ -119,12 +119,15 @@ function ChatRoom({ roomId, userId, initialRoomName, onReload }: { roomId: strin
             <span className="font-semibold text-gray-900 text-sm truncate block">
               {roomName || '채팅방'}
             </span>
-            {memberIds.length > 0 && (
+            {(memberIds.length > 0 || membersError) && (
               <button
-                onClick={() => setShowMembers((v) => !v)}
+                onClick={() => {
+                  if (!showMembers) refreshMembers()
+                  setShowMembers((value) => !value)
+                }}
                 className="text-xs text-gray-500 hover:text-indigo-600 transition-colors"
               >
-                {memberIds.length}명 참여 중
+                {memberIds.length > 0 ? `${memberIds.length}명 참여 중` : '멤버 목록'}
               </button>
             )}
           </div>
@@ -143,8 +146,15 @@ function ChatRoom({ roomId, userId, initialRoomName, onReload }: { roomId: strin
 
       {!connected && !loading && !loadError && <ReconnectNotice />}
 
+      {membersError && !showMembers && (
+        <div role="status" className="bg-amber-50 px-4 py-2 text-xs text-amber-800">
+          {membersError}
+          <button onClick={refreshMembers} className="ml-2 underline">다시 확인</button>
+        </div>
+      )}
+
       {showMembers && (
-        <RoomMembers memberIds={memberIds} userMap={userMap} userId={userId} managerId={managerId} onClose={() => setShowMembers(false)} />
+        <RoomMembers error={membersError} onRefresh={refreshMembers} memberIds={memberIds} userMap={userMap} userId={userId} managerId={managerId} onClose={() => setShowMembers(false)} />
       )}
 
       <div ref={scrollContainerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto overscroll-contain bg-gray-50">

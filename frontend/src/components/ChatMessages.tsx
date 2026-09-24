@@ -44,13 +44,13 @@ export default function ChatMessages({ messages, userId, userMap, retryMessage }
             className={`flex ${isMine ? 'justify-end' : 'justify-start'} ${sameSenderAsPrev ? 'mt-0.5' : 'mt-3'}`}
           >
             <div
-              className={`flex flex-col ${isMine ? 'items-end' : 'items-start'} max-w-[70%]`}
+              className={`flex flex-col ${isMine ? 'items-end' : 'items-start'} min-w-0 max-w-[70%]`}
             >
               {showName && senderName && (
                 <span className="text-xs text-gray-500 mb-0.5 px-1">{senderName}</span>
               )}
               <div
-                className={`px-3.5 py-2 text-sm break-words whitespace-pre-wrap ${
+                className={`px-3.5 py-2 text-sm min-w-0 max-w-full wrap-anywhere whitespace-pre-wrap ${
                   isMine
                     ? `bg-indigo-600 text-white ${sameSenderAsPrev ? 'rounded-2xl rounded-tr-md' : 'rounded-2xl'} ${sameSenderAsNext ? 'rounded-br-md' : ''}`
                     : `bg-white text-gray-900 border border-gray-100 ${sameSenderAsPrev ? 'rounded-2xl rounded-tl-md' : 'rounded-2xl'} ${sameSenderAsNext ? 'rounded-bl-md' : ''}`

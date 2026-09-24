@@ -1,11 +1,12 @@
 import { useState, useReducer, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { batchGetUsers, listMessages, listRoomMembers, listJoinedRooms, ApiError } from '../api/client'
+import { batchGetUsers, listMessages, listJoinedRooms, ApiError } from '../api/client'
 import { useWebSocket, type WebSocketStopReason } from './useWebSocket'
+import { useRoomMembers } from './useRoomMembers'
 import { useMessageSync } from './useMessageSync'
 import { lastMessageId } from '../messages'
 import { messageReducer } from '../messageState'
-import type { MessageInfo, WsOutgoing } from '../types'
+import type { MessageInfo, RoomMember, WsOutgoing } from '../types'
 
 function toMessageInfo(msg: WsOutgoing | MessageInfo): MessageInfo {
   return {
@@ -34,7 +35,6 @@ export function useChatRoom(roomId: string, userId: string, stateRoomName: strin
   const [loadError, setLoadError] = useState('')
   const [userMap, setUserMap] = useState<Map<string, string>>(new Map())
   const userMapRef = useRef(userMap)
-  const [memberIds, setMemberIds] = useState<string[]>([])
   const [managerId, setManagerId] = useState<string | null>(null)
   const [roomName, setRoomName] = useState(stateRoomName)
   const lastIdRef = useRef<string>('')
@@ -52,21 +52,14 @@ export function useChatRoom(roomId: string, userId: string, stateRoomName: strin
     if (last > lastIdRef.current) lastIdRef.current = last
   }, [])
 
-  const fetchMembers = useCallback(async () => {
-    if (!roomId) return
-    try {
-      const data = await listRoomMembers(roomId)
-      const members = data.members ?? []
-      setMemberIds(members.map((m) => m.user_id))
-      setUserMap((prev) => {
-        const next = new Map(prev)
-        for (const m of members) next.set(m.user_id, m.username)
-        return next
-      })
-    } catch {
-      return
-    }
-  }, [roomId])
+  const rememberMembers = useCallback((members: RoomMember[]) => {
+    setUserMap((previous) => {
+      const next = new Map(previous)
+      for (const member of members) next.set(member.user_id, member.username)
+      return next
+    })
+  }, [])
+  const { memberIds, membersError, refreshMembers: fetchMembers } = useRoomMembers(roomId, rememberMembers)
 
   const ensureSendersLoaded = useCallback(async (msgs: MessageInfo[]) => {
     const senderIds = [
@@ -248,7 +241,7 @@ export function useChatRoom(roomId: string, userId: string, stateRoomName: strin
 
   return {
     messages, disconnectReason, sendError, loading, loadError,
-    userMap, memberIds, managerId, roomName, connected, exhausted,
+    userMap, memberIds, membersError, refreshMembers: fetchMembers, managerId, roomName, connected, exhausted,
     sendMessage, retryMessage, recover, disconnect, reconnect,
   }
 }
