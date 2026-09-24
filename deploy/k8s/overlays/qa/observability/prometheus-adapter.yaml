@@ -6,28 +6,6 @@ metadata:
     app.kubernetes.io/name: prometheus-adapter
     app.kubernetes.io/component: observability
 ---
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: prometheus-adapter-config
-  labels:
-    app.kubernetes.io/name: prometheus-adapter
-    app.kubernetes.io/component: observability
-data:
-  config.yaml: |
-    rules:
-      - seriesQuery: 'gochat_ws_connections_active{namespace!="",pod!=""}'
-        resources:
-          overrides:
-            namespace:
-              resource: namespace
-            pod:
-              resource: pod
-        name:
-          matches: '^gochat_ws_connections_active$'
-          as: 'gochat_ws_connections_active'
-        metricsQuery: 'sum(<<.Series>>{<<.LabelMatchers>>}) by (<<.GroupBy>>)'
----
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -36,9 +14,17 @@ metadata:
     app.kubernetes.io/name: prometheus-adapter
     app.kubernetes.io/component: observability
 rules:
-  - apiGroups: [""]
-    resources: ["namespaces", "pods", "services", "endpoints"]
-    verbs: ["get", "list", "watch"]
+  - apiGroups:
+      - ''
+    resources:
+      - namespaces
+      - pods
+      - services
+      - endpoints
+    verbs:
+      - get
+      - list
+      - watch
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -113,14 +99,14 @@ spec:
       containers:
         - name: prometheus-adapter
           image: registry.k8s.io/prometheus-adapter/prometheus-adapter:v0.12.0
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           args:
             - --secure-port=6443
-            - --cert-dir=/tmp/cert
             - --prometheus-url=http://prometheus:9090/
             - --metrics-relist-interval=15s
             - --metrics-max-age=2m
             - --config=/etc/adapter/config.yaml
+            - --cert-dir=/tmp/cert
           ports:
             - name: https
               containerPort: 6443
@@ -130,6 +116,8 @@ spec:
               readOnly: true
             - name: cert
               mountPath: /tmp/cert
+            - name: tmp
+              mountPath: /tmp
           readinessProbe:
             httpGet:
               scheme: HTTPS
@@ -144,12 +132,35 @@ spec:
               port: https
             periodSeconds: 10
             timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
       volumes:
         - name: config
           configMap:
             name: prometheus-adapter-config
         - name: cert
           emptyDir: {}
+        - name: tmp
+          emptyDir:
+            sizeLimit: 128Mi
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
 ---
 apiVersion: apiregistration.k8s.io/v1
 kind: APIService
@@ -159,11 +170,11 @@ metadata:
     app.kubernetes.io/name: prometheus-adapter
     app.kubernetes.io/component: observability
 spec:
+  insecureSkipTLSVerify: true
   group: custom.metrics.k8s.io
   version: v1beta1
   groupPriorityMinimum: 100
   versionPriority: 100
-  insecureSkipTLSVerify: true
   service:
     name: prometheus-adapter
     namespace: go-chat-qa

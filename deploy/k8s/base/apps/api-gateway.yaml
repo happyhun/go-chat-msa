@@ -37,8 +37,8 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
         - name: api-gateway
-          image: go-chat-msa/api-gateway:dev
-          imagePullPolicy: IfNotPresent
+          image: go-chat-msa/api-gateway:build-required
+          imagePullPolicy: Never
           ports:
             - name: http
               containerPort: 8080
@@ -54,6 +54,8 @@ spec:
             - name: app-config
               mountPath: /app/configs
               readOnly: true
+            - name: tmp
+              mountPath: /tmp
           startupProbe:
             httpGet:
               path: /health
@@ -75,7 +77,37 @@ spec:
             periodSeconds: 5
             timeoutSeconds: 5
             failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
       volumes:
         - name: app-config
           configMap:
             name: gochat-app-config
+        - name: tmp
+          emptyDir:
+            sizeLimit: 128Mi
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: api-gateway

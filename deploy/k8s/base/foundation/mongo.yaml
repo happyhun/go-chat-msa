@@ -39,13 +39,17 @@ spec:
       containers:
         - name: mongo
           image: mongo:7.0
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           ports:
             - name: mongo
               containerPort: 27017
           volumeMounts:
             - name: data
               mountPath: /data/db
+            - name: tmp
+              mountPath: /tmp
+            - name: tmp
+              mountPath: /data/configdb
           readinessProbe:
             exec:
               command:
@@ -68,6 +72,29 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 768Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
       volumes:
         - name: data
           emptyDir: {}
+        - name: tmp
+          emptyDir:
+            sizeLimit: 128Mi
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault

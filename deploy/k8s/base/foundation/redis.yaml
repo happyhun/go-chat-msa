@@ -36,8 +36,8 @@ spec:
     spec:
       containers:
         - name: redis
-          image: redis:7-alpine
-          imagePullPolicy: IfNotPresent
+          image: redis:7.4-alpine
+          imagePullPolicy: Always
           ports:
             - name: redis
               containerPort: 6379
@@ -59,3 +59,44 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: data
+              mountPath: /data
+          args:
+            - redis-server
+            - --appendonly
+            - 'yes'
+            - --maxmemory
+            - 192mb
+            - --maxmemory-policy
+            - noeviction
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: tmp
+          emptyDir:
+            sizeLimit: 128Mi
+  strategy:
+    type: Recreate

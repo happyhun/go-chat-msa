@@ -3,7 +3,9 @@ package apigateway
 import (
 	"errors"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	userpb "go-chat-msa/api/proto/user/v1"
@@ -15,6 +17,27 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+func TestRefreshCookiePublicPath(t *testing.T) {
+	t.Parallel()
+	router := &Router{config: &Config{Env: "test", UserService: config.UserConfig{
+		Token: config.TokenConfig{RefreshTokenExpirationDays: 7},
+	}}}
+	jar, err := cookiejar.New(nil)
+	assert.NoError(t, err)
+	login := &url.URL{Scheme: "http", Host: "test.gochat.localhost", Path: "/api/auth/login"}
+	refresh := &url.URL{Scheme: "http", Host: login.Host, Path: "/api/auth/refresh"}
+	rooms := &url.URL{Scheme: "http", Host: login.Host, Path: "/api/rooms"}
+	w := httptest.NewRecorder()
+	router.setRefreshTokenCookie(w, "token")
+	jar.SetCookies(login, w.Result().Cookies())
+	assert.Len(t, jar.Cookies(refresh), 1)
+	assert.Empty(t, jar.Cookies(rooms))
+	w = httptest.NewRecorder()
+	router.clearRefreshTokenCookie(w)
+	jar.SetCookies(refresh, w.Result().Cookies())
+	assert.Empty(t, jar.Cookies(refresh))
+}
 
 func TestRouter_HandleRefreshToken(t *testing.T) {
 	t.Parallel()

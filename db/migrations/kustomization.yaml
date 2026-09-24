@@ -1,0 +1,23 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+configMapGenerator:
+  - name: postgres-migrations
+    files:
+      - postgres/20260307160405_init.down.sql
+      - postgres/20260307160405_init.up.sql
+      - postgres/20260426180212_add_user_soft_delete.down.sql
+      - postgres/20260426180212_add_user_soft_delete.up.sql
+      - postgres/20260515000100_drop_refresh_tokens.down.sql
+      - postgres/20260515000100_drop_refresh_tokens.up.sql
+      - postgres/20260516000100_drop_soft_delete_columns.down.sql
+      - postgres/20260516000100_drop_soft_delete_columns.up.sql
+  - name: mongo-migrations
+    files:
+      - mongo/20260307160405_init_chat_indexes.down.json
+      - mongo/20260307160405_init_chat_indexes.up.json
+      - mongo/20260913090000_add_room_message_id_index.down.json
+      - mongo/20260913090000_add_room_message_id_index.up.json
+      - mongo/20260913090100_drop_room_sequence_index.down.json
+      - mongo/20260913090100_drop_room_sequence_index.up.json
+      - mongo/20260915120000_scope_client_message_key.down.json
+      - mongo/20260915120000_scope_client_message_key.up.json

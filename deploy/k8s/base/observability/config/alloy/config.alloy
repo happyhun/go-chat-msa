@@ -2,7 +2,7 @@ discovery.kubernetes "pods" {
 	role = "pod"
 
 	namespaces {
-		names = ["__GOCHAT_NAMESPACE__"]
+		names = [sys.env("POD_NAMESPACE")]
 	}
 }
 
@@ -147,7 +147,7 @@ prometheus.scrape "cadvisor" {
 	bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 
 	tls_config {
-		insecure_skip_verify = true
+		ca_file = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 	}
 }
 
@@ -156,7 +156,7 @@ prometheus.relabel "cadvisor" {
 
 	rule {
 		source_labels = ["namespace"]
-		regex         = "__GOCHAT_NAMESPACE__"
+		regex         = sys.env("POD_NAMESPACE")
 		action        = "keep"
 	}
 
@@ -190,7 +190,7 @@ prometheus.relabel "kube_state_metrics" {
 
 	rule {
 		source_labels = ["namespace"]
-		regex         = "__GOCHAT_NAMESPACE__"
+		regex         = sys.env("POD_NAMESPACE")
 		action        = "keep"
 	}
 
@@ -205,7 +205,7 @@ prometheus.scrape "nats" {
 	targets = [{
 		__address__ = "nats:7777",
 		job         = "nats",
-		namespace   = "__GOCHAT_NAMESPACE__",
+		namespace   = sys.env("POD_NAMESPACE"),
 		service     = "nats",
 	}]
 	forward_to      = [prometheus.remote_write.default.receiver]
@@ -255,7 +255,7 @@ otelcol.processor.k8sattributes "default" {
 	}
 
 	filter {
-		namespace = "__GOCHAT_NAMESPACE__"
+		namespace = sys.env("POD_NAMESPACE")
 	}
 
 	pod_association {

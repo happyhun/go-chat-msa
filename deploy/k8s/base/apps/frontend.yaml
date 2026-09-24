@@ -37,8 +37,8 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
         - name: frontend
-          image: go-chat-msa/frontend:dev
-          imagePullPolicy: IfNotPresent
+          image: go-chat-msa/frontend:build-required
+          imagePullPolicy: Never
           ports:
             - name: http
               containerPort: 3001
@@ -63,3 +63,30 @@ spec:
             periodSeconds: 5
             timeoutSeconds: 5
             failureThreshold: 3
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 128Mi

@@ -20,6 +20,7 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
+	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/mongodb"
 	"go.mongodb.org/mongo-driver/mongo"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -40,7 +41,7 @@ type ChatSuite struct {
 func (s *ChatSuite) SetupSuite() {
 	ctx := context.Background()
 
-	mongoContainer, err := mongodb.Run(ctx, "mongo:6")
+	mongoContainer, err := mongodb.Run(ctx, "mongo:7.0", testcontainers.WithAlwaysPull())
 	s.Require().NoError(err)
 	s.container = mongoContainer
 

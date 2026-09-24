@@ -1,14 +1,19 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-
 namespace: go-chat-dev
-
 resources:
   - ../../../base/foundation
-
 labels:
   - includeSelectors: true
     includeTemplates: true
     pairs:
       app.kubernetes.io/part-of: go-chat-msa
       app.kubernetes.io/instance: go-chat-dev
+patches:
+  - target:
+      kind: Gateway
+      name: gochat
+    patch: |
+      - op: replace
+        path: /spec/listeners/0/hostname
+        value: dev.gochat.localhost

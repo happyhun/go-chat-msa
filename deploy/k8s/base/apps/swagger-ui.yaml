@@ -37,8 +37,8 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
         - name: swagger-ui
-          image: swaggerapi/swagger-ui:v5.32.0
-          imagePullPolicy: IfNotPresent
+          image: swaggerapi/swagger-ui:v5.33.0
+          imagePullPolicy: Always
           ports:
             - name: http
               containerPort: 8080
@@ -47,11 +47,23 @@ spec:
               value: /openapi/openapi.yaml
             - name: BASE_URL
               value: /docs
+            - name: PORT
+              value: '8080'
           volumeMounts:
             - name: openapi
               mountPath: /openapi/openapi.yaml
               subPath: openapi.yaml
               readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            - name: swagger-conf
+              mountPath: /etc/nginx/conf.d
+            - name: swagger-cache
+              mountPath: /var/cache/nginx
+            - name: swagger-run
+              mountPath: /var/run
+            - name: swagger-html
+              mountPath: /usr/share/nginx/html
           readinessProbe:
             httpGet:
               path: /docs/
@@ -66,7 +78,61 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 5
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
       volumes:
         - name: openapi
           configMap:
             name: openapi-spec
+        - name: swagger-conf
+          emptyDir: {}
+        - name: swagger-cache
+          emptyDir: {}
+        - name: swagger-run
+          emptyDir: {}
+        - name: tmp
+          emptyDir:
+            sizeLimit: 128Mi
+        - name: swagger-html
+          emptyDir: {}
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: swagger-assets
+          image: swaggerapi/swagger-ui:v5.33.0
+          imagePullPolicy: Always
+          command:
+            - sh
+            - -ec
+            - cp -R /usr/share/nginx/html/. /assets/
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          volumeMounts:
+            - name: swagger-html
+              mountPath: /assets

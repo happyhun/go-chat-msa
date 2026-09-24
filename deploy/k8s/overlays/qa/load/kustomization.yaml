@@ -1,15 +1,25 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-
 namespace: go-chat-qa
-
 resources:
   - k6-hpa-job.yaml
-
+  - ../../../../../test/load
 labels:
   - includeSelectors: true
     includeTemplates: true
     pairs:
       app.kubernetes.io/part-of: go-chat-msa
       app.kubernetes.io/instance: go-chat-qa
-
+configMapGenerator:
+  - name: k6-load-env
+    options:
+      disableNameSuffixHash: true
+    literals:
+      - API_HOST=api-gateway
+      - API_PORT=8080
+      - WS_HOST=websocket-service
+      - WS_PORT=8081
+      - K6_WORKER_VUS=
+      - K6_RAMP_DURATION=
+      - K6_PLATEAU_DURATION=
+      - K6_RAMP_DOWN_DURATION=

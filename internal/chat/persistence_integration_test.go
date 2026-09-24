@@ -33,7 +33,8 @@ import (
 func TestJetStreamPersistenceRecovery(t *testing.T) {
 	ctx := t.Context()
 	natsContainer, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		Image:              "nats:2.14.6-alpine",
+		AlwaysPullImage:    true,
+		Image:              "nats:2.15-alpine",
 		ExposedPorts:       []string{"4222/tcp"},
 		Cmd:                []string{"-c", "/etc/nats/test.conf"},
 		HostConfigModifier: persistencePortBinding(t, "4222/tcp"),
@@ -52,7 +53,7 @@ func TestJetStreamPersistenceRecovery(t *testing.T) {
 	nc, err := nats.Connect("nats://"+endpoint, nats.MaxReconnects(-1), nats.ReconnectWait(100*time.Millisecond))
 	require.NoError(t, err)
 	t.Cleanup(nc.Close)
-	mongoContainer, err := mongodb.Run(ctx, "mongo:7", testcontainers.WithHostConfigModifier(persistencePortBinding(t, "27017/tcp")))
+	mongoContainer, err := mongodb.Run(ctx, "mongo:7.0", testcontainers.WithAlwaysPull(), testcontainers.WithHostConfigModifier(persistencePortBinding(t, "27017/tcp")))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, mongoContainer.Terminate(context.Background())) })
 	uri, err := mongoContainer.ConnectionString(ctx)
@@ -183,11 +184,12 @@ func TestJetStreamPersistenceRecovery(t *testing.T) {
 func TestJetStreamPersistenceUpgradesExistingStreams(t *testing.T) {
 	ctx := t.Context()
 	natsContainer, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		Image:        "nats:2.14.6-alpine",
-		ExposedPorts: []string{"4222/tcp"},
-		Cmd:          []string{"-js"},
-		WaitingFor:   containerwait.ForListeningPort("4222/tcp"),
-		Started:      true,
+		AlwaysPullImage: true,
+		Image:           "nats:2.15-alpine",
+		ExposedPorts:    []string{"4222/tcp"},
+		Cmd:             []string{"-js"},
+		WaitingFor:      containerwait.ForListeningPort("4222/tcp"),
+		Started:         true,
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, natsContainer.Terminate(context.Background())) })
@@ -241,11 +243,12 @@ func TestJetStreamPersistenceUpgradesExistingStreams(t *testing.T) {
 func TestJetStreamCapacityPreservesPending(t *testing.T) {
 	ctx := t.Context()
 	ncContainer, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		Image:        "nats:2.14.6-alpine",
-		ExposedPorts: []string{"4222/tcp"},
-		Cmd:          []string{"-js"},
-		WaitingFor:   containerwait.ForListeningPort("4222/tcp"),
-		Started:      true,
+		AlwaysPullImage: true,
+		Image:           "nats:2.15-alpine",
+		ExposedPorts:    []string{"4222/tcp"},
+		Cmd:             []string{"-js"},
+		WaitingFor:      containerwait.ForListeningPort("4222/tcp"),
+		Started:         true,
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, ncContainer.Terminate(context.Background())) })

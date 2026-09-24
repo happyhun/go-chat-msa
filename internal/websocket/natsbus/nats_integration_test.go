@@ -29,7 +29,7 @@ import (
 
 func TestPublishMessage_RePublishPreservesHeaders(t *testing.T) {
 	ctx := t.Context()
-	container, err := natscontainer.Run(ctx, "nats:2.14.6-alpine",
+	container, err := natscontainer.Run(ctx, "nats:2.15-alpine", testcontainers.WithAlwaysPull(),
 		natscontainer.WithConfigFile(strings.NewReader("port: 4222\njetstream { store_dir: /data/jetstream }\n")))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = container.Terminate(context.Background()) })
@@ -107,7 +107,7 @@ func TestEventSubscriptionSurvivesInitialConnectionFailure(t *testing.T) {
 		}
 	})
 
-	container, err = natscontainer.Run(ctx, "nats:2.14.6-alpine",
+	container, err = natscontainer.Run(ctx, "nats:2.15-alpine", testcontainers.WithAlwaysPull(),
 		testcontainers.WithHostConfigModifier(func(hostConfig *containerapi.HostConfig) {
 			if hostConfig.PortBindings == nil {
 				hostConfig.PortBindings = make(network.PortMap)
@@ -160,7 +160,7 @@ func (o *recoveryObserver) OnDisconnected() { o.disconnects.Add(1) }
 func (o *recoveryObserver) OnReconnected()  { o.reconnects.Add(1) }
 
 func TestSlowConsumerReconnectsRoomAndWildcardSubscriptions(t *testing.T) {
-	container, err := natscontainer.Run(t.Context(), "nats:2.14.6-alpine")
+	container, err := natscontainer.Run(t.Context(), "nats:2.15-alpine", testcontainers.WithAlwaysPull())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = container.Terminate(context.Background()) })
 	url, err := container.ConnectionString(t.Context())

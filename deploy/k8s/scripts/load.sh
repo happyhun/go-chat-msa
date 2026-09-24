@@ -31,35 +31,21 @@ log() {
   printf '\n[%s] %s\n' "$(date +%H:%M:%S)" "$*"
 }
 
-literal_arg() {
-  printf -- '--from-literal=%s=%s' "$1" "$2"
-}
-
-create_script_configmap() {
-  log "creating configmap/k6-load-scripts"
-  "${KUBECTL[@]}" -n "${NAMESPACE}" create configmap k6-load-scripts \
-    "--from-file=${REPO_ROOT}/test/load" \
-    --dry-run=client -o yaml | "${KUBECTL[@]}" apply -f -
-}
-
-create_env_configmap() {
-  local args=(
-    "$(literal_arg API_HOST "api-gateway")"
-    "$(literal_arg API_PORT "8080")"
-    "$(literal_arg WS_HOST "websocket-service")"
-    "$(literal_arg WS_PORT "8081")"
-  )
-  local key
+render_load() {
+  local substitutions=() key value
   for key in K6_WORKER_VUS K6_RAMP_DURATION K6_PLATEAU_DURATION K6_RAMP_DOWN_DURATION; do
-    if [[ -n "${!key:-}" ]]; then
-      args+=("$(literal_arg "${key}" "${!key}")")
+    value="${!key:-}"
+    if [[ -n "${value}" ]]; then
+      if [[ "${key}" == K6_WORKER_VUS ]]; then
+        [[ "${value}" =~ ^[1-9][0-9]*$ ]] || { printf 'Invalid %s\n' "${key}" >&2; return 1; }
+      else
+        [[ "${value}" =~ ^[1-9][0-9]*[smh]$ ]] || { printf 'Invalid %s\n' "${key}" >&2; return 1; }
+      fi
     fi
+    substitutions+=(-e "s/^  ${key}: .*/  ${key}: \"${value}\"/")
   done
-
-  log "creating configmap/k6-load-env"
-  "${KUBECTL[@]}" -n "${NAMESPACE}" create configmap k6-load-env \
-    "${args[@]}" \
-    --dry-run=client -o yaml | "${KUBECTL[@]}" apply -f -
+  "${KUBECTL[@]}" kustomize "${OVERLAY_DIR}" \
+    | sed "${substitutions[@]}"
 }
 
 delete_previous_job() {
@@ -180,13 +166,13 @@ main() {
     exit 1
   fi
 
-  create_script_configmap
-  create_env_configmap
+  local manifest
+  manifest="$(render_load)"
   delete_previous_job
   reset_qa_hpa_start_state
 
   log "starting job/${JOB_NAME}"
-  "${KUBECTL[@]}" apply -k "${OVERLAY_DIR}"
+  printf '%s\n' "${manifest}" | "${KUBECTL[@]}" apply -f -
 
   deadline=$((SECONDS + timeout_seconds))
 

@@ -29,11 +29,17 @@ spec:
       securityContext:
         sysctls:
           - name: net.ipv4.ip_local_port_range
-            value: "10240 65535"
+            value: 10240 65535
+        runAsNonRoot: true
+        runAsUser: 12345
+        runAsGroup: 12345
+        fsGroup: 12345
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: k6
-          image: grafana/k6:1.5.0
-          imagePullPolicy: IfNotPresent
+          image: grafana/k6:2.3.0
+          imagePullPolicy: Always
           command:
             - sh
             - -lc
@@ -61,7 +67,26 @@ spec:
             - name: k6-load-scripts
               mountPath: /scripts
               readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
       volumes:
         - name: k6-load-scripts
           configMap:
             name: k6-load-scripts
+        - name: tmp
+          emptyDir:
+            sizeLimit: 128Mi
+      automountServiceAccountToken: false
+  activeDeadlineSeconds: 2400

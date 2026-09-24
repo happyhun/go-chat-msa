@@ -1,9 +1,7 @@
-ENV: "dev"
-
+ENV: dev
 TELEMETRY:
-  OTEL_ENDPOINT: "alloy:4318"
-  PYROSCOPE_ENDPOINT: "http://pyroscope:4040"
-
+  OTEL_ENDPOINT: alloy:4318
+  PYROSCOPE_ENDPOINT: http://pyroscope:4040
 WEBSOCKET:
   ALLOWED_ORIGINS:
-    - "http://dev.gochat.localhost:30080"
+  - http://dev.gochat.localhost:30080

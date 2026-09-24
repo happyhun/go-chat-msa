@@ -1,29 +1,26 @@
-ENV: "test"
-
+ENV: test
 TELEMETRY:
-  OTEL_ENDPOINT: "alloy:4318"
-  PYROSCOPE_ENDPOINT: "http://pyroscope:4040"
-
+  OTEL_ENDPOINT: alloy:4318
+  PYROSCOPE_ENDPOINT: http://pyroscope:4040
 API_GATEWAY:
   RATE_LIMIT:
     PUBLIC:
       RPS: 10
       BURST: 15
-      TTL: "1h"
+      TTL: 1h
     AUTHENTICATED:
       RPS: 10
       BURST: 30
-      TTL: "1h"
+      TTL: 1h
     WS_TICKET:
       RPS: 4
       BURST: 10
-      TTL: "1h"
-
+      TTL: 1h
 WEBSOCKET:
   ALLOWED_ORIGINS:
-    - "http://test.gochat.localhost:30080"
+  - http://test.gochat.localhost:30080
   RATE_LIMIT:
     WS_CONNECT:
       RPS: 10
       BURST: 20
-      TTL: "1h"
+      TTL: 1h

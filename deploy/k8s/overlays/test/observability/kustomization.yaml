@@ -1,11 +1,8 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-
 namespace: go-chat-test
-
 resources:
   - ../../../base/observability
-
 patches:
   - target:
       kind: ClusterRole
@@ -38,89 +35,12 @@ patches:
                   - name: GF_SERVER_ROOT_URL
                     value: "http://test.gochat.localhost:30080/grafana/"
   - target:
-      kind: Deployment
-      name: alloy
+      kind: HTTPRoute
     patch: |-
       - op: add
-        path: /spec/template/spec/containers/0/resources
+        path: /spec/hostnames
         value:
-          requests:
-            memory: 128Mi
-          limits:
-            memory: 512Mi
-  - target:
-      kind: Deployment
-      name: kube-state-metrics
-    patch: |-
-      - op: add
-        path: /spec/template/spec/containers/0/resources
-        value:
-          requests:
-            memory: 64Mi
-          limits:
-            memory: 256Mi
-  - target:
-      kind: Deployment
-      name: prometheus
-    patch: |-
-      - op: add
-        path: /spec/template/spec/containers/0/resources
-        value:
-          requests:
-            memory: 256Mi
-          limits:
-            memory: 768Mi
-  - target:
-      kind: Deployment
-      name: loki
-    patch: |-
-      - op: add
-        path: /spec/template/spec/containers/0/resources
-        value:
-          requests:
-            memory: 128Mi
-          limits:
-            memory: 512Mi
-  - target:
-      kind: Deployment
-      name: tempo
-    patch: |-
-      - op: add
-        path: /spec/template/spec/containers/0/resources
-        value:
-          requests:
-            memory: 128Mi
-          limits:
-            memory: 512Mi
-  - target:
-      kind: Deployment
-      name: pyroscope
-    patch: |-
-      - op: add
-        path: /spec/template/spec/containers/0/resources
-        value:
-          requests:
-            memory: 128Mi
-          limits:
-            memory: 512Mi
-  - target:
-      kind: Deployment
-      name: grafana
-    patch: |-
-      - op: add
-        path: /spec/template/spec/containers/0/resources
-        value:
-          requests:
-            memory: 128Mi
-          limits:
-            memory: 512Mi
-  - target:
-      kind: Ingress
-    patch: |-
-      - op: add
-        path: /spec/rules/0/host
-        value: test.gochat.localhost
-
+        - test.gochat.localhost
 labels:
   - includeSelectors: true
     includeTemplates: true

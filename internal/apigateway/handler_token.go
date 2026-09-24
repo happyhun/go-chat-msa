@@ -87,7 +87,7 @@ func (r *Router) setRefreshTokenCookie(w http.ResponseWriter, token string) {
 		HttpOnly: true,
 		Secure:   r.config.Env == "prod",
 		SameSite: http.SameSiteStrictMode,
-		Path:     "/auth",
+		Path:     "/api/auth",
 		MaxAge:   r.config.UserService.Token.RefreshTokenExpirationDays * secondsPerDay,
 	})
 }
@@ -100,7 +100,7 @@ func (r *Router) clearRefreshTokenCookie(w http.ResponseWriter) {
 		HttpOnly: true,
 		Secure:   r.config.Env == "prod",
 		SameSite: http.SameSiteStrictMode,
-		Path:     "/auth",
+		Path:     "/api/auth",
 		MaxAge:   -1,
 	})
 }

@@ -37,7 +37,7 @@ spec:
       containers:
         - name: postgres
           image: postgres:17
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           ports:
             - name: postgres
               containerPort: 5432
@@ -46,11 +46,20 @@ spec:
               value: go_chat
             - name: POSTGRES_USER
               value: postgres
-            - name: POSTGRES_HOST_AUTH_METHOD
-              value: trust
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: gochat-secret
+                  key: POSTGRES_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
+            - name: tmp
+              mountPath: /tmp
+            - name: run
+              mountPath: /var/run/postgresql
           readinessProbe:
             exec:
               command:
@@ -75,6 +84,33 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
       volumes:
         - name: data
           emptyDir: {}
+        - name: run
+          emptyDir: {}
+        - name: tmp
+          emptyDir:
+            sizeLimit: 128Mi
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+  strategy:
+    type: Recreate

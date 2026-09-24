@@ -1,22 +1,4 @@
 apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: nats-config
-  labels:
-    app.kubernetes.io/name: nats
-    app.kubernetes.io/component: data
-data:
-  nats.conf: |
-    port: 4222
-    http_port: 8222
-    max_payload: 1MB
-    write_deadline: "3s"
-    jetstream {
-      store_dir: /data/jetstream
-      max_file_store: 1536MB
-    }
----
-apiVersion: v1
 kind: Service
 metadata:
   name: nats
@@ -38,6 +20,7 @@ spec:
   selector:
     app.kubernetes.io/name: nats
     app.kubernetes.io/component: data
+  clusterIP: None
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -61,8 +44,8 @@ spec:
     spec:
       containers:
         - name: nats
-          image: nats:2.14.6-alpine
-          imagePullPolicy: IfNotPresent
+          image: nats:2.15-alpine
+          imagePullPolicy: Always
           args:
             - nats-server
             - --config
@@ -78,6 +61,8 @@ spec:
             - name: nats-config
               mountPath: /etc/nats
               readOnly: true
+            - name: tmp
+              mountPath: /tmp
           readinessProbe:
             httpGet:
               path: /healthz
@@ -94,9 +79,21 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
         - name: nats-exporter
-          image: natsio/prometheus-nats-exporter:0.20.1
-          imagePullPolicy: IfNotPresent
+          image: natsio/prometheus-nats-exporter:0.20.2
+          imagePullPolicy: Always
           args:
             - -varz
             - -jsz=all
@@ -113,9 +110,35 @@ spec:
               port: metrics
             periodSeconds: 5
             timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: data
           emptyDir: {}
         - name: nats-config
           configMap:
             name: nats-config
+        - name: tmp
+          emptyDir:
+            sizeLimit: 128Mi
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault

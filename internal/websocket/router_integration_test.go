@@ -20,6 +20,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
+	"github.com/testcontainers/testcontainers-go"
 	natscontainer "github.com/testcontainers/testcontainers-go/modules/nats"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -59,7 +60,7 @@ type RouterIntegrationSuite struct {
 func (s *RouterIntegrationSuite) SetupSuite() {
 	ctx := context.Background()
 
-	container, err := natscontainer.Run(ctx, "nats:2.14.6-alpine", natscontainer.WithConfigFile(strings.NewReader("port: 4222\njetstream { store_dir: /data/jetstream }\n")))
+	container, err := natscontainer.Run(ctx, "nats:2.15-alpine", testcontainers.WithAlwaysPull(), natscontainer.WithConfigFile(strings.NewReader("port: 4222\njetstream { store_dir: /data/jetstream }\n")))
 	s.Require().NoError(err)
 	s.container = container
 

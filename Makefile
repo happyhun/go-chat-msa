@@ -4,8 +4,9 @@ SHELL := /usr/bin/env bash -e -o pipefail
 KIND_CLUSTER ?= go-chat
 KIND_CONFIG ?= deploy/k8s/clusters/kind-local.yaml
 export KUBE_CONTEXT = kind-$(KIND_CLUSTER)
+export IMAGE_TAG ?= $(shell bash deploy/k8s/scripts/image-tag.sh)
 KUBECTL = kubectl --context='$(KUBE_CONTEXT)'
-KUBECTL_TIMEOUT ?= 180s
+KUBECTL_TIMEOUT ?= 300s
 K6_JOB_NAME ?= k6-c10k
 K6_LOAD_TIMEOUT ?= 30m
 K6_FOLLOW_LOGS ?= true
@@ -40,6 +41,8 @@ check-prereqs:
 	@command -v kind >/dev/null || { printf 'missing required command: kind\n' >&2; exit 1; }
 	@command -v kubectl >/dev/null || { printf 'missing required command: kubectl\n' >&2; exit 1; }
 	@command -v go >/dev/null || { printf 'missing required command: go\n' >&2; exit 1; }
+	@command -v curl >/dev/null || { printf 'missing required command: curl\n' >&2; exit 1; }
+	@command -v shasum >/dev/null || { printf 'missing required command: shasum\n' >&2; exit 1; }
 
 .PHONY: k8s-validate
 k8s-validate: check-kubectl
@@ -56,18 +59,8 @@ kind-up: check-prereqs
 	else \
 		kind create cluster --name '$(KIND_CLUSTER)' --config '$(KIND_CONFIG)'; \
 	fi
+	@bash deploy/k8s/scripts/platform.sh
 	@$(MAKE) kind-tune
-	@$(KUBECTL) apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.15.1/deploy/static/provider/kind/deploy.yaml
-	@$(KUBECTL) -n ingress-nginx patch configmap ingress-nginx-controller \
-		--type=merge \
-		-p '{"data":{"use-forwarded-headers":"true","compute-full-forwarded-for":"true"}}'
-	@$(KUBECTL) -n ingress-nginx patch deployment ingress-nginx-controller \
-		--type=merge \
-		-p '{"spec":{"template":{"spec":{"nodeSelector":{"kubernetes.io/os":"linux","ingress-ready":"true"},"securityContext":{"sysctls":[{"name":"net.core.somaxconn","value":"65535"},{"name":"net.ipv4.ip_local_port_range","value":"10240 65535"}]}}}}}'
-	@$(KUBECTL) wait --namespace ingress-nginx \
-		--for=condition=ready pod \
-		--selector=app.kubernetes.io/component=controller \
-		--timeout='$(KUBECTL_TIMEOUT)'
 
 .PHONY: kind-tune
 kind-tune: check-prereqs
@@ -76,35 +69,17 @@ kind-tune: check-prereqs
 		printf 'tuning kernel sysctls on %s\n' "$$node"; \
 		docker exec "$$node" sysctl -w net.core.somaxconn=65535 >/dev/null; \
 		docker exec "$$node" sysctl -w net.ipv4.ip_local_port_range='10240 65535' >/dev/null; \
-		docker exec "$$node" bash -lc ' \
-			set -eu; \
-			cfg=/var/lib/kubelet/config.yaml; \
-			changed=0; \
-			if ! grep -q "^allowedUnsafeSysctls:" "$$cfg"; then \
-				printf "\nallowedUnsafeSysctls:\n- net.core.somaxconn\n- net.ipv4.ip_local_port_range\n" >> "$$cfg"; \
-				changed=1; \
-			else \
-				if ! grep -q "^- net.core.somaxconn" "$$cfg"; then \
-					sed -i "/^allowedUnsafeSysctls:/a - net.core.somaxconn" "$$cfg"; \
-					changed=1; \
-				fi; \
-				if ! grep -q "^- net.ipv4.ip_local_port_range" "$$cfg"; then \
-					sed -i "/^allowedUnsafeSysctls:/a - net.ipv4.ip_local_port_range" "$$cfg"; \
-					changed=1; \
-				fi; \
-			fi; \
-			if [ "$$changed" = 1 ]; then systemctl restart kubelet; fi'; \
 	done
 	@$(KUBECTL) wait --for=condition=Ready nodes --all --timeout='$(KUBECTL_TIMEOUT)'
 
 .PHONY: $(addprefix build-load-,$(addsuffix -images,$(K8S_ENVS)))
 $(addprefix build-load-,$(addsuffix -images,$(K8S_ENVS))): build-load-%-images: kind-up
 	@for service in $(GO_SERVICES); do \
-		docker build --build-arg SERVICE_NAME="$$service" -t "go-chat-msa/$$service:$*" .; \
-		kind load docker-image --name '$(KIND_CLUSTER)' "go-chat-msa/$$service:$*"; \
+		docker build --pull --build-arg SERVICE_NAME="$$service" -t "go-chat-msa/$$service:$(IMAGE_TAG)" .; \
+		kind load docker-image --name '$(KIND_CLUSTER)' "go-chat-msa/$$service:$(IMAGE_TAG)"; \
 	done
-	@docker build -t go-chat-msa/frontend:$* ./frontend
-	@kind load docker-image --name '$(KIND_CLUSTER)' go-chat-msa/frontend:$*
+	@docker build --pull -t go-chat-msa/frontend:$(IMAGE_TAG) ./frontend
+	@kind load docker-image --name '$(KIND_CLUSTER)' go-chat-msa/frontend:$(IMAGE_TAG)
 
 .PHONY: $(addsuffix -up,$(K8S_ENVS))
 $(addsuffix -up,$(K8S_ENVS)): %-up: build-load-%-images

@@ -16,8 +16,8 @@ spec:
       restartPolicy: OnFailure
       containers:
         - name: postgres-migrate
-          image: migrate/migrate:v4.19.1
-          imagePullPolicy: IfNotPresent
+          image: migrate/migrate:v4.20.1
+          imagePullPolicy: Always
           args:
             - -path
             - /migrations
@@ -31,10 +31,37 @@ spec:
             - name: migrations
               mountPath: /migrations
               readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
       volumes:
         - name: migrations
           configMap:
             name: postgres-migrations
+        - name: tmp
+          emptyDir:
+            sizeLimit: 128Mi
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+  activeDeadlineSeconds: 300
+  ttlSecondsAfterFinished: 86400
 ---
 apiVersion: batch/v1
 kind: Job
@@ -54,8 +81,8 @@ spec:
       restartPolicy: OnFailure
       containers:
         - name: mongo-migrate
-          image: migrate/migrate:v4.19.1
-          imagePullPolicy: IfNotPresent
+          image: migrate/migrate:v4.20.1
+          imagePullPolicy: Always
           args:
             - -path
             - /migrations
@@ -69,7 +96,34 @@ spec:
             - name: migrations
               mountPath: /migrations
               readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
       volumes:
         - name: migrations
           configMap:
             name: mongo-migrations
+        - name: tmp
+          emptyDir:
+            sizeLimit: 128Mi
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+  activeDeadlineSeconds: 300
+  ttlSecondsAfterFinished: 86400

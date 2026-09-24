@@ -1,12 +1,8 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-
 namespace: go-chat-test
-
 resources:
   - ../../../base/foundation
-  - mongo-proxy-config.yaml
-
 patches:
   - path: mongo-proxy.yaml
   - target:
@@ -17,31 +13,19 @@ patches:
         path: /spec/ports/0/targetPort
         value: mongo-proxy
   - target:
-      kind: Deployment
-      name: postgres
-    patch: |-
-      - op: add
-        path: /spec/template/spec/containers/0/resources
-        value:
-          requests:
-            memory: 128Mi
-          limits:
-            memory: 512Mi
-  - target:
-      kind: Deployment
-      name: redis
-    patch: |-
-      - op: add
-        path: /spec/template/spec/containers/0/resources
-        value:
-          requests:
-            memory: 64Mi
-          limits:
-            memory: 256Mi
-
+      kind: Gateway
+      name: gochat
+    patch: |
+      - op: replace
+        path: /spec/listeners/0/hostname
+        value: test.gochat.localhost
 labels:
   - includeSelectors: true
     includeTemplates: true
     pairs:
       app.kubernetes.io/part-of: go-chat-msa
       app.kubernetes.io/instance: go-chat-test
+configMapGenerator:
+  - name: mongo-proxy-config
+    files:
+      - config/proxies.json

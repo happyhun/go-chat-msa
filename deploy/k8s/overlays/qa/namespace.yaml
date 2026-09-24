@@ -5,4 +5,5 @@ metadata:
   labels:
     app.kubernetes.io/part-of: go-chat-msa
     app.kubernetes.io/instance: go-chat-qa
-
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: v1.37

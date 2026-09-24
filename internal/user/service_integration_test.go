@@ -51,7 +51,8 @@ type UserSuite struct {
 func (s *UserSuite) SetupSuite() {
 	ctx := context.Background()
 	pgContainer, err := postgres.Run(ctx,
-		"postgres:16-alpine",
+		"postgres:17",
+		testcontainers.WithAlwaysPull(),
 		postgres.WithDatabase("test_db"),
 		postgres.WithUsername("test_user"),
 		postgres.WithPassword("test_password"),

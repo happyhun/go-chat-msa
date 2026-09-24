@@ -32,5 +32,4 @@ spec:
           name: gochat_ws_connections_active
         target:
           type: AverageValue
-          averageValue: "100"
-
+          averageValue: '100'

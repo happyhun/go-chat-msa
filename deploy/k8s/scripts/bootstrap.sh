@@ -1,203 +1,61 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
 KUBECTL=(kubectl --context "${KUBE_CONTEXT:-kind-${KIND_CLUSTER:-go-chat}}")
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 K8S_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${K8S_DIR}/../.." && pwd)"
-
 K8S_ENV="${K8S_ENV:-dev}"
+NAMESPACE="go-chat-${K8S_ENV}"
 OVERLAY_DIR="${K8S_DIR}/overlays/${K8S_ENV}"
-if [[ -z "${NAMESPACE:-}" ]]; then
-  NAMESPACE="go-chat-${K8S_ENV}"
-fi
-K8S_HOST="${K8S_HOST:-${K8S_ENV}.gochat.localhost}"
-TIMEOUT="${KUBECTL_TIMEOUT:-180s}"
-TMP_FILES=()
+TIMEOUT="${KUBECTL_TIMEOUT:-300s}"
+IMAGE_TAG="${IMAGE_TAG:-$(bash "${SCRIPT_DIR}/image-tag.sh")}"
 
-cleanup_tmp_files() {
-  local file
-  if ((${#TMP_FILES[@]})); then
-    for file in "${TMP_FILES[@]}"; do
-      [[ -f "${file}" ]] && rm -f "${file}"
-    done
-  fi
-}
-trap cleanup_tmp_files EXIT
-
-log() {
-  printf '\n[%s] %s\n' "$(date +%H:%M:%S)" "$*"
-}
-
-apply_kustomize() {
-  local path="$1"
-  log "kubectl apply -k ${path}"
-  "${KUBECTL[@]}" apply -k "${path}"
-}
-
-apply_file_if_exists() {
-  local path="$1"
-  if [[ -f "${path}" ]]; then
-    log "kubectl apply -f ${path}"
-    "${KUBECTL[@]}" apply -f "${path}"
-  fi
-}
-
-ensure_namespace() {
-  log "ensuring namespace/${NAMESPACE}"
-  "${KUBECTL[@]}" create namespace "${NAMESPACE}" --dry-run=client -o yaml | "${KUBECTL[@]}" apply -f -
-}
-
+log() { printf '\n[%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 wait_rollout() {
-  local deployment
-  for deployment in "$@"; do
-    log "waiting for deployment/${deployment}"
-    "${KUBECTL[@]}" -n "${NAMESPACE}" rollout status "deployment/${deployment}" --timeout="${TIMEOUT}"
+  local name
+  for name in "$@"; do
+    "${KUBECTL[@]}" -n "${NAMESPACE}" rollout status "deployment/${name}" --timeout="${TIMEOUT}"
   done
 }
-
-wait_rollout_if_exists() {
-  local deployments=()
-  local deployment
-  for deployment in "$@"; do
-    if "${KUBECTL[@]}" -n "${NAMESPACE}" get "deployment/${deployment}" >/dev/null 2>&1; then
-      deployments+=("${deployment}")
-    fi
-  done
-  if ((${#deployments[@]})); then
-    wait_rollout "${deployments[@]}"
-  fi
-}
-
-create_configmap_from_file() {
-  local name="$1"
-  local key="$2"
-  local file="$3"
-
-  log "creating configmap/${name} from ${file}"
-  "${KUBECTL[@]}" -n "${NAMESPACE}" create configmap "${name}" \
-    "--from-file=${key}=${file}" \
-    --dry-run=client -o yaml | "${KUBECTL[@]}" apply -f -
-}
-
-create_configmap_from_dir() {
-  local name="$1"
-  local dir="$2"
-
-  log "creating configmap/${name} from ${dir}"
-  "${KUBECTL[@]}" -n "${NAMESPACE}" create configmap "${name}" \
-    "--from-file=${dir}" \
-    --dry-run=client -o yaml | "${KUBECTL[@]}" apply -f -
-}
-
-create_alloy_configmap() {
-  local rendered
-  rendered="$(mktemp)"
-  TMP_FILES+=("${rendered}")
-  sed "s/__GOCHAT_NAMESPACE__/${NAMESPACE}/g" "${K8S_DIR}/base/observability/config/alloy/config.alloy" > "${rendered}"
-  create_configmap_from_file alloy-config config.alloy "${rendered}"
-}
-
-create_observability_configmaps() {
-  create_alloy_configmap
-  create_configmap_from_file prometheus-config config.yaml "${REPO_ROOT}/observability/prometheus/config.yaml"
-  create_configmap_from_dir prometheus-rules "${REPO_ROOT}/observability/prometheus/rules"
-  create_configmap_from_file loki-config config.yaml "${REPO_ROOT}/observability/loki/config.yaml"
-  create_configmap_from_file tempo-config config.yaml "${REPO_ROOT}/observability/tempo/config.yaml"
-  create_configmap_from_file pyroscope-config config.yaml "${REPO_ROOT}/observability/pyroscope/config.yaml"
-  create_configmap_from_dir grafana-datasources "${REPO_ROOT}/observability/grafana/provisioning/datasources"
-  create_configmap_from_dir grafana-dashboards "${REPO_ROOT}/observability/grafana/provisioning/dashboards"
-}
-
-create_migration_configmaps() {
-  create_configmap_from_dir postgres-migrations "${REPO_ROOT}/db/migrations/postgres"
-  create_configmap_from_dir mongo-migrations "${REPO_ROOT}/db/migrations/mongo"
-}
-
-create_app_configmaps() {
-  create_configmap_from_file openapi-spec openapi.yaml "${REPO_ROOT}/api/openapi/openapi.yaml"
-}
-
-create_load_test_configmaps() {
-  if [[ -d "${OVERLAY_DIR}/load" ]]; then
-    create_configmap_from_dir k6-load-scripts "${REPO_ROOT}/test/load"
-  fi
-}
-
-delete_previous_migration_jobs() {
-  log "deleting previous migration jobs"
-  "${KUBECTL[@]}" -n "${NAMESPACE}" delete job postgres-migrate mongo-migrate --ignore-not-found=true
-  "${KUBECTL[@]}" -n "${NAMESPACE}" wait --for=delete job/postgres-migrate --timeout=60s 2>/dev/null || true
-  "${KUBECTL[@]}" -n "${NAMESPACE}" wait --for=delete job/mongo-migrate --timeout=60s 2>/dev/null || true
-}
-
-wait_job_complete() {
-  local job="$1"
-
-  log "waiting for job/${job}"
-  if ! "${KUBECTL[@]}" -n "${NAMESPACE}" wait --for=condition=complete "job/${job}" --timeout="${TIMEOUT}"; then
-    "${KUBECTL[@]}" -n "${NAMESPACE}" describe "job/${job}" || true
-    "${KUBECTL[@]}" -n "${NAMESPACE}" logs "job/${job}" --all-containers=true --tail=200 || true
+apply_apps() {
+  if [[ ! "${IMAGE_TAG}" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]]; then
+    printf 'Invalid IMAGE_TAG\n' >&2
     return 1
   fi
+  "${KUBECTL[@]}" kustomize "${OVERLAY_DIR}/apps" \
+    | sed -E "s|(image: go-chat-msa/[a-z-]+):build-required$|\1:${IMAGE_TAG}|" \
+    | "${KUBECTL[@]}" apply -f -
 }
-
-restart_backend_apps() {
-  log "restarting core backend deployments after image/config apply"
-  "${KUBECTL[@]}" -n "${NAMESPACE}" rollout restart \
-    deployment/user-service \
-    deployment/chat-service
-  wait_rollout user-service chat-service
-
-  log "restarting websocket deployment after core backend rollout"
-  "${KUBECTL[@]}" -n "${NAMESPACE}" rollout restart deployment/websocket-service
-  wait_rollout websocket-service
-}
-
-restart_edge_apps() {
-  log "restarting edge deployments after backend rollout"
-  "${KUBECTL[@]}" -n "${NAMESPACE}" rollout restart \
-    deployment/api-gateway \
-    deployment/frontend \
-    deployment/swagger-ui
-}
-
 main() {
+  case "${K8S_ENV}" in dev|test|qa) ;; *) printf 'Invalid K8S_ENV\n' >&2; exit 1 ;; esac
   cd "${REPO_ROOT}"
-
-  if [[ ! -d "${OVERLAY_DIR}" ]]; then
-    printf 'unknown K8S_ENV=%s: overlay not found: %s\n' "${K8S_ENV}" "${OVERLAY_DIR}" >&2
-    exit 1
-  fi
-
-  ensure_namespace
-  apply_kustomize "${OVERLAY_DIR}/foundation"
+  "${KUBECTL[@]}" apply -f "${OVERLAY_DIR}/namespace.yaml"
+  log 'Applying ephemeral foundation'
+  "${KUBECTL[@]}" apply -k "${OVERLAY_DIR}/foundation"
   wait_rollout postgres mongo redis
   "${KUBECTL[@]}" -n "${NAMESPACE}" rollout status statefulset/nats --timeout="${TIMEOUT}"
-
-  create_observability_configmaps
-  apply_file_if_exists "${OVERLAY_DIR}/observability/prometheus-adapter-auth-reader.yaml"
-  apply_kustomize "${OVERLAY_DIR}/observability"
-  wait_rollout_if_exists kube-state-metrics prometheus loki tempo pyroscope alloy grafana prometheus-adapter
-
-  create_migration_configmaps
-  delete_previous_migration_jobs
-  apply_kustomize "${OVERLAY_DIR}/migrations"
-  wait_job_complete postgres-migrate
-  wait_job_complete mongo-migrate
-
-  create_app_configmaps
-  create_load_test_configmaps
-  apply_kustomize "${OVERLAY_DIR}/apps"
-  restart_backend_apps
-  restart_edge_apps
-  wait_rollout api-gateway frontend swagger-ui
-
-  log "${K8S_ENV} Kubernetes bootstrap completed"
-  log "Frontend: http://${K8S_HOST}:30080/"
-  log "OpenAPI: http://${K8S_HOST}:30080/docs/"
-  log "Grafana: http://${K8S_HOST}:30080/grafana/"
+  log 'Applying observability and hashed configuration'
+  if [[ "${K8S_ENV}" == qa ]]; then
+    "${KUBECTL[@]}" apply -f "${OVERLAY_DIR}/observability/prometheus-adapter-auth-reader.yaml"
+  fi
+  "${KUBECTL[@]}" apply -k "${OVERLAY_DIR}/observability"
+  wait_rollout kube-state-metrics prometheus loki tempo pyroscope alloy grafana
+  if [[ "${K8S_ENV}" == qa ]]; then wait_rollout prometheus-adapter; fi
+  log 'Running migrations'
+  "${KUBECTL[@]}" -n "${NAMESPACE}" delete job postgres-migrate mongo-migrate --ignore-not-found=true --wait=true
+  "${KUBECTL[@]}" apply -k "${OVERLAY_DIR}/migrations"
+  local job
+  for job in postgres-migrate mongo-migrate; do
+    if ! "${KUBECTL[@]}" -n "${NAMESPACE}" wait --for=condition=complete "job/${job}" --timeout="${TIMEOUT}"; then
+      "${KUBECTL[@]}" -n "${NAMESPACE}" logs "job/${job}" --all-containers=true --tail=100
+      return 1
+    fi
+  done
+  log "Applying application image ${IMAGE_TAG}"
+  apply_apps
+  wait_rollout user-service chat-service websocket-service api-gateway frontend swagger-ui
+  "${KUBECTL[@]}" -n "${NAMESPACE}" wait --for=condition=Programmed gateway/gochat --timeout="${TIMEOUT}"
+  log "Ready: http://${K8S_ENV}.gochat.localhost:30080/"
+  log "Grafana login: admin / dev_grafana_password"
 }
-
 main "$@"
