@@ -35,3 +35,6 @@ test/load/results/
 
 # graft's local graph cache — regenerable, not committed (run `graft build`).
 /graft/
+
+# Helm dependency archives and packaged manifests
+/deploy/helm/charts/*/charts/

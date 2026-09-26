@@ -533,6 +533,6 @@ Frontend·Swagger UI·데이터 서비스·부하 테스트 Pod 로그는 Pod �
 | JSON 로그·트레이스 ID 연결 | [`internal/shared/logger/`](../internal/shared/logger/) |
 | 도메인 메트릭 정의 | `internal/chat/metrics.go`, `internal/user/metrics.go`, `internal/user/hasher/metrics.go`, `internal/websocket/hub/metrics.go`, `internal/websocket/natsbus/nats.go` |
 | 계측 라이브러리 버전 | [`go.mod`](../go.mod) |
-| Kubernetes 수집·전달·필터 | [Alloy 설정](../deploy/k8s/base/observability/config/alloy/config.alloy) |
+| Kubernetes 수집·전달·필터 | [Alloy 설정](../observability/alloy/config.alloy) |
 | 백엔드 설정 | [`observability/`](../observability/)의 서비스별 `config.yaml` |
 | 대시보드 | [Grafana dashboards](../observability/grafana/provisioning/dashboards/) |

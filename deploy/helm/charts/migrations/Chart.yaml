@@ -1,0 +1,5 @@
+apiVersion: v2
+name: migrations
+description: Go Chat migrations
+type: application
+version: 0.1.0

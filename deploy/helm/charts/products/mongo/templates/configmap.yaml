@@ -1,0 +1,15 @@
+{{ define "gochat.mongo.config" }}
+{{ if .Values.proxy.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mongo-proxy-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/part-of: go-chat-msa
+    app.kubernetes.io/instance: {{ .Release.Namespace }}
+data:
+{{ (.Files.Glob "files/proxies.json").AsConfig | indent 2 }}
+{{ end }}
+{{ end }}
+{{ include "gochat.mongo.config" . }}

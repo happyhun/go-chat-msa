@@ -1,0 +1,5 @@
+apiVersion: v2
+name: chat-service
+description: Go Chat chat-service
+type: application
+version: 0.1.0

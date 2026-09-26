@@ -283,7 +283,7 @@ func (s *E2ESuite) mongoProcessIdentity(ctx context.Context) (string, error) {
 func (s *E2ESuite) mongoProxyEnabled(ctx context.Context) (bool, error) {
 	out, err := s.kubectlOutput(ctx, "-n", s.namespace, "exec", "deployment/mongo", "-c", "mongo-proxy", "--", "/toxiproxy-cli", "list")
 	if err != nil {
-		return false, fmt.Errorf("MongoDB fault proxy unavailable; bootstrap the test overlay: %w", err)
+		return false, fmt.Errorf("MongoDB fault proxy unavailable; run make test-up: %w", err)
 	}
 	for line := range strings.SplitSeq(out, "\n") {
 		fields := strings.Fields(line)

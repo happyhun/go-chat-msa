@@ -1,0 +1,25 @@
+global:
+  appConfig:
+    override:
+      ENV: qa
+      TELEMETRY:
+        OTEL_ENDPOINT: alloy:4318
+        PYROSCOPE_ENDPOINT: http://pyroscope:4040
+      WEBSOCKET:
+        ALLOWED_ORIGINS:
+        - http://qa.gochat.localhost:30080
+  host: qa.gochat.localhost
+  externalPort: 30080
+  sysctls:
+  - name: net.core.somaxconn
+    value: '65535'
+api-gateway:
+  replicas: 1
+user-service:
+  replicas: 1
+chat-service:
+  replicas: 1
+websocket-service:
+  replicas: 1
+  autoscaling:
+    enabled: true

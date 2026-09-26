@@ -1,0 +1,9 @@
+replicas: 1
+image:
+  repository: go-chat-msa/api-gateway
+  tag: local
+global:
+  sysctls: []
+  appConfig:
+    base: {}
+    override: {}

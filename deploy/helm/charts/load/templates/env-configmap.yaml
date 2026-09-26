@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-load-env
+  namespace: {{ .Release.Namespace }}
+data:
+  API_HOST: api-gateway
+  API_PORT: "8080"
+  WS_HOST: websocket-service
+  WS_PORT: "8081"
+{{ range $key, $value := .Values.env }}
+  {{ $key }}: {{ $value | quote }}
+{{ end }}

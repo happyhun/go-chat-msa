@@ -19,12 +19,14 @@ import (
 	"go-chat-msa/internal/user/hasher"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/go-playground/validator/v10"
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/suite"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -69,11 +71,14 @@ func (s *UserSuite) SetupSuite() {
 	s.db, err = database.NewPostgres(connStr)
 	s.Require().NoError(err)
 
-	cfgPath, err := filepath.Abs("../../deploy/k8s/base/apps/config/app")
-	s.Require().NoError(err)
-
-	cfg, err := config.Load[userIntegrationConfig](cfgPath, "base", "")
-	s.Require().NoError(err)
+	values := viper.New()
+	values.SetConfigFile("../../deploy/helm/values/common/apps.yaml")
+	s.Require().NoError(values.ReadInConfig())
+	base := values.Sub("global.appConfig.base")
+	s.Require().NotNil(base)
+	var cfg userIntegrationConfig
+	s.Require().NoError(base.Unmarshal(&cfg))
+	s.Require().NoError(validator.New().Struct(cfg))
 
 	s.runMigrations(ctx)
 

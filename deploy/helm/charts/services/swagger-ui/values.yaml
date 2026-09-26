@@ -1,0 +1,9 @@
+replicas: 1
+image:
+  repository: swaggerapi/swagger-ui
+  tag: v5.33.0
+global:
+  sysctls: []
+  appConfig:
+    base: {}
+    override: {}

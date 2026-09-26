@@ -1,0 +1,31 @@
+apiVersion: v2
+name: observability
+description: Go Chat observability
+type: application
+version: 0.1.0
+dependencies:
+- name: prometheus
+  version: 29.25.0
+  repository: https://prometheus-community.github.io/helm-charts
+- name: loki
+  version: 18.13.5
+  repository: https://grafana-community.github.io/helm-charts
+- name: tempo
+  version: 2.4.0
+  repository: https://grafana-community.github.io/helm-charts
+- name: pyroscope
+  version: 1.21.0
+  repository: https://grafana.github.io/helm-charts
+- name: alloy
+  version: 1.12.1
+  repository: https://grafana.github.io/helm-charts
+- name: grafana
+  version: 11.6.1
+  repository: https://grafana-community.github.io/helm-charts
+- name: kube-state-metrics
+  version: 8.6.0
+  repository: https://prometheus-community.github.io/helm-charts
+- name: prometheus-adapter
+  version: 5.3.0
+  repository: https://prometheus-community.github.io/helm-charts
+  condition: prometheus-adapter.enabled

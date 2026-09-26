@@ -39,17 +39,17 @@ func init() {
 	}
 }
 
-type dbtx interface {
+type DBTX interface {
 	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
 	Query(context.Context, string, ...any) (pgx.Rows, error)
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
 type instrumentedDBTX struct {
-	inner dbtx
+	inner DBTX
 }
 
-func InstrumentedDBTX(inner dbtx) dbtx {
+func InstrumentedDBTX(inner DBTX) DBTX {
 	return &instrumentedDBTX{inner: inner}
 }
 

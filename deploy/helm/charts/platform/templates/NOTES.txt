@@ -1,0 +1,1 @@
+Traefik serves the go-chat Gateway API routes through the kind control-plane host port.

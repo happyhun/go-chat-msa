@@ -1,0 +1,24 @@
+apiVersion: v2
+name: apps
+description: Go Chat apps
+type: application
+version: 0.1.0
+dependencies:
+- name: api-gateway
+  version: 0.1.0
+  repository: file://../services/api-gateway
+- name: user-service
+  version: 0.1.0
+  repository: file://../services/user-service
+- name: chat-service
+  version: 0.1.0
+  repository: file://../services/chat-service
+- name: websocket-service
+  version: 0.1.0
+  repository: file://../services/websocket-service
+- name: frontend
+  version: 0.1.0
+  repository: file://../services/frontend
+- name: swagger-ui
+  version: 0.1.0
+  repository: file://../services/swagger-ui

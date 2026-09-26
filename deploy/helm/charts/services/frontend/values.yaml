@@ -1,0 +1,9 @@
+replicas: 1
+image:
+  repository: go-chat-msa/frontend
+  tag: local
+global:
+  sysctls: []
+  appConfig:
+    base: {}
+    override: {}

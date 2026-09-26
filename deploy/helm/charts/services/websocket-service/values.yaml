@@ -1,0 +1,11 @@
+replicas: 1
+image:
+  repository: go-chat-msa/websocket-service
+  tag: local
+autoscaling:
+  enabled: false
+global:
+  sysctls: []
+  appConfig:
+    base: {}
+    override: {}

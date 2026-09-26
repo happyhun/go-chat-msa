@@ -1,0 +1,6 @@
+global:
+  host: dev.gochat.localhost
+  externalPort: 30080
+mongo:
+  proxy:
+    enabled: false

@@ -1,0 +1,104 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: websocket-service
+  labels:
+    app.kubernetes.io/name: websocket-service
+    app.kubernetes.io/component: service
+    app.kubernetes.io/part-of: go-chat-msa
+    app.kubernetes.io/instance: {{ .Release.Namespace }}
+  namespace: {{ .Release.Namespace }}
+spec:
+{{ if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicas }}
+{{ end }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: websocket-service
+      app.kubernetes.io/component: service
+      app.kubernetes.io/part-of: go-chat-msa
+      app.kubernetes.io/instance: {{ .Release.Namespace }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: websocket-service
+        app.kubernetes.io/component: service
+        app.kubernetes.io/part-of: go-chat-msa
+        app.kubernetes.io/instance: {{ .Release.Namespace }}
+      annotations:
+        checksum/config: {{ .Values.global.appConfig | toJson | sha256sum }}
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+      - name: websocket-service
+        image: {{ printf "%s:%s" .Values.image.repository .Values.image.tag | quote }}
+        imagePullPolicy: Never
+        ports:
+        - name: http
+          containerPort: 8081
+        envFrom:
+        - secretRef:
+            name: gochat-secret
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        volumeMounts:
+        - name: app-config
+          mountPath: /app/configs
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+        startupProbe:
+          httpGet:
+            path: /health
+            port: http
+          periodSeconds: 2
+          timeoutSeconds: 5
+          failureThreshold: 30
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+          periodSeconds: 5
+          timeoutSeconds: 5
+          failureThreshold: 6
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: app-config
+        configMap:
+          name: gochat-app-config
+      - name: tmp
+        emptyDir:
+          sizeLimit: 128Mi
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+        sysctls: {{ .Values.global.sysctls | toJson }}
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/instance: {{ .Release.Namespace }}
+            app.kubernetes.io/part-of: go-chat-msa
+            app.kubernetes.io/name: websocket-service

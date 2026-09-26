@@ -48,6 +48,7 @@ Docker Compose 기준에서 병목을 제거해 최대 워커 P99 25ms를 확보
 | Docker | 이미지 빌드와 kind 노드 실행 |
 | kind | 로컬 Kubernetes 클러스터 생성 |
 | kubectl | K8s 리소스 적용과 상태 확인 |
+| Helm | 배포 구성 설치·업데이트·롤백 |
 | Make | 실행 명령 단순화 |
 
 설치 후 아래 명령어로 K8s 클러스터와 애플리케이션을 함께 실행할 수 있습니다.
@@ -258,7 +259,7 @@ NATS 경계에서 트레이스가 이어지지 않는 메시지 전달·저장 �
 
 ## Kubernetes 실행 기준
 
-Kubernetes 매니페스트는 `base`와 환경별 오버레이로 나눕니다. `bootstrap.sh`가 PostgreSQL·MongoDB·Redis·NATS, 관측성, 마이그레이션, 애플리케이션을 순서대로 준비합니다.
+배포 구성은 Helm chart로, 환경별 차이는 values로 관리합니다. `deploy.sh`가 인프라·관측성·마이그레이션·앱을 순서대로 준비합니다.
 
 | 환경 | 주요 설정 | 용도 |
 | :--- | :--- | :--- |
@@ -308,7 +309,7 @@ make qa-down
 make kind-delete
 ```
 
-`*-down`은 해당 namespace와 관련 RBAC을 삭제합니다. `kind-delete`는 클러스터 전체와 그 데이터를 삭제합니다.
+`*-down`은 해당 환경의 Helm 릴리즈·namespace·관련 RBAC을 삭제합니다. `kind-delete`는 클러스터 전체와 그 데이터를 삭제합니다.
 현재 로컬 환경의 저장소는 `emptyDir`을 사용하므로 Pod 교체 시 데이터가 사라집니다.
 
 ## 검증 결과

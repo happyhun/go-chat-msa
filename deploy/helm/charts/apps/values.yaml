@@ -1,0 +1,6 @@
+global:
+  host: dev.gochat.localhost
+  appConfig:
+    base: {}
+    override: {}
+  sysctls: []

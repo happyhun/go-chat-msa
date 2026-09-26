@@ -1,0 +1,5 @@
+apiVersion: v2
+name: mongo
+description: Go Chat mongo
+type: application
+version: 0.1.0

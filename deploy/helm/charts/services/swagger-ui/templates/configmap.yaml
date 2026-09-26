@@ -1,0 +1,13 @@
+{{ define "gochat.swagger-ui.config" }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openapi-spec
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/part-of: go-chat-msa
+    app.kubernetes.io/instance: {{ .Release.Namespace }}
+data:
+{{ (.Files.Glob "files/openapi-spec/*").AsConfig | indent 2 }}
+{{ end }}
+{{ include "gochat.swagger-ui.config" . }}

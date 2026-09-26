@@ -1,0 +1,40 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-prometheus-config
+  namespace: {{ .Release.Namespace }}
+data:
+{{ (.Files.Glob "files/prometheus/config.yaml").AsConfig | indent 2 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-rules
+  namespace: {{ .Release.Namespace }}
+data:
+{{ (.Files.Glob "files/prometheus/rules/*.yaml").AsConfig | indent 2 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: {{ .Release.Namespace }}
+data:
+{{ (.Files.Glob "files/grafana/provisioning/datasources/*.yaml").AsConfig | indent 2 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: {{ .Release.Namespace }}
+data:
+{{ (.Files.Glob "files/grafana/provisioning/dashboards/*").AsConfig | indent 2 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alloy-config
+  namespace: {{ .Release.Namespace }}
+data:
+{{ (.Files.Glob "files/alloy/config.alloy").AsConfig | indent 2 }}

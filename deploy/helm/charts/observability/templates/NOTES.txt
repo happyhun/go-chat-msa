@@ -1,0 +1,1 @@
+Grafana: http://{{ .Values.global.host }}:{{ .Values.global.externalPort }}/grafana/

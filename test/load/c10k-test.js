@@ -404,7 +404,3 @@ function chatOverWebSocket(ticket, role, fakeIp) {
     });
     if (connRes.status !== 101) wsConnectErrors.add(1);
 }
-
-export function handleSummary(data) {
-    return { stdout: `summary:${JSON.stringify(data)}\n` };
-}

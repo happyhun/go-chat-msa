@@ -1,0 +1,12 @@
+global:
+  host: qa.gochat.localhost
+  externalPort: 30080
+prometheus-adapter:
+  enabled: true
+grafana:
+  env:
+    GF_SERVER_ROOT_URL: http://qa.gochat.localhost:30080/grafana/
+  route:
+    main:
+      hostnames:
+      - qa.gochat.localhost

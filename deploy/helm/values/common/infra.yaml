@@ -1,0 +1,120 @@
+nats:
+  fullnameOverride: nats
+  config:
+    jetstream:
+      enabled: true
+      fileStore:
+        dir: /data/jetstream
+        pvc:
+          enabled: false
+        maxSize: 1536MB
+    merge:
+      max_payload: 1048576
+      write_deadline: 3s
+  container:
+    image:
+      tag: 2.15-alpine
+      pullPolicy: Always
+    merge:
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop:
+          - ALL
+    startupProbe: {}
+    readinessProbe:
+      httpGet:
+        path: /healthz
+        port: monitor
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      timeoutSeconds: 5
+      failureThreshold: 5
+    livenessProbe:
+      httpGet:
+        path: /healthz
+        port: monitor
+      initialDelaySeconds: 20
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 5
+    patch:
+    - op: add
+      path: /volumeMounts/-
+      value:
+        name: data
+        mountPath: /data/jetstream
+    - op: add
+      path: /volumeMounts/-
+      value:
+        name: tmp
+        mountPath: /tmp
+  reloader:
+    enabled: false
+  natsBox:
+    enabled: false
+  podDisruptionBudget:
+    enabled: false
+  podTemplate:
+    configChecksumAnnotation: true
+    terminationGracePeriodSeconds: 60
+    merge:
+      metadata:
+        labels:
+          app.kubernetes.io/part-of: go-chat-msa
+      spec:
+        automountServiceAccountToken: false
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          fsGroup: 1000
+          seccompProfile:
+            type: RuntimeDefault
+    patch:
+    - op: add
+      path: /spec/volumes/-
+      value:
+        name: data
+        emptyDir: {}
+    - op: add
+      path: /spec/volumes/-
+      value:
+        name: tmp
+        emptyDir:
+          sizeLimit: 128Mi
+  promExporter:
+    enabled: true
+    image:
+      tag: 0.20.2
+      pullPolicy: Always
+    merge:
+      name: nats-exporter
+      args:
+      - -varz
+      - -jsz=all
+      - -connz_detailed
+      - -prefix=nats
+      - -use_internal_server_id
+      - http://localhost:8222
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop:
+          - ALL
+      volumeMounts:
+      - name: tmp
+        mountPath: /tmp
+  service:
+    ports:
+      monitor:
+        enabled: true
+    patch:
+    - op: add
+      path: /spec/ports/-
+      value:
+        name: metrics
+        port: 7777
+        targetPort: 7777

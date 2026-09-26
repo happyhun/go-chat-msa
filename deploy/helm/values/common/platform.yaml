@@ -1,0 +1,54 @@
+traefik:
+  fullnameOverride: traefik
+  image:
+    tag: v3.7.13
+    pullPolicy: Always
+  providers:
+    kubernetesCRD:
+      enabled: false
+    kubernetesIngress:
+      enabled: false
+    kubernetesGateway:
+      enabled: true
+      namespaces:
+      - go-chat-dev
+      - go-chat-test
+      - go-chat-qa
+      statusAddress:
+        service:
+          enabled: false
+  gateway:
+    enabled: false
+  gatewayClass:
+    enabled: true
+    name: gochat-traefik
+  ingressClass:
+    enabled: false
+  api:
+    dashboard: false
+  service:
+    enabled: false
+  ports:
+    web:
+      port: 8000
+      hostPort: 80
+    websecure: null
+    traefik:
+      port: 9000
+  nodeSelector:
+    ingress-ready: 'true'
+  tolerations:
+  - key: node-role.kubernetes.io/control-plane
+    operator: Exists
+    effect: NoSchedule
+  updateStrategy:
+    type: Recreate
+    rollingUpdate: null
+  additionalArguments:
+  - --entrypoints.web.transport.respondingtimeouts.readtimeout=0s
+  - --entrypoints.web.transport.respondingtimeouts.idletimeout=86400s
+  metrics:
+    prometheus: null
+  global:
+    checkNewVersion: false
+    sendAnonymousUsage: false

@@ -1,0 +1,4 @@
+global:
+  host: qa.gochat.localhost
+  externalPort: 30080
+mode: hpa

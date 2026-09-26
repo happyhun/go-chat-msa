@@ -15,10 +15,12 @@ import (
 	"go-chat-msa/internal/shared/config"
 	"go-chat-msa/internal/shared/database"
 
+	"github.com/go-playground/validator/v10"
 	"github.com/golang-migrate/migrate/v4"
 	mongodb_migrate "github.com/golang-migrate/migrate/v4/database/mongodb"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/google/uuid"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/suite"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/mongodb"
@@ -53,11 +55,14 @@ func (s *ChatSuite) SetupSuite() {
 
 	s.mongoClient = dbClient
 
-	cfgPath, err := filepath.Abs("../../deploy/k8s/base/apps/config/app")
-	s.Require().NoError(err)
-
-	cfg, err := config.Load[chatIntegrationConfig](cfgPath, "base", "")
-	s.Require().NoError(err)
+	values := viper.New()
+	values.SetConfigFile("../../deploy/helm/values/common/apps.yaml")
+	s.Require().NoError(values.ReadInConfig())
+	base := values.Sub("global.appConfig.base")
+	s.Require().NotNil(base)
+	var cfg chatIntegrationConfig
+	s.Require().NoError(base.Unmarshal(&cfg))
+	s.Require().NoError(validator.New().Struct(cfg))
 
 	s.runMigrations()
 

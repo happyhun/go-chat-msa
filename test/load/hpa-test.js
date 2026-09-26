@@ -485,7 +485,3 @@ function randomBetween(min, max) {
     if (max <= min) return min;
     return min + Math.random() * (max - min);
 }
-
-export function handleSummary(data) {
-    return { stdout: `summary:${JSON.stringify(data)}\n` };
-}

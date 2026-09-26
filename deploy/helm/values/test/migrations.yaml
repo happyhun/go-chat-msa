@@ -1,0 +1,3 @@
+global:
+  host: test.gochat.localhost
+  externalPort: 30080

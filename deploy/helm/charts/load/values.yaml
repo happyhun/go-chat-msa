@@ -1,0 +1,6 @@
+mode: c10k
+env:
+  K6_WORKER_VUS: ''
+  K6_RAMP_DURATION: ''
+  K6_PLATEAU_DURATION: ''
+  K6_RAMP_DOWN_DURATION: ''

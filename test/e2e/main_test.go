@@ -50,12 +50,14 @@ func (s *E2ESuite) startKubernetes(ctx context.Context) {
 	s.Require().NoError(s.runKubectl(ctx, "get", "namespace", s.namespace))
 	for _, deployment := range []string{
 		"postgres", "mongo", "redis",
-		"prometheus", "loki", "tempo", "pyroscope", "alloy", "grafana",
+		"prometheus", "alloy", "grafana",
 		"user-service", "chat-service", "api-gateway", "websocket-service", "frontend",
 	} {
 		s.Require().NoError(s.runKubectl(ctx, "-n", s.namespace, "rollout", "status", "deployment/"+deployment, "--timeout=180s"))
 	}
-	s.Require().NoError(s.runKubectl(ctx, "-n", s.namespace, "rollout", "status", "statefulset/nats", "--timeout=180s"))
+	for _, statefulset := range []string{"nats", "loki", "tempo", "pyroscope"} {
+		s.Require().NoError(s.runKubectl(ctx, "-n", s.namespace, "rollout", "status", "statefulset/"+statefulset, "--timeout=180s"))
+	}
 }
 
 func getenvDefault(key, fallback string) string {

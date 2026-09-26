@@ -1,0 +1,5 @@
+global:
+  host: dev.gochat.localhost
+  externalPort: 30080
+prometheus-adapter:
+  enabled: false

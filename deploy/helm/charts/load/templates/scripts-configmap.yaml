@@ -1,0 +1,13 @@
+{{ define "gochat.load.config" }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-load-scripts
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/part-of: go-chat-msa
+    app.kubernetes.io/instance: {{ .Release.Namespace }}
+data:
+{{ (.Files.Glob "files/k6-load-scripts/*").AsConfig | indent 2 }}
+{{ end }}
+{{ include "gochat.load.config" . }}

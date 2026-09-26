@@ -1,0 +1,285 @@
+prometheus:
+  rbac:
+    create: false
+  serviceAccounts:
+    server:
+      create: false
+  configmapReload:
+    prometheus:
+      enabled: false
+  server:
+    fullnameOverride: prometheus
+    image:
+      repository: prom/prometheus
+      tag: v3.13.3
+    automountServiceAccountToken: false
+    configMapOverrideName: prometheus-config
+    configPath: /etc/config/config.yaml
+    extraFlags:
+    - web.enable-remote-write-receiver
+    retention: 7d
+    persistentVolume:
+      enabled: false
+    service:
+      servicePort: 9090
+    extraConfigmapMounts:
+    - name: rules
+      configMap: prometheus-rules
+      mountPath: /etc/prometheus/rules
+      readOnly: true
+    containerSecurityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop:
+        - ALL
+  alertmanager:
+    enabled: false
+  kube-state-metrics:
+    enabled: false
+  prometheus-node-exporter:
+    enabled: false
+  prometheus-pushgateway:
+    enabled: false
+loki:
+  fullnameOverride: loki
+  rbac:
+    namespaced: true
+  read:
+    replicas: 0
+  write:
+    replicas: 0
+  backend:
+    replicas: 0
+  deploymentMode: Monolithic
+  loki:
+    image:
+      tag: '3.7'
+    storage:
+      type: filesystem
+    commonConfig:
+      replication_factor: 1
+    schemaConfig:
+      configs:
+      - from: '2024-01-01'
+        store: tsdb
+        object_store: filesystem
+        schema: v13
+        index:
+          prefix: index_
+          period: 24h
+  singleBinary:
+    replicas: 1
+    persistence:
+      enabled: false
+    extraVolumes:
+    - name: local-data
+      emptyDir: {}
+    extraVolumeMounts:
+    - name: local-data
+      mountPath: /loki
+  gateway:
+    enabled: false
+  chunksCache:
+    enabled: false
+  resultsCache:
+    enabled: false
+  lokiCanary:
+    enabled: false
+  test:
+    enabled: false
+  sidecar:
+    rules:
+      enabled: false
+tempo:
+  fullnameOverride: tempo
+  serviceAccount:
+    automountServiceAccountToken: false
+  extraVolumes:
+  - name: data
+    emptyDir: {}
+  tempo:
+    tag: 2.10.8
+    memBallastSizeMbs: 0
+    extraVolumeMounts:
+    - name: data
+      mountPath: /var/tempo
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop:
+        - ALL
+  persistence:
+    enabled: false
+pyroscope:
+  pyroscope:
+    fullnameOverride: pyroscope
+    image:
+      tag: 1.21.1
+    extraArgs:
+      log.level: info
+    podAnnotations: {}
+    podDisruptionBudget:
+      enabled: false
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop:
+        - ALL
+  alloy:
+    enabled: false
+alloy:
+  fullnameOverride: alloy
+  crds:
+    create: false
+  image:
+    tag: v1.19.2
+  configReloader:
+    enabled: false
+  controller:
+    type: deployment
+    volumes:
+      extra:
+      - name: tmp
+        emptyDir:
+          sizeLimit: 128Mi
+  alloy:
+    extraEnv:
+    - name: POD_NAMESPACE
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.namespace
+    extraPorts:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+      protocol: TCP
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+      protocol: TCP
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 10001
+      runAsGroup: 10001
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop:
+        - ALL
+    configMap:
+      create: false
+      name: alloy-config
+      key: config.alloy
+    mounts:
+      extra:
+      - name: tmp
+        mountPath: /tmp
+  rbac:
+    rules:
+    - apiGroups:
+      - ''
+      resources:
+      - pods
+      - pods/log
+      verbs:
+      - get
+      - list
+      - watch
+    - apiGroups:
+      - apps
+      resources:
+      - replicasets
+      verbs:
+      - get
+      - list
+      - watch
+  global:
+    podSecurityContext:
+      fsGroup: 10001
+      seccompProfile:
+        type: RuntimeDefault
+grafana:
+  fullnameOverride: grafana
+  containerSecurityContext:
+    readOnlyRootFilesystem: true
+  extraEmptyDirMounts:
+  - name: tmp
+    mountPath: /tmp
+  image:
+    tag: '12.4'
+  rbac:
+    create: false
+  automountServiceAccountToken: false
+  deploymentStrategy:
+    type: Recreate
+  initChownData:
+    enabled: false
+  testFramework:
+    enabled: false
+  service:
+    port: 3000
+  env:
+    GF_AUTH_ANONYMOUS_ENABLED: 'true'
+    GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+    GF_AUTH_DISABLE_LOGIN_FORM: 'true'
+    GF_SERVER_SERVE_FROM_SUB_PATH: 'true'
+    GF_SECURITY_ADMIN_USER: admin
+  extraConfigmapMounts:
+  - name: datasources
+    configMap: grafana-datasources
+    mountPath: /etc/grafana/provisioning/datasources
+    readOnly: true
+  - name: dashboards
+    configMap: grafana-dashboards
+    mountPath: /etc/grafana/provisioning/dashboards
+    readOnly: true
+  route:
+    main:
+      enabled: true
+      parentRefs:
+      - name: gochat
+      matches:
+      - path:
+          type: PathPrefix
+          value: /grafana
+  admin:
+    existingSecret: gochat-secret
+    passwordKey: GRAFANA_ADMIN_PASSWORD
+kube-state-metrics:
+  fullnameOverride: kube-state-metrics
+  image:
+    tag: v2.20.0
+  rbac:
+    useClusterRole: false
+  releaseNamespace: true
+  collectors:
+  - pods
+  - deployments
+  - horizontalpodautoscalers
+prometheus-adapter:
+  fullnameOverride: prometheus-adapter
+  image:
+    tag: v0.12.0
+  prometheus:
+    url: http://prometheus
+    port: 9090
+  metricsRelistInterval: 15s
+  extraArguments:
+  - --metrics-max-age=2m
+  rules:
+    default: false
+    custom:
+    - seriesQuery: gochat_ws_connections_active{namespace!="",pod!=""}
+      resources:
+        overrides:
+          namespace:
+            resource: namespace
+          pod:
+            resource: pod
+      name:
+        matches: ^gochat_ws_connections_active$
+        as: gochat_ws_connections_active
+      metricsQuery: sum(<<.Series>>{<<.LabelMatchers>>}) by (<<.GroupBy>>)

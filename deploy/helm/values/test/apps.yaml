@@ -1,0 +1,42 @@
+global:
+  appConfig:
+    override:
+      ENV: test
+      TELEMETRY:
+        OTEL_ENDPOINT: alloy:4318
+        PYROSCOPE_ENDPOINT: http://pyroscope:4040
+      API_GATEWAY:
+        RATE_LIMIT:
+          PUBLIC:
+            RPS: 10
+            BURST: 15
+            TTL: 1h
+          AUTHENTICATED:
+            RPS: 10
+            BURST: 30
+            TTL: 1h
+          WS_TICKET:
+            RPS: 4
+            BURST: 10
+            TTL: 1h
+      WEBSOCKET:
+        ALLOWED_ORIGINS:
+        - http://test.gochat.localhost:30080
+        RATE_LIMIT:
+          WS_CONNECT:
+            RPS: 10
+            BURST: 20
+            TTL: 1h
+  host: test.gochat.localhost
+  externalPort: 30080
+  sysctls: []
+api-gateway:
+  replicas: 2
+user-service:
+  replicas: 2
+chat-service:
+  replicas: 2
+websocket-service:
+  replicas: 2
+  autoscaling:
+    enabled: false

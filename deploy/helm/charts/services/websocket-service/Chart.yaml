@@ -1,0 +1,5 @@
+apiVersion: v2
+name: websocket-service
+description: Go Chat websocket-service
+type: application
+version: 0.1.0

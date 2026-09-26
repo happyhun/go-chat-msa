@@ -1,0 +1,17 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gochat-alloy-cadvisor-{{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: alloy
+    app.kubernetes.io/component: observability
+    app.kubernetes.io/part-of: go-chat-msa
+    app.kubernetes.io/instance: {{ .Release.Namespace }}
+subjects:
+- kind: ServiceAccount
+  name: alloy
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: gochat-alloy-cadvisor-{{ .Release.Namespace }}
