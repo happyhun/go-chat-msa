@@ -14,6 +14,8 @@
 | 런타임 | OrbStack, linux/arm64 |
 | Namespace | `go-chat-dev` |
 
+위 명령은 측정 당시 기록이다. 현재는 `go run ./cmd/ops kind-delete`, `go run ./cmd/ops dev-up`, `go run ./cmd/ops dev-load --follow-logs=false --timeout 35m`을 사용한다.
+
 ### 부하 프로필
 
 | 항목 | 값 |

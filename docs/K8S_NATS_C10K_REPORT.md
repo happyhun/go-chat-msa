@@ -14,6 +14,8 @@
 | 런타임 | OrbStack, linux/arm64 |
 | Namespace | `go-chat-dev` |
 
+위 명령은 측정 당시 기록이다. 현재 부하 테스트 명령은 `go run ./cmd/ops dev-load`이다.
+
 ### 부하 프로필
 
 | 항목 | 값 |

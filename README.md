@@ -49,12 +49,12 @@ Docker Compose 기준에서 병목을 제거해 최대 워커 P99 25ms를 확보
 | kind | 로컬 Kubernetes 클러스터 생성 |
 | kubectl | K8s 리소스 적용과 상태 확인 |
 | Helm | 배포 구성 설치·업데이트·롤백 |
-| Make | 실행 명령 단순화 |
+| Go | 운영 CLI 실행 |
 
-설치 후 아래 명령어로 K8s 클러스터와 애플리케이션을 함께 실행할 수 있습니다.
+설치 후 저장소 루트에서 아래 명령어로 K8s 클러스터와 애플리케이션을 함께 실행할 수 있습니다. 전체 명령은 `go run ./cmd/ops --help`로 확인할 수 있습니다.
 
 ```bash
-make dev-up
+go run ./cmd/ops dev-up
 ```
 
 | 서비스 | URL |
@@ -275,12 +275,13 @@ API 게이트웨이와 웹소켓 서비스는 ClusterIP, 사용자 서비스와 
 go test ./...
 go test -tags=integration ./...
 go tool task check
+go run ./cmd/ops helm-validate
 ```
 
 E2E는 `test` 환경을 준비한 뒤 실행합니다.
 
 ```bash
-make test-up
+go run ./cmd/ops test-up
 go test -tags=e2e ./test/e2e
 ```
 
@@ -289,13 +290,13 @@ go test -tags=e2e ./test/e2e
 필요한 환경을 선택해 실행합니다. 각 명령의 측정 범위와 조건은 아래 검증 보고서를 기준으로 합니다.
 
 ```bash
-make dev-up
-make dev-load
+go run ./cmd/ops dev-up
+go run ./cmd/ops dev-load
 ```
 
 ```bash
-make qa-up
-make qa-load
+go run ./cmd/ops qa-up
+go run ./cmd/ops qa-load
 ```
 
 두 부하 시나리오는 클러스터 내부 Service에 직접 요청하며 Traefik 구간은 측정하지 않습니다. `qa-load`는 웹소켓 서비스 Pod를 1개로 되돌린 뒤 HPA 확장과 재연결·복구를 검증합니다.
@@ -303,10 +304,10 @@ make qa-load
 ### 정리
 
 ```bash
-make dev-down
-make test-down
-make qa-down
-make kind-delete
+go run ./cmd/ops dev-down
+go run ./cmd/ops test-down
+go run ./cmd/ops qa-down
+go run ./cmd/ops kind-delete
 ```
 
 `*-down`은 해당 환경의 Helm 릴리즈·namespace·관련 RBAC을 삭제합니다. `kind-delete`는 클러스터 전체와 그 데이터를 삭제합니다.

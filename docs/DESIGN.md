@@ -413,7 +413,7 @@ user-service에는 CPU 상한을 두어 bcrypt 작업이 동시에 사용할 CPU
 
 `test`는 사용자 흐름을 반복 검증할 수 있도록 HTTP 요청과 WebSocket 연결 제한을 완화하되, 메시지 전송 제한 동작을 검증하기 위해 채팅 전송 제한은 기본값을 유지합니다.
 
-환경 준비는 [Makefile](../Makefile)과 [deploy.sh](../deploy/helm/scripts/deploy.sh)가 담당합니다. kind 기본 CNI의 준비를 확인하고 Gateway API CRD와 Traefik을 설치한 뒤, 다음 단계가 의존하는 구성요소의 준비를 확인하며 순서대로 배포합니다.
+환경 준비는 [운영 CLI의 배포 로직](../internal/ops/deploy.go)이 담당합니다. kind 기본 CNI의 준비를 확인하고 Gateway API CRD와 Traefik을 설치한 뒤, 다음 단계가 의존하는 구성요소의 준비를 확인하며 순서대로 배포합니다.
 
 | 단계 | 적용 대상 | 완료 조건 |
 | :--- | :--- | :--- |
@@ -571,12 +571,12 @@ E2E는 대상 네임스페이스의 서비스가 준비되었는지 확인한 �
 
 ### 6.3 실행 경로와 측정 범위
 
-E2E는 `make test-up`으로 환경을 준비한 뒤 실행합니다. 테스트 실행기는 클러스터 밖에서 Traefik을 거쳐 HTTP/WebSocket에 접근합니다. 반면 부하 발생 도구인 k6는 클러스터 내부 서비스에 직접 요청하므로 Traefik 구간의 지연·처리량은 측정하지 않습니다. 두 결과를 비교할 때는 요청이 지나가는 경로가 다르다는 점을 고려해야 합니다. 환경 준비와 부하 실행 명령은 [Makefile](../Makefile)에서 관리합니다.
+E2E는 `go run ./cmd/ops test-up`으로 환경을 준비한 뒤 실행합니다. 테스트 실행기는 클러스터 밖에서 Traefik을 거쳐 HTTP/WebSocket에 접근합니다. 반면 부하 발생 도구인 k6는 클러스터 내부 서비스에 직접 요청하므로 Traefik 구간의 지연·처리량은 측정하지 않습니다. 두 결과를 비교할 때는 요청이 지나가는 경로가 다르다는 점을 고려해야 합니다. 환경 준비와 부하 실행 방법은 README의 [실행 방법](../README.md#실행-방법)에 정리되어 있습니다.
 
 | 명령 | 환경 | 목적 |
 | :--- | :--- | :--- |
-| `make dev-load` | `dev`, k6 Pod 4개 | C10K 연결과 메시지 수락·전달 부하 |
-| `make qa-load` | `qa`, k6 Job 1개 | WebSocket HPA 확장과 재연결·복구 |
+| `go run ./cmd/ops dev-load` | `dev`, k6 Pod 4개 | C10K 연결과 메시지 수락·전달 부하 |
+| `go run ./cmd/ops qa-load` | `qa`, k6 Job 1개 | WebSocket HPA 확장과 재연결·복구 |
 
 `qa-load`는 WebSocket Pod 수를 1개로 되돌린 뒤 HPA를 붙입니다. 부하 실행은 환경 준비와 분리되어 있습니다.
 
